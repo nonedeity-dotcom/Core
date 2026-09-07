@@ -8,6 +8,7 @@ import { confirmDestructive } from "../lib/confirm";
 import { useTodayKey } from "../lib/useTodayKey";
 import { plural } from "../lib/plural";
 import { weekStart } from "../lib/week";
+import { DEFAULT_DAY_RULE, requiredForDay, type DayRule } from "../lib/dayRule";
 import {
   MAX_TARGET_COUNT,
   habitGroup,
@@ -61,6 +62,13 @@ export default function TodayScreen() {
     queryFn: () => api.getHabitLog(monday, today) as Promise<HabitLog[]>,
   });
   const weekDates = datesBetween(monday, today);
+
+  // How much of the pile closes a day is a setting; the header is the one place on this
+  // screen that has to say what today is actually asking for.
+  const { data: dayRule = DEFAULT_DAY_RULE } = useQuery<DayRule>({
+    queryKey: ["dayRule"],
+    queryFn: () => api.getDayRule(),
+  });
 
   const invalidateHabits = () => qc.invalidateQueries({ queryKey: ["habits"] });
 
@@ -176,6 +184,7 @@ export default function TodayScreen() {
   const nowHabits = habits.filter((h) => habitGroup(h) === "now");
   const deciding = habitsThatDecideTheDay(habits);
   const closed = deciding.filter((h) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h)).length;
+  const required = requiredForDay(dayRule, deciding.length);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 20 }}>
@@ -185,7 +194,11 @@ export default function TodayScreen() {
               weekly ones in the pile "ни одной привычки в работе" was flatly wrong — there
               are habits there, they just are not owed today. */}
           {deciding.length > 0
-            ? `Сегодня закрыто ${closed} из ${deciding.length}`
+            ? required < deciding.length
+              // With a partial rule "закрыто 2 из 5" is only half the sentence — it does not
+              // say whether the day is already held.
+              ? `Сегодня закрыто ${closed} из ${deciding.length} · нужно ${required}`
+              : `Сегодня закрыто ${closed} из ${deciding.length}`
             : nowHabits.length > 0
               ? "В работе только недельные — день по ним не засчитывается"
               : "Ни одной привычки в работе"}

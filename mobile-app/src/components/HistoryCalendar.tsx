@@ -5,6 +5,7 @@ import { api, DEFAULT_CALENDAR_PREFS, type CalendarPrefs } from "../api/client";
 import { colors } from "../theme/colors";
 import { plural } from "../lib/plural";
 import { dateNDaysAgo } from "../lib/date";
+import { DEFAULT_DAY_RULE, type DayRule } from "../lib/dayRule";
 import {
   buildMonthGrid,
   buildWeeksGrid,
@@ -92,6 +93,10 @@ export default function HistoryCalendar({
       : dateNDaysAgo(GRID_WEEKS * 7 + 7);
   const rangeTo = prefs.mode === "month" ? monthRange(visibleMonth).to : today;
 
+  const { data: rule = DEFAULT_DAY_RULE } = useQuery<DayRule>({
+    queryKey: ["dayRule"],
+    queryFn: () => api.getDayRule(),
+  });
   const { data: logs = [] } = useQuery<HabitLog[]>({
     queryKey: ["habitLog", "calendar", range, rangeTo],
     queryFn: () => api.getHabitLog(range, rangeTo) as Promise<HabitLog[]>,
@@ -99,7 +104,9 @@ export default function HistoryCalendar({
   });
 
   const frozenDays = new Set(frozen);
-  const states = habit ? singleHabitDayStates(habit, logs) : computeDayStates(habits, logs);
+  // Read here rather than passed down: two screens render this component and both would
+  // have to thread the same setting through for the calendar to agree with the ring.
+  const states = habit ? singleHabitDayStates(habit, logs) : computeDayStates(habits, logs, rule);
   const cells: Cell[] =
     prefs.mode === "month"
       ? buildMonthGrid(visibleMonth, today, states, frozenDays)

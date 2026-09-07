@@ -1,4 +1,5 @@
 import { dateNDaysAgo } from "./date";
+import { DEFAULT_DAY_RULE, requiredForDay, type DayRule } from "./dayRule";
 import { habitsThatDecideTheDay, logCount, perDayTarget } from "./habits";
 import { weekKey } from "./week";
 import type { Habit, HabitLog } from "../types";
@@ -20,8 +21,13 @@ export const STREAK_WINDOW_DAYS = 120;
  * no verdict to give and the day does not count — the same rule as an empty checklist,
  * which once reported a 120-day streak for nothing at all.
  */
-export function dayCounts(habits: Habit[], logs: HabitLog[], date: string): boolean {
-  return dayCountsWith(habits, logs, date, startsByHabit(habits, logs));
+export function dayCounts(
+  habits: Habit[],
+  logs: HabitLog[],
+  date: string,
+  rule: DayRule = DEFAULT_DAY_RULE,
+): boolean {
+  return dayCountsWith(habits, logs, date, startsByHabit(habits, logs), rule);
 }
 
 /**
@@ -52,17 +58,25 @@ function dayCountsWith(
   logs: HabitLog[],
   date: string,
   starts: Map<string, string>,
+  rule: DayRule,
 ): boolean {
   const deciding = habitsThatDecideTheDay(habits, date, starts);
   if (deciding.length === 0) return false;
   const counts = new Map<string, number>();
   for (const l of logs) if (l.date === date) counts.set(l.habitId, logCount(l));
-  return meetsDay(deciding, counts);
+  return meetsDay(deciding, counts, rule);
 }
 
-/** The rule itself, so the single-day and whole-history callers cannot drift apart. */
-function meetsDay(deciding: Habit[], counts: Map<string, number>): boolean {
-  return deciding.every((h) => (counts.get(h.id) ?? 0) >= perDayTarget(h));
+/**
+ * The rule itself, so the single-day and whole-history callers cannot drift apart.
+ *
+ * How many have to be closed is [requiredForDay]; *which* ones is deliberately not asked.
+ * A rule of "three of five" that also named the three would be a different, longer list of
+ * habits rather than a lighter bar over the same one.
+ */
+function meetsDay(deciding: Habit[], counts: Map<string, number>, rule: DayRule): boolean {
+  const closed = deciding.filter((h) => (counts.get(h.id) ?? 0) >= perDayTarget(h)).length;
+  return closed >= requiredForDay(rule, deciding.length);
 }
 
 /**
@@ -71,7 +85,11 @@ function meetsDay(deciding: Habit[], counts: Map<string, number>): boolean {
  * The statistics screen asks about a year at a time; calling dayCounts per day would
  * re-scan the whole log for each one. Same verdict, one walk.
  */
-export function countedDates(habits: Habit[], logs: HabitLog[]): Set<string> {
+export function countedDates(
+  habits: Habit[],
+  logs: HabitLog[],
+  rule: DayRule = DEFAULT_DAY_RULE,
+): Set<string> {
   const counted = new Set<string>();
   if (habitsThatDecideTheDay(habits).length === 0) return counted;
 
@@ -90,7 +108,7 @@ export function countedDates(habits: Habit[], logs: HabitLog[]): Set<string> {
   // in the week before it.
   for (const [date, counts] of byDate) {
     const deciding = habitsThatDecideTheDay(habits, date, starts);
-    if (deciding.length > 0 && meetsDay(deciding, counts)) counted.add(date);
+    if (deciding.length > 0 && meetsDay(deciding, counts, rule)) counted.add(date);
   }
   return counted;
 }
@@ -102,7 +120,12 @@ export function countedDates(habits: Habit[], logs: HabitLog[]): Set<string> {
  * hand-rolled copy would drift: "deleted habits don't count" and "an empty checklist has no
  * streak" are both bugs that were fixed once already.
  */
-export function computeStreak(habits: Habit[], logs: HabitLog[], frozen: string[] = []): number {
+export function computeStreak(
+  habits: Habit[],
+  logs: HabitLog[],
+  frozen: string[] = [],
+  rule: DayRule = DEFAULT_DAY_RULE,
+): number {
   // With nothing in the "now" pile there is nothing to be consistent about.
   if (habitsThatDecideTheDay(habits).length === 0) return 0;
 
@@ -113,7 +136,7 @@ export function computeStreak(habits: Habit[], logs: HabitLog[], frozen: string[
   let streak = 0;
   for (let i = 0; i < STREAK_WINDOW_DAYS; i++) {
     const day = dateNDaysAgo(i);
-    if (dayCountsWith(habits, logs, day, starts)) streak++;
+    if (dayCountsWith(habits, logs, day, starts, rule)) streak++;
     // Today still being unfinished shouldn't break yesterday's streak.
     else if (i === 0) continue;
     // A frozen day neither breaks the chain nor adds to it. Counting it as a day would be
@@ -141,17 +164,18 @@ export function freezeCandidate(
   logs: HabitLog[],
   frozen: string[],
   today: string,
+  rule: DayRule = DEFAULT_DAY_RULE,
 ): string | null {
   if (habits.length === 0) return null;
 
   const yesterday = dateNDaysAgo(1);
   const beforeYesterday = dateNDaysAgo(2);
-  if (dayCounts(habits, logs, yesterday)) return null;
+  if (dayCounts(habits, logs, yesterday, rule)) return null;
 
   const frozenDays = new Set(frozen);
   if (frozenDays.has(yesterday)) return null;
   // Nothing to save: the chain was already broken the day before.
-  if (!dayCounts(habits, logs, beforeYesterday) && !frozenDays.has(beforeYesterday)) return null;
+  if (!dayCounts(habits, logs, beforeYesterday, rule) && !frozenDays.has(beforeYesterday)) return null;
   // One a week, counted in the week the skipped day falls in.
   const week = weekKey(yesterday);
   if (frozen.filter((d) => weekKey(d) === week).length >= FREEZES_PER_WEEK) return null;

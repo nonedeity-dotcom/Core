@@ -12,6 +12,17 @@ import NotificationAccess from "../components/NotificationAccess";
 import CrekerStatus from "../components/CrekerStatus";
 import type { Habit } from "../types";
 import {
+  DEFAULT_DAY_RULE,
+  MAX_RULE_COUNT,
+  MAX_RULE_PERCENT,
+  MIN_RULE_COUNT,
+  MIN_RULE_PERCENT,
+  describeDayRule,
+  requiredForDay,
+  type DayRule,
+} from "../lib/dayRule";
+import { habitsThatDecideTheDay } from "../lib/habits";
+import {
   getReminderSettings,
   getReminderStatus,
   type ReminderSettings,
@@ -72,6 +83,118 @@ function pad(n: number) {
   return String(n).padStart(2, "0");
 }
 
+/**
+ * How much of the «ввожу сейчас» pile has to be closed for a day to count.
+ *
+ * The app's own answer is "all of it" — the pile is the bar, which is what makes keeping it
+ * short the point rather than a suggestion — and that stays the default. It is still a rule
+ * about your own days, so it is yours to move.
+ *
+ * The line under the chips is the whole reason this is not just three numbers: it says what
+ * the setting comes to against the pile as it stands, and a percentage means nothing until
+ * it is turned into "4 из 5".
+ */
+function DayRuleCard({
+  rule,
+  decidingCount,
+  onChange,
+}: {
+  rule: DayRule;
+  decidingCount: number;
+  onChange: (rule: DayRule) => void;
+}) {
+  // Switching modes keeps what you were looking at rather than resetting to a default:
+  // coming from "all" of five habits, the number to start editing is five, not one.
+  const asCount = rule.kind === "count" ? rule.value : Math.max(MIN_RULE_COUNT, requiredForDay(rule, decidingCount) || 1);
+  const asPercent =
+    rule.kind === "percent"
+      ? rule.value
+      : decidingCount > 0
+        ? Math.min(MAX_RULE_PERCENT, Math.max(MIN_RULE_PERCENT, Math.round((asCount / decidingCount) * 100)))
+        : MAX_RULE_PERCENT;
+
+  const modes: { kind: DayRule["kind"]; title: string }[] = [
+    { kind: "all", title: "Все" },
+    { kind: "count", title: "Число" },
+    { kind: "percent", title: "Проценты" },
+  ];
+
+  const select = (kind: DayRule["kind"]) => {
+    if (kind === "all") onChange({ kind: "all" });
+    else if (kind === "count") onChange({ kind: "count", value: asCount });
+    else onChange({ kind: "percent", value: asPercent });
+  };
+
+  const step = (delta: number) => {
+    if (rule.kind === "count") {
+      onChange({ kind: "count", value: Math.min(MAX_RULE_COUNT, Math.max(MIN_RULE_COUNT, rule.value + delta)) });
+    } else if (rule.kind === "percent") {
+      onChange({
+        kind: "percent",
+        value: Math.min(MAX_RULE_PERCENT, Math.max(MIN_RULE_PERCENT, rule.value + delta * 5)),
+      });
+    }
+  };
+
+  const value =
+    rule.kind === "count"
+      ? `${rule.value} ${plural(rule.value, ["привычка", "привычки", "привычек"])}`
+      : rule.kind === "percent"
+        ? `${rule.value}%`
+        : "";
+
+  return (
+    <View style={styles.limitCard}>
+      <View>
+        <Text style={styles.rowLabel}>Сколько закрыть за день</Text>
+        <Text style={styles.rowHint}>{describeDayRule(rule, decidingCount)}</Text>
+      </View>
+
+      <View style={styles.chipRow}>
+        {modes.map((m) => (
+          <Pressable
+            key={m.kind}
+            onPress={() => select(m.kind)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: rule.kind === m.kind }}
+            style={({ pressed }) => [styles.chip, rule.kind === m.kind && styles.chipOn, pressed && styles.pressed]}
+          >
+            <Text style={[styles.chipText, rule.kind === m.kind && styles.chipTextOn]}>{m.title}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {rule.kind !== "all" && (
+        <View style={styles.stepper}>
+          <Pressable
+            onPress={() => step(-1)}
+            accessibilityRole="button"
+            accessibilityLabel="Меньше"
+            style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
+          >
+            <Text style={styles.stepBtnText}>−</Text>
+          </Pressable>
+          <Text style={styles.limitValue}>{value}</Text>
+          <Pressable
+            onPress={() => step(1)}
+            accessibilityRole="button"
+            accessibilityLabel="Больше"
+            style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
+          >
+            <Text style={styles.stepBtnText}>+</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* Said plainly, because the number on the report moves the moment this changes: the
+          rule is applied to every day in the history, not only to the ones after it. */}
+      <Text style={styles.rowHint}>
+        Правило применяется и к прошлым дням — серия и календарь пересчитаются сразу.
+      </Text>
+    </View>
+  );
+}
+
 export default function SettingsScreen({ navigation }: { navigation: { navigate: (screen: string) => void } }) {
   const qc = useQueryClient();
 
@@ -98,6 +221,30 @@ export default function SettingsScreen({ navigation }: { navigation: { navigate:
   // Navigating back from the reminder screen isn't an AppState change, so this
   // covers the far more common case of editing the times and coming back.
   useFocusEffect(refreshReminder);
+
+  // The pile the rule is about, so the card can say what it comes to — "70%" alone is not
+  // a thing anyone can picture.
+  const { data: liveHabits = [] } = useQuery<Habit[]>({
+    queryKey: ["habits"],
+    queryFn: () => api.getHabits() as Promise<Habit[]>,
+  });
+  const decidingCount = habitsThatDecideTheDay(liveHabits).length;
+
+  const { data: dayRule = DEFAULT_DAY_RULE } = useQuery<DayRule>({
+    queryKey: ["dayRule"],
+    queryFn: () => api.getDayRule(),
+  });
+
+  const setDayRule = useMutation({
+    mutationFn: (rule: DayRule) => api.setDayRule(rule),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dayRule"] });
+      // Every verdict in the app is derived from it — the ring, the calendar, the
+      // statistics screen and today's own header.
+      qc.invalidateQueries({ queryKey: ["habitLog"] });
+      qc.invalidateQueries({ queryKey: ["freezes"] });
+    },
+  });
 
   // Just the count for the row's hint — the screen itself loads the marks.
   const { data: archived = [] } = useQuery<Habit[]>({
@@ -146,6 +293,9 @@ export default function SettingsScreen({ navigation }: { navigation: { navigate:
         hint={archiveHint}
         onPress={() => navigation.navigate("Archive")}
       />
+
+      <Text style={[styles.sectionLabel, styles.spaced]}>Зачёт дня</Text>
+      <DayRuleCard rule={dayRule} decidingCount={decidingCount} onChange={(r) => setDayRule.mutate(r)} />
 
       <Text style={[styles.sectionLabel, styles.spaced]}>Уведомления</Text>
       {/* The status block sits here as well as on the reminder screen: whether
@@ -232,6 +382,18 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     gap: 12,
   },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
+  chip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.bg,
+  },
+  chipOn: { backgroundColor: "rgba(143,184,154,0.12)", borderColor: colors.accentGreen },
+  chipText: { color: colors.textMuted, fontSize: 12 },
+  chipTextOn: { color: colors.accentGreen, fontWeight: "600" },
   stepper: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 16 },
   stepBtn: {
     width: 40,

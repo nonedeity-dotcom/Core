@@ -2,6 +2,7 @@ import { toDateKey } from "./date";
 import { weekStart } from "./week";
 import { habitsThatDecideTheDay, logCount, perDayTarget } from "./habits";
 import { dayCounts } from "./streak";
+import { DEFAULT_DAY_RULE, type DayRule } from "./dayRule";
 import type { Habit, HabitLog } from "../types";
 
 export type DayState = "full" | "minimal" | "frozen" | "missed" | "future";
@@ -52,7 +53,11 @@ export function monthRange(key: string): { from: string; to: string } {
  * "По минимуму" means the day only reached the target because minimal ticks
  * counted — not merely that one of its ticks happened to be a small one.
  */
-export function computeDayStates(habits: Habit[], logs: HabitLog[]): Map<string, "full" | "minimal"> {
+export function computeDayStates(
+  habits: Habit[],
+  logs: HabitLog[],
+  rule: DayRule = DEFAULT_DAY_RULE,
+): Map<string, "full" | "minimal"> {
   const states = new Map<string, "full" | "minimal">();
   const deciding = habitsThatDecideTheDay(habits);
   if (deciding.length === 0) return states;
@@ -61,7 +66,7 @@ export function computeDayStates(habits: Habit[], logs: HabitLog[]): Map<string,
   // is the kind of disagreement nobody can debug from the outside.
   const decidingIds = new Set(deciding.map((h) => h.id));
   for (const date of new Set(logs.map((l) => l.date))) {
-    if (!dayCounts(habits, logs, date)) continue;
+    if (!dayCounts(habits, logs, date, rule)) continue;
     const minimal = logs.some((l) => l.date === date && l.done && l.minimal && decidingIds.has(l.habitId));
     states.set(date, minimal ? "minimal" : "full");
   }

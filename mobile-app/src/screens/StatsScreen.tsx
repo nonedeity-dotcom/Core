@@ -6,6 +6,7 @@ import { dateNDaysAgo } from "../lib/date";
 import { plural } from "../lib/plural";
 import { useTodayKey } from "../lib/useTodayKey";
 import { countedDates } from "../lib/streak";
+import { DEFAULT_DAY_RULE, type DayRule } from "../lib/dayRule";
 import {
   WEEKDAY_LABELS,
   focusByWeek,
@@ -56,8 +57,12 @@ export default function StatsScreen() {
     queryKey: ["freezes"],
     queryFn: () => api.getFreezes(),
   });
+  const { data: rule = DEFAULT_DAY_RULE } = useQuery<DayRule>({
+    queryKey: ["dayRule"],
+    queryFn: () => api.getDayRule(),
+  });
 
-  const counted = countedDates(habits, logs);
+  const counted = countedDates(habits, logs, rule);
   const weekdays = weekdayBreakdown(counted, from, today);
   const observed = weekdays.reduce((n, w) => n + w.total, 0);
   const streaks = streakSummary(counted, freezes, from, today);

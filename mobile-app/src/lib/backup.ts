@@ -15,6 +15,7 @@ import {
   type ReminderSettings,
 } from "../notifications/reminders";
 import { toDateKey } from "./date";
+import { normalizeDayRule } from "./dayRule";
 import type {
   Habit,
   HabitTarget,
@@ -217,6 +218,9 @@ function parseData(raw: unknown): BackupData {
     tasks,
     screenTimeLimitMinutes: limit,
     focusIntervals,
+    // Missing from every file written before the day rule was settable; normalizeDayRule
+    // turns anything it does not recognise into the default.
+    dayRule: normalizeDayRule(d.dayRule),
   };
 }
 

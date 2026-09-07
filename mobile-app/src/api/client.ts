@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import { todayKey, tomorrowKey } from "../lib/date";
 import { habitGroup, itemGroup } from "../lib/habits";
+import { DEFAULT_DAY_RULE, normalizeDayRule, type DayRule } from "../lib/dayRule";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -37,6 +38,7 @@ const KEYS = {
   calendarPrefs: "calendar-prefs-v1",
   freezes: "streak-freezes-v1",
   nowSinceRepair: "nowsince-repair-v1",
+  dayRule: "day-rule-v1",
 };
 
 export interface CalendarPrefs {
@@ -465,6 +467,22 @@ export const api = {
    * re-derived on every render would change the streak under someone who had already read
    * it.
    */
+  /**
+   * How much of the «ввожу сейчас» pile closes a day.
+   *
+   * Read by everything that judges a day — the streak, the calendar, the statistics screen
+   * and today's own header — so it lives here rather than in the screen that edits it.
+   * Anything unreadable comes back as the default rather than throwing: a corrupt entry
+   * should cost the setting, not the app.
+   */
+  async getDayRule(): Promise<DayRule> {
+    return normalizeDayRule(await read<unknown>(KEYS.dayRule, DEFAULT_DAY_RULE));
+  },
+  async setDayRule(rule: DayRule): Promise<{ ok: true }> {
+    await write(KEYS.dayRule, normalizeDayRule(rule));
+    return { ok: true as const };
+  },
+
   async getFreezes(): Promise<string[]> {
     const stored = await read<string[]>(KEYS.freezes, []);
     return stored.filter((d) => typeof d === "string");
@@ -781,6 +799,11 @@ export interface BackupData {
   tasks: Task[];
   screenTimeLimitMinutes: number;
   focusIntervals: FocusIntervals;
+  /**
+   * How much of the «ввожу сейчас» pile closes a day. Absent from files written before it
+   * was settable, which import as the default — all of them.
+   */
+  dayRule: DayRule;
 }
 
 /** What an import actually changed, so the UI can report it honestly. */
@@ -820,7 +843,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, triggers, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals] =
+  const [habits, habitLog, triggers, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -835,6 +858,7 @@ export async function exportData(): Promise<BackupData> {
       read<Task[]>(KEYS.tasks, []),
       read<number>(KEYS.screenTimeLimit, DEFAULT_SCREEN_TIME_LIMIT_MIN),
       api.getFocusIntervals(),
+      api.getDayRule(),
     ]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -850,6 +874,7 @@ export async function exportData(): Promise<BackupData> {
     tasks,
     screenTimeLimitMinutes: limit,
     focusIntervals,
+    dayRule,
   };
 }
 
@@ -870,6 +895,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.tasks, data.tasks),
       write(KEYS.screenTimeLimit, data.screenTimeLimitMinutes),
       write(KEYS.focusIntervals, data.focusIntervals),
+      write(KEYS.dayRule, normalizeDayRule(data.dayRule)),
     ]);
     return {
       habits: data.habits.length,
