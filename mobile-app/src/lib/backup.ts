@@ -21,7 +21,6 @@ import type {
   HabitTarget,
   ItemGroup,
   HabitLog,
-  Trigger,
   EnergyLog,
   FocusSession,
   RewardOption,
@@ -137,11 +136,6 @@ function parseData(raw: unknown): BackupData {
       : null,
   );
 
-  const triggers = pickValid<Trigger>(d.triggers, (t) =>
-    isStr(t.id) && isStr(t.label)
-      ? { id: t.id, label: t.label, removed: t.removed === true, group: isGroup(t.group) ? t.group : "now" }
-      : null,
-  );
 
   const energy = pickValid<EnergyLog>(d.energy, (e) =>
     isDateKey(e.date) && isNum(e.hour) && isNum(e.value)
@@ -207,7 +201,6 @@ function parseData(raw: unknown): BackupData {
   return {
     habits,
     habitLog,
-    triggers,
     energy,
     sessions,
     milestones,
@@ -257,7 +250,6 @@ export function parseBackupText(text: string): ParsedBackup {
   const isEmpty =
     data.habits.length === 0 &&
     data.habitLog.length === 0 &&
-    data.triggers.length === 0 &&
     data.sessions.length === 0 &&
     data.energy.length === 0 &&
     data.rewards.length === 0 &&

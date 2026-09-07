@@ -4,7 +4,6 @@ import type {
   ItemGroup,
   Habit,
   HabitLog,
-  Trigger,
   EnergyLog,
   FocusSession,
   RewardOption,
@@ -24,7 +23,6 @@ import { DEFAULT_DAY_RULE, normalizeDayRule, type DayRule } from "../lib/dayRule
 const KEYS = {
   habits: "habits-list-v1",
   habitLog: "habit-log-v1",
-  triggers: "triggers-list-v1",
   energy: "energy-log-v1",
   sessions: "timer-stats-v1",
   milestones: "celebrated-milestones-v1",
@@ -148,23 +146,34 @@ const DEFAULT_REWARD_OPTIONS: RewardOption[] = [
   { id: uid(), label: "Холодный душ" },
 ];
 
-const DEFAULT_TRIGGERS: Trigger[] = [
-  { id: uid(), label: "Телефон в спальне", removed: false },
-  { id: uid(), label: "Уведомления", removed: false },
-  { id: uid(), label: "Соцсети сразу после пробуждения", removed: false },
-  { id: uid(), label: "Сахар и лишние быстрые стимулы", removed: false },
-  { id: uid(), label: "Новости утром", removed: false },
-  { id: uid(), label: "Лишние приложения-\"продуктивность\"", removed: false },
-];
 
 async function ensureSeeded() {
   if ((await AsyncStorage.getItem(KEYS.habits)) === null) await write(KEYS.habits, DEFAULT_HABITS);
-  if ((await AsyncStorage.getItem(KEYS.triggers)) === null) await write(KEYS.triggers, DEFAULT_TRIGGERS);
   if ((await AsyncStorage.getItem(KEYS.rewardOptions)) === null) await write(KEYS.rewardOptions, DEFAULT_REWARD_OPTIONS);
   await migrateHabitCreatedAt();
   // After it, not before: this one reads createdAt.
   await repairNowSinceOnce();
+  await dropTriggers();
 }
+
+/**
+ * Deletes the trigger list from the device.
+ *
+ * The triggers screen is gone, and leaving its data behind would mean a key nothing reads
+ * and nothing can ever show again — a row in storage that only exists to be restored by a
+ * feature that no longer exists. Removed rather than orphaned, deliberately and on request.
+ * Also drops out of backups: see BackupData.
+ */
+async function dropTriggers(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(TRIGGERS_KEY);
+  } catch {
+    // Nothing depends on it being gone; the next launch tries again.
+  }
+}
+
+/** Not in KEYS any more — the only thing left that knows this name is the delete above. */
+const TRIGGERS_KEY = "triggers-list-v1";
 
 /**
  * Stamps a start date on habits saved before there was one.
@@ -499,57 +508,6 @@ export const api = {
     });
   },
 
-  async getTriggers(): Promise<Trigger[]> {
-    await ensureSeeded();
-    return read(KEYS.triggers, []);
-  },
-  async setTriggerGroup(id: string, group: ItemGroup): Promise<{ ok: true }> {
-    return withKeyLock(KEYS.triggers, async () => {
-      const triggers = await read<Trigger[]>(KEYS.triggers, []);
-      await write(KEYS.triggers, triggers.map((t) => (t.id === id ? { ...t, group } : t)));
-      return { ok: true as const };
-    });
-  },
-  async addTrigger(label: string): Promise<Trigger> {
-    return withKeyLock(KEYS.triggers, async () => {
-      await ensureSeeded();
-      const triggers = await read<Trigger[]>(KEYS.triggers, []);
-      const trigger: Trigger = { id: uid(), label, removed: false };
-      await write(KEYS.triggers, [...triggers, trigger]);
-      return trigger;
-    });
-  },
-  async toggleTrigger(triggerId: string, removed: boolean): Promise<{ ok: true }> {
-    return withKeyLock(KEYS.triggers, async () => {
-      const triggers = await read<Trigger[]>(KEYS.triggers, []);
-      await write(
-        KEYS.triggers,
-        triggers.map((t) => (t.id === triggerId ? { ...t, removed } : t)),
-      );
-      return { ok: true as const };
-    });
-  },
-  async updateTrigger(id: string, label: string): Promise<{ ok: true }> {
-    return withKeyLock(KEYS.triggers, async () => {
-      const triggers = await read<Trigger[]>(KEYS.triggers, []);
-      await write(
-        KEYS.triggers,
-        triggers.map((t) => (t.id === id ? { ...t, label } : t)),
-      );
-      return { ok: true as const };
-    });
-  },
-  async removeTrigger(id: string): Promise<{ ok: true }> {
-    return withKeyLock(KEYS.triggers, async () => {
-      const triggers = await read<Trigger[]>(KEYS.triggers, []);
-      await write(
-        KEYS.triggers,
-        triggers.filter((t) => t.id !== id),
-      );
-      return { ok: true as const };
-    });
-  },
-
   async getEnergy(from: string, to: string): Promise<EnergyLog[]> {
     const logs = await read<EnergyLog[]>(KEYS.energy, []);
     return logs.filter((l) => inRange(l.date, from, to));
@@ -787,7 +745,6 @@ export const BACKUP_FORMAT_VERSION = 1;
 export interface BackupData {
   habits: Habit[];
   habitLog: HabitLog[];
-  triggers: Trigger[];
   energy: EnergyLog[];
   sessions: FocusSession[];
   milestones: number[];
@@ -810,7 +767,6 @@ export interface BackupData {
 export interface ImportStats {
   habits: number;
   habitLog: number;
-  triggers: number;
   sessions: number;
   energy: number;
   rewards: number;
@@ -821,7 +777,6 @@ export interface ImportStats {
 const EMPTY_STATS: ImportStats = {
   habits: 0,
   habitLog: 0,
-  triggers: 0,
   sessions: 0,
   energy: 0,
   rewards: 0,
@@ -843,11 +798,10 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, triggers, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
-      read<Trigger[]>(KEYS.triggers, []),
       read<EnergyLog[]>(KEYS.energy, []),
       read<FocusSession[]>(KEYS.sessions, []),
       read<number[]>(KEYS.milestones, []),
@@ -863,7 +817,6 @@ export async function exportData(): Promise<BackupData> {
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
     habitLog,
-    triggers,
     energy,
     sessions,
     milestones,
@@ -884,7 +837,6 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
     await Promise.all([
       write(KEYS.habits, data.habits),
       write(KEYS.habitLog, data.habitLog),
-      write(KEYS.triggers, data.triggers),
       write(KEYS.energy, data.energy),
       write(KEYS.sessions, data.sessions),
       write(KEYS.milestones, data.milestones),
@@ -900,7 +852,6 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
     return {
       habits: data.habits.length,
       habitLog: data.habitLog.length,
-      triggers: data.triggers.length,
       sessions: data.sessions.length,
       energy: data.energy.length,
       rewards: data.rewards.length,
@@ -914,7 +865,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
  * Adds what the device doesn't have yet and leaves everything it does have
  * untouched — importing twice changes nothing the second time.
  *
- * Habits/triggers/rewards are matched by *label*, not id: a fresh install
+ * Habits and rewards are matched by *label*, not id: a fresh install
  * seeds the same ten default habits with freshly generated ids, so matching
  * by id alone would duplicate every one of them and strand the imported
  * ticks on the copies. Log entries are re-pointed at the local ids through
@@ -961,19 +912,6 @@ export async function mergeData(data: BackupData): Promise<ImportStats> {
       stats.habitLog++;
     }
     if (stats.habitLog > 0) await write(KEYS.habitLog, logs);
-
-    // --- triggers (label-matched, same reason as habits) ---
-    const triggers = await read<Trigger[]>(KEYS.triggers, []);
-    const triggerLabels = new Set(triggers.map((t) => t.label));
-    const triggerIds = new Set(triggers.map((t) => t.id));
-    for (const t of data.triggers) {
-      if (triggerIds.has(t.id) || triggerLabels.has(t.label)) continue;
-      triggers.push(t);
-      triggerLabels.add(t.label);
-      triggerIds.add(t.id);
-      stats.triggers++;
-    }
-    if (stats.triggers > 0) await write(KEYS.triggers, triggers);
 
     // --- reward options (label-matched; not reported, they aren't history) ---
     const options = await read<RewardOption[]>(KEYS.rewardOptions, []);

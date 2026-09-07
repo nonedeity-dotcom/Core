@@ -7,8 +7,9 @@ export const DEFAULT_TARGET: HabitTarget = { kind: "daily", count: 1 };
 export const MAX_TARGET_COUNT = 12;
 
 /**
- * Which pile something is in. Takes anything carrying a group — habits and triggers use the
- * same three piles — so the two screens can't drift on what an absent group means.
+ * Which pile something is in. Takes anything carrying a group rather than a Habit, which is
+ * left over from triggers using the same three piles; it costs nothing and keeps the
+ * "absent means now" rule in one place.
  */
 export function itemGroup(item: { group?: ItemGroup }): ItemGroup {
   return item.group ?? "now";

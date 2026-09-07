@@ -104,14 +104,6 @@ export interface HabitLog {
   manual?: boolean;
 }
 
-export interface Trigger {
-  id: string;
-  label: string;
-  removed: boolean;
-  /** Same three piles as habits; triggers never affect the day either way. */
-  group?: ItemGroup;
-}
-
 export interface EnergyLog {
   date: string;
   hour: number;

@@ -32,20 +32,25 @@ reserved for focus-session data).
 
 ## Screen inventory (`mobile-app/src/screens/`)
 
-`src/navigation/RootTabs.tsx` is a native-stack wrapping a six-tab bottom bar.
+`src/navigation/RootTabs.tsx` is a native-stack wrapping a five-tab bottom bar.
 
 Bottom bar, in order:
 
 1. **ReportScreen** — rotating tip, one streak card (ring to the next
    milestone + phase + a collapsible calendar), the bar to 66 days, focus
    sessions, the weekly review row. Opens first.
-2. **TodayScreen** — habit checklist for today, each habit optionally
-   carrying a declared minimal version that can be ticked instead
-3. **FocusScreen** — focus timer (SVG ring) with editable work/break lengths
+2. **TodayScreen** — habit checklist for today, in three piles, each split
+   into what is left and a folded «Выполнено · N»; a habit may carry a
+   declared minimal version that can be ticked instead
+3. **FocusScreen** — boredom timer plus the work/break cycle, both editable
 4. **EnergyScreen** — hourly energy grid (1-10 self-rating) plus a task list
    tagged hard/routine, each suggesting the measured peak or dip hour
-5. **TriggersScreen** — distraction triggers removed so far
-6. **QuestionScreen** — "what can I remove today" daily prompt + history
+5. **StatsScreen** — the long view: weekday breakdown, streak summary, focus
+   minutes by week
+
+Two screens are gone and should not be reintroduced without a reason:
+**QuestionScreen** ("what can I remove today") and **TriggersScreen**
+(distraction triggers), the latter removed along with its stored data.
 
 Pushed on top of the tabs, from the gear in the header:
 
@@ -57,9 +62,9 @@ Pushed on top of the tabs, from the gear in the header:
 - **ReviewScreen** — the weekly review (what worked / didn't / changing),
   one entry per ISO week, prompted from the report
 
-Do not add a seventh tab: seven labels only fit at 8pt on a 320px screen and
-an eighth does not fit at all. Anything new that isn't a daily action belongs
-behind the gear.
+Do not add a sixth tab: «Статистика» is the longest label the bar has carried
+and it sets the width, so the five that are there are the budget. Anything new
+that isn't a daily action belongs behind the gear.
 
 No account, no server — everything reads/writes through `src/api/client.ts`
 (AsyncStorage-backed, despite the `api` name). Any new screen should follow

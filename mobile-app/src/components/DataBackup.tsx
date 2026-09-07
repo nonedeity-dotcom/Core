@@ -37,7 +37,7 @@ function describeImport(stats: ImportStats, mode: ImportMode): string {
       stats.habitLog
     } ${plural(stats.habitLog, ["отметка", "отметки", "отметок"])}.`;
   }
-  const added = stats.habits + stats.habitLog + stats.triggers + stats.sessions + stats.energy + stats.rewards;
+  const added = stats.habits + stats.habitLog + stats.sessions + stats.energy + stats.rewards;
   if (added === 0) return "Всё из этого файла уже есть — ничего не изменилось.";
   return `Добавлено: ${stats.habits} ${plural(stats.habits, ["привычка", "привычки", "привычек"])}, ${
     stats.habitLog

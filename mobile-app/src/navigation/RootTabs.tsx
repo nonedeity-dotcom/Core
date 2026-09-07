@@ -5,7 +5,7 @@ import { Pressable, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
 
-import ChecklistScreen from "../screens/ChecklistScreen";
+import TodayScreen from "../screens/TodayScreen";
 import FocusScreen from "../screens/FocusScreen";
 import EnergyScreen from "../screens/EnergyScreen";
 import ReportScreen from "../screens/ReportScreen";
@@ -53,10 +53,10 @@ function Tabs() {
     >
       {/* Отчёт first: it opens on the tip of the day, which is the one thing worth seeing
           before you have done anything. Чек-лист sits right next to it since that is what
-          the day actually runs on — and it now holds the triggers too, on a switch: two
-          lists about the same day, which never needed a bottom-bar slot each. */}
+          the day actually runs on. It used to share the tab with a triggers list on a
+          switch; the triggers are gone, so the tab is the checklist and nothing else. */}
       <Tab.Screen name="Отчёт" component={ReportScreen} options={{ tabBarIcon: icon("bar-chart-2") }} />
-      <Tab.Screen name="Чек-лист" component={ChecklistScreen} options={{ tabBarIcon: icon("check-square") }} />
+      <Tab.Screen name="Чек-лист" component={TodayScreen} options={{ tabBarIcon: icon("check-square") }} />
       <Tab.Screen name="Фокус" component={FocusScreen} options={{ tabBarIcon: icon("target") }} />
       <Tab.Screen name="Энергия" component={EnergyScreen} options={{ tabBarIcon: icon("activity") }} />
       {/* Last, and deliberately so: the long view is for looking back, not for the thing you

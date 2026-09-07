@@ -21,3 +21,26 @@ export function useFold(): { open: boolean; toggle: () => void } {
 
   return { open, toggle: useCallback(() => setOpen((v) => !v), []) };
 }
+
+/**
+ * The same thing for several fold-outs at once, keyed by id.
+ *
+ * Three groups on the checklist each hide their own "выполнено" pile, and three separate
+ * useFold calls would tie the number of hooks to the number of groups. Same rule as above:
+ * open is an act, and it does not survive leaving the screen.
+ */
+export function useFoldSet(): { isOpen: (id: string) => boolean; toggle: (id: string) => void } {
+  const [open, setOpen] = useState<string[]>([]);
+
+  useFocusEffect(
+    useCallback(() => () => setOpen([]), []),
+  );
+
+  return {
+    isOpen: useCallback((id: string) => open.includes(id), [open]),
+    toggle: useCallback(
+      (id: string) => setOpen((current) => (current.includes(id) ? current.filter((x) => x !== id) : [...current, id])),
+      [],
+    ),
+  };
+}

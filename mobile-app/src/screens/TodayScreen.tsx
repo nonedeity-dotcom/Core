@@ -7,6 +7,7 @@ import { colors } from "../theme/colors";
 import { confirmDestructive } from "../lib/confirm";
 import { useTodayKey } from "../lib/useTodayKey";
 import { plural } from "../lib/plural";
+import { useFoldSet } from "../lib/useFold";
 import { weekStart } from "../lib/week";
 import { DEFAULT_DAY_RULE, requiredForDay, type DayRule } from "../lib/dayRule";
 import {
@@ -44,6 +45,8 @@ export default function TodayScreen() {
   const [editTarget, setEditTarget] = useState<HabitTarget>({ kind: "daily", count: 1 });
   const [newLabel, setNewLabel] = useState("");
   const [adding, setAdding] = useState(false);
+  // One per group, and closed again the moment you leave the tab.
+  const folds = useFoldSet();
 
   const { data: habits = [] } = useQuery<Habit[]>({
     queryKey: ["habits"],
@@ -181,6 +184,21 @@ export default function TodayScreen() {
     else setAdding(false);
   };
 
+  /**
+   * Whether a habit is finished as far as the list is concerned — which is what decides
+   * where it sits, so it has to be answered once, here, rather than inside each row.
+   *
+   * A daily habit is closed when today's count reaches its target; a weekly one when the
+   * week's is met, because Monday's run is not undone by Tuesday arriving.
+   */
+  const isClosed = (h: Habit): boolean => {
+    if (habitTarget(h).kind === "weekly") {
+      const w = weeklyProgress(h, weekLogs, weekDates);
+      return w.count >= w.target;
+    }
+    return logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h);
+  };
+
   const nowHabits = habits.filter((h) => habitGroup(h) === "now");
   const deciding = habitsThatDecideTheDay(habits);
   const closed = deciding.filter((h) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h)).length;
@@ -224,41 +242,77 @@ export default function TodayScreen() {
         const inGroup = habits.filter((h) => habitGroup(h) === group.id);
         // An empty pile is only worth a heading while you are sorting things into it.
         if (inGroup.length === 0 && !editing) return null;
+
+        // Done ones sink. The split is by group rather than across the whole screen, so
+        // «Ввожу сейчас» — the pile that actually decides the day — stays visibly separate
+        // from the two that do not.
+        const open = inGroup.filter((h) => !isClosed(h));
+        const done = inGroup.filter(isClosed);
+        const doneOpen = folds.isOpen(group.id);
+
+        const row = (h: Habit) =>
+          editingId === h.id ? (
+            <HabitEditor
+              key={h.id}
+              label={editDraft}
+              onLabel={setEditDraft}
+              minimal={editMinimal}
+              onMinimal={setEditMinimal}
+              group={editGroup}
+              onGroup={setEditGroup}
+              target={editTarget}
+              onTarget={setEditTarget}
+              onSave={saveEdit}
+              onCancel={() => setEditingId(null)}
+            />
+          ) : (
+            <HabitRow
+              key={h.id}
+              habit={h}
+              group={group.id}
+              editing={editing}
+              closed={isClosed(h)}
+              count={logCount(logs.find((l) => l.habitId === h.id))}
+              minimalDone={!!logs.find((l) => l.habitId === h.id)?.minimal}
+              week={weeklyProgress(h, weekLogs, weekDates)}
+              onBump={(minimal) => bump.mutate({ habit: h, minimal })}
+              onEdit={() => startEdit(h)}
+              onArchive={() => confirmArchive(h)}
+              onReset={() => resetDay.mutate(h.id)}
+            />
+          );
+
         return (
           <View key={group.id} style={styles.group}>
             <Text style={styles.groupTitle}>{group.title}</Text>
             <Text style={styles.groupBlurb}>{group.blurb}</Text>
             {inGroup.length === 0 && <Text style={styles.groupEmpty}>пусто</Text>}
-            {inGroup.map((h) =>
-              editingId === h.id ? (
-                <HabitEditor
-                  key={h.id}
-                  label={editDraft}
-                  onLabel={setEditDraft}
-                  minimal={editMinimal}
-                  onMinimal={setEditMinimal}
-                  group={editGroup}
-                  onGroup={setEditGroup}
-                  target={editTarget}
-                  onTarget={setEditTarget}
-                  onSave={saveEdit}
-                  onCancel={() => setEditingId(null)}
-                />
-              ) : (
-                <HabitRow
-                  key={h.id}
-                  habit={h}
-                  group={group.id}
-                  editing={editing}
-                  count={logCount(logs.find((l) => l.habitId === h.id))}
-                  minimalDone={!!logs.find((l) => l.habitId === h.id)?.minimal}
-                  week={weeklyProgress(h, weekLogs, weekDates)}
-                  onBump={(minimal) => bump.mutate({ habit: h, minimal })}
-                  onEdit={() => startEdit(h)}
-                  onArchive={() => confirmArchive(h)}
-                  onReset={() => resetDay.mutate(h.id)}
-                />
-              ),
+
+            {done.length > 0 && open.length > 0 && (
+              // Only worth a caption once something has moved out of it, and only while
+              // something is left: with the pile empty, «Выполнено · N» right below says it.
+              <Text style={styles.subHeading}>{`Осталось · ${open.length}`}</Text>
+            )}
+            {open.map(row)}
+
+            {done.length > 0 && (
+              <>
+                <Pressable
+                  onPress={() => folds.toggle(group.id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: doneOpen }}
+                  accessibilityLabel={`Выполнено: ${done.length}`}
+                  style={({ pressed }) => [styles.doneToggle, pressed && styles.dimmed]}
+                >
+                  <Feather
+                    name={doneOpen ? "chevron-down" : "chevron-right"}
+                    size={13}
+                    color={colors.accentGreen}
+                  />
+                  <Text style={styles.doneToggleText}>{`Выполнено · ${done.length}`}</Text>
+                </Pressable>
+                {doneOpen && done.map(row)}
+              </>
             )}
           </View>
         );
@@ -304,6 +358,7 @@ function HabitRow({
   habit,
   group,
   editing,
+  closed,
   count,
   minimalDone,
   week,
@@ -315,6 +370,9 @@ function HabitRow({
   habit: Habit;
   group: ItemGroup;
   editing: boolean;
+  /** Finished for now — today for a daily habit, the week for a weekly one. Decided by the
+   *  list, which needs the same answer to know where to put the row. */
+  closed: boolean;
   count: number;
   /** The day was closed with the small version — shown as a ring rather than a filled dot. */
   minimalDone: boolean;
@@ -328,16 +386,10 @@ function HabitRow({
   const perDay = perDayTarget(habit);
   const doneToday = count >= perDay;
   const weekly = target.kind === "weekly";
-  /**
-   * What the checkbox answers.
-   *
-   * For a daily habit it is today. For a weekly one it is the *week*: "спорт 1 раз в
-   * неделю" done on Monday is not undone on Tuesday, and the row used to go back to an
-   * empty box the next morning as if the thing were still owed — a demand the habit does
-   * not actually make until the week turns over. What it owes is a number of days in the
-   * week, so that is what the box reports; the caption under it carries the count.
-   */
-  const closed = weekly ? week.count >= week.target : doneToday;
+  // `closed` — what the checkbox answers — comes from the list. For a daily habit it is
+  // today; for a weekly one it is the *week*: "спорт 1 раз в неделю" done on Monday is not
+  // undone by Tuesday arriving, and the box used to go back to empty the next morning as if
+  // the thing were still owed.
   // "Потом" is a plan: there is nothing to tick, and offering a checkbox would invite
   // ticking things you have not started.
   const tickable = group !== "later";
@@ -598,6 +650,9 @@ const styles = StyleSheet.create({
   group: { marginTop: 22 },
   groupTitle: { color: colors.text, fontSize: 13, fontWeight: "600" },
   groupBlurb: { color: colors.textMuted, fontSize: 11, marginTop: 2, marginBottom: 10 },
+  subHeading: { color: colors.textMuted, fontSize: 11, marginBottom: 6 },
+  doneToggle: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 8 },
+  doneToggleText: { color: colors.accentGreen, fontSize: 12, fontWeight: "600" },
   groupEmpty: { color: colors.textMuted, fontSize: 12, fontStyle: "italic", marginBottom: 10 },
 
   habitBlock: { marginBottom: 10 },
