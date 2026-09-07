@@ -79,7 +79,16 @@ export function useStreak(today: string): {
   useEffect(() => {
     if (!ready || skipRule.mode !== "perHabit") return;
     for (const habit of habits) {
-      const day = habitFreezeCandidate(habit, logs, frozenDaysFor(habit.id, freezes, habitFreezes), skipRule);
+      // Two lists on purpose: everything the habit is let off, and separately the chances
+      // it has spent itself. A shared day off already granted must not come out of this
+      // habit's own budget — it was granted by the other rule entirely.
+      const day = habitFreezeCandidate(
+        habit,
+        logs,
+        frozenDaysFor(habit.id, freezes, habitFreezes),
+        habitFreezes[habit.id] ?? [],
+        skipRule,
+      );
       if (!day) continue;
       api.grantHabitFreeze(habit.id, day).then(() => qc.invalidateQueries({ queryKey: ["habitFreezes"] }));
     }

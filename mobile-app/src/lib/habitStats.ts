@@ -157,13 +157,20 @@ export function habitStats(habit: Habit, logs: HabitLog[], today: string, frozen
  * when there was a run to protect, and never two days running whatever the budget says. The
  * difference is what it saves — this habit's own streak in its own report, not the day.
  *
+ * Two lists, because a day off and a chance are two different things. `excused` is every day
+ * this habit is let off, the shared days included: those keep its run alive and they still
+ * count as "a day without a mark" for the two-in-a-row rule. `own` is only the chances this
+ * habit has actually spent, and only those come out of its budget — a shared day off was
+ * granted by a different rule and is not one of this habit's five.
+ *
  * A weekly habit is left out: its streak is counted in weeks, and a missed day is not a
  * missed week.
  */
 export function habitFreezeCandidate(
   habit: Habit,
   logs: HabitLog[],
-  frozen: string[],
+  excused: string[],
+  own: string[],
   rule: SkipRule = DEFAULT_SKIP_RULE,
 ): string | null {
   if (rule.mode !== "perHabit" || rule.count <= 0) return null;
@@ -173,23 +180,26 @@ export function habitFreezeCandidate(
   const beforeYesterday = dateNDaysAgo(2);
   if (doneOn(habit, logs, yesterday)) return null;
 
-  const frozenDays = new Set(frozen);
-  if (frozenDays.has(yesterday) || frozenDays.has(beforeYesterday)) return null;
+  const excusedDays = new Set(excused);
+  const ownDays = new Set(own);
+  if (excusedDays.has(yesterday) || excusedDays.has(beforeYesterday)) return null;
   // Nothing to save: this habit's run had already ended.
   if (!doneOn(habit, logs, beforeYesterday)) return null;
 
   const bucket = periodBucket(yesterday, rule.period);
   let used = 0;
   if (bucket !== null) {
-    for (const day of frozenDays) if (periodBucket(day, rule.period) === bucket) used++;
+    for (const day of ownDays) if (periodBucket(day, rule.period) === bucket) used++;
   } else {
-    // "За всю цепочку": walk back to the day this habit's run actually ended.
+    // "За всю цепочку": walk back to the day this habit's run actually ended, counting the
+    // chances it spent on the way. A shared day off keeps the walk going and costs nothing.
     for (let i = 2; i < HABIT_WINDOW_DAYS; i++) {
       const day = dateNDaysAgo(i);
-      if (frozenDays.has(day)) {
+      if (ownDays.has(day)) {
         used++;
         continue;
       }
+      if (excusedDays.has(day)) continue;
       if (!doneOn(habit, logs, day)) break;
     }
   }
