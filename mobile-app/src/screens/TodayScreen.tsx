@@ -8,7 +8,7 @@ import { confirmDestructive } from "../lib/confirm";
 import { useTodayKey } from "../lib/useTodayKey";
 import { plural } from "../lib/plural";
 import { useFoldSet } from "../lib/useFold";
-import { weekStart } from "../lib/week";
+import { weekStart, weekDatesThrough } from "../lib/week";
 import { DEFAULT_DAY_RULE, requiredForDay, type DayRule } from "../lib/dayRule";
 import {
   MAX_TARGET_COUNT,
@@ -64,7 +64,7 @@ export default function TodayScreen() {
     queryKey: ["habitLog", "week", monday, today],
     queryFn: () => api.getHabitLog(monday, today) as Promise<HabitLog[]>,
   });
-  const weekDates = datesBetween(monday, today);
+  const weekDates = weekDatesThrough(today);
 
   // How much of the pile closes a day is a setting; the header is the one place on this
   // screen that has to say what today is actually asking for.
@@ -611,21 +611,6 @@ function describeTarget(target: HabitTarget): string {
     : `${target.count} ${plural(target.count, ["раз", "раза", "раз"])} в неделю`;
 }
 
-/** Every date from `from` to `to`, inclusive — the days a weekly habit is counted across. */
-function datesBetween(from: string, to: string): string[] {
-  const out: string[] = [];
-  const [fy, fm, fd] = from.split("-").map(Number);
-  const cursor = new Date(fy, fm - 1, fd);
-  for (let i = 0; i < 8; i++) {
-    const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(
-      cursor.getDate(),
-    ).padStart(2, "0")}`;
-    if (key > to) break;
-    out.push(key);
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return out;
-}
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },

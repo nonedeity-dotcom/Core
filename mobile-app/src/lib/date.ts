@@ -64,3 +64,20 @@ export function formatDateShort(value: string): string {
   const [y, m, d] = local.split("-");
   return y && m && d ? `${d}.${m}.${y}` : local;
 }
+
+/**
+ * Every date key from `from` to `to`, both ends included.
+ *
+ * Walked with a real Date rather than by adding days to a string, so months, years and the
+ * days a timezone shifts all come out right.
+ */
+export function datesBetween(from: string, to: string): string[] {
+  const [y, m, d] = from.split("-").map(Number);
+  const out: string[] = [];
+  const cursor = new Date(y, m - 1, d);
+  while (toDateKey(cursor) <= to) {
+    out.push(toDateKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return out;
+}

@@ -18,6 +18,7 @@ import AdminScreen from "../screens/AdminScreen";
 import HeaderRefresh from "../components/HeaderRefresh";
 import PhasesScreen from "../screens/PhasesScreen";
 import HabitReportScreen from "../screens/HabitReportScreen";
+import HabitsReportScreen from "../screens/HabitsReportScreen";
 import ReviewScreen from "../screens/ReviewScreen";
 
 const Tab = createBottomTabNavigator();
@@ -112,6 +113,7 @@ export default function RootTabs() {
         <Stack.Screen name="Archive" component={ArchiveScreen} options={{ title: "Архив привычек" }} />
         <Stack.Screen name="Admin" component={AdminScreen} options={{ title: "Настройки админа" }} />
         <Stack.Screen name="Phases" component={PhasesScreen} options={{ title: "Этапы" }} />
+        <Stack.Screen name="HabitsReport" component={HabitsReportScreen} options={{ title: "По привычкам" }} />
         {/* Titled from the habit's own name, so the header says which one you opened. */}
         <Stack.Screen
           name="HabitReport"

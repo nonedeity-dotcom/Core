@@ -1,4 +1,4 @@
-import { toDateKey } from "./date";
+import { datesBetween, toDateKey } from "./date";
 
 /**
  * ISO week key ("2026-W35") for a local date key.
@@ -35,4 +35,15 @@ export function weekStart(dateKey: string): string {
 export function dayOfWeek(dateKey: string): number {
   const [y, m, d] = dateKey.split("-").map(Number);
   return ((new Date(y, m - 1, d).getDay() + 6) % 7) + 1;
+}
+
+/**
+ * Monday through `dateKey`, inclusive — the span a weekly habit's count is taken over.
+ *
+ * Three screens ask for this, and each had its own copy of the loop; one of them getting the
+ * week's first day wrong is the kind of difference nobody would notice until a weekly habit
+ * read "2 из 3" on one screen and "1 из 3" on another.
+ */
+export function weekDatesThrough(dateKey: string): string[] {
+  return datesBetween(weekStart(dateKey), dateKey);
 }

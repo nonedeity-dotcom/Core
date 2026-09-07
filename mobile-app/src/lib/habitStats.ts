@@ -151,6 +151,62 @@ export function habitStats(habit: Habit, logs: HabitLog[], today: string, frozen
 
 
 /**
+ * The chances this habit has spent out of its budget, judged for the day `offset` days ago.
+ *
+ * Offset, not a date, because the calendar bucket is taken from that day: on a Monday the
+ * week's budget is fresh even though the day being judged belongs to the week before.
+ *
+ * Only `own` counts as spent. A shared day off was granted by the other rule entirely and is
+ * not one of this habit's chances — it only keeps the run alive as the walk goes past it.
+ */
+function skipsUsedFor(
+  habit: Habit,
+  logs: HabitLog[],
+  excusedDays: Set<string>,
+  ownDays: Set<string>,
+  rule: SkipRule,
+  offset: number,
+): number {
+  const bucket = periodBucket(dateNDaysAgo(offset), rule.period);
+  let used = 0;
+  if (bucket !== null) {
+    for (const day of ownDays) if (periodBucket(day, rule.period) === bucket) used++;
+    return used;
+  }
+  // "За всю цепочку": walk back to the day this habit's run actually ended, counting the
+  // chances it spent on the way.
+  for (let i = offset + 1; i < HABIT_WINDOW_DAYS; i++) {
+    const day = dateNDaysAgo(i);
+    if (ownDays.has(day)) {
+      used++;
+      continue;
+    }
+    if (excusedDays.has(day)) continue;
+    if (!doneOn(habit, logs, day)) break;
+  }
+  return used;
+}
+
+/**
+ * How many of its own chances this habit still has for *today* — what the report shows.
+ *
+ * Zero whenever chances are not per habit: a shared day off forgives the day, not one habit,
+ * so "this habit has none left" would be the wrong sentence to put under its name.
+ */
+export function habitSkipsLeft(
+  habit: Habit,
+  logs: HabitLog[],
+  excused: string[],
+  own: string[],
+  rule: SkipRule = DEFAULT_SKIP_RULE,
+): number {
+  if (rule.mode !== "perHabit" || rule.count <= 0) return 0;
+  if (habitTarget(habit).kind === "weekly") return 0;
+  const used = skipsUsedFor(habit, logs, new Set(excused), new Set(own), rule, 0);
+  return Math.max(0, rule.count - used);
+}
+
+/**
  * The day this habit should spend one of its own chances on, or null.
  *
  * The per-habit mirror of freezeCandidate, and the same three rules: only yesterday, only
@@ -186,22 +242,6 @@ export function habitFreezeCandidate(
   // Nothing to save: this habit's run had already ended.
   if (!doneOn(habit, logs, beforeYesterday)) return null;
 
-  const bucket = periodBucket(yesterday, rule.period);
-  let used = 0;
-  if (bucket !== null) {
-    for (const day of ownDays) if (periodBucket(day, rule.period) === bucket) used++;
-  } else {
-    // "За всю цепочку": walk back to the day this habit's run actually ended, counting the
-    // chances it spent on the way. A shared day off keeps the walk going and costs nothing.
-    for (let i = 2; i < HABIT_WINDOW_DAYS; i++) {
-      const day = dateNDaysAgo(i);
-      if (ownDays.has(day)) {
-        used++;
-        continue;
-      }
-      if (excusedDays.has(day)) continue;
-      if (!doneOn(habit, logs, day)) break;
-    }
-  }
+  const used = skipsUsedFor(habit, logs, excusedDays, ownDays, rule, 1);
   return used >= rule.count ? null : yesterday;
 }

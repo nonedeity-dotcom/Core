@@ -6,13 +6,12 @@ import { colors } from "../theme/colors";
 import { dateNDaysAgo } from "../lib/date";
 import { plural } from "../lib/plural";
 import { Feather } from "@expo/vector-icons";
-import { habitStats } from "../lib/habitStats";
+import { habitStanding } from "../lib/habitStanding";
 import { habitGroup } from "../lib/habits";
 import { STREAK_WINDOW_DAYS } from "../lib/streak";
-import { useFold } from "../lib/useFold";
 import { useStreak, frozenDaysFor } from "../lib/useStreak";
 import { useTodayKey } from "../lib/useTodayKey";
-import { weekKey, dayOfWeek } from "../lib/week";
+import { weekKey, dayOfWeek, weekDatesThrough } from "../lib/week";
 import RotatingTip from "../components/RotatingTip";
 import StreakRing from "../components/StreakRing";
 import PhaseBar from "../components/PhaseBar";
@@ -75,10 +74,7 @@ export default function ReportScreen({
   const reviewDue = !reviewWritten && dayOfWeek(today) >= 5;
 
   // Also where the weekly freeze is granted — see useStreak.
-  const { streak, freezes, habitFreezes } = useStreak(today);
-  // Folded on arrival, every time: the report is one number, and a list left permanently
-  // unfolded buried it. See useFold.
-  const habitsFold = useFold();
+  const { streak, freezes, habitFreezes, skipRule } = useStreak(today);
 
   // Everything you are actually doing, in the two piles you sorted it into. "Потом" is the
   // only one left out: it is a plan, and a plan has nothing to report. Archived habits are
@@ -91,6 +87,18 @@ export default function ReportScreen({
     { id: "extra", title: "Дополнительно", habits: habits.filter((h) => habitGroup(h) === "extra") },
   ];
   const reportable = reportGroups.flatMap((g) => g.habits);
+  // Only to decide whether the row should raise its voice; the screen behind it works the
+  // number out again for each habit.
+  const urgentHabits = reportable.filter(
+    (h) =>
+      habitStanding(h, streakLogs, {
+        today,
+        excused: frozenDaysFor(h.id, freezes, habitFreezes),
+        own: habitFreezes[h.id] ?? [],
+        rule: skipRule,
+        weekDates: weekDatesThrough(today),
+      }).bucket === "urgent",
+  ).length;
   const nextMilestone = STREAK_MILESTONES.find((m) => m > streak) ?? null;
   const [justCelebrated, setJustCelebrated] = useState<number | null>(null);
 
@@ -139,72 +147,33 @@ export default function ReportScreen({
       <PhaseBar streak={streak} onPress={() => navigation.navigate("Phases")} />
 
       {/* Each habit's own run, which the ring above cannot show: it answers "did the whole
-          system hold today", so a habit added a week in inherits the whole streak. */}
+          system hold today", so a habit added a week in inherits the whole streak.
+
+          A row rather than a fold. Opened, the list was most of this screen — it pushed the
+          focus sessions and the review off the bottom of a page that exists for the number
+          at the top, and still gave ten habits a third of the height they wanted. Same two
+          taps to reach one habit either way. */}
       {reportable.length > 0 && (
-        <>
-          {/* Folds away like the calendar does: with eight habits the list is most of the
-              screen, and the ring above it is what the report opens for. */}
-          <Pressable
-            onPress={habitsFold.toggle}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: habitsFold.open }}
-            accessibilityLabel="По привычкам"
-            style={({ pressed }) => [styles.sectionHeader, pressed && styles.pressedRow]}
-          >
-            <Text style={styles.sectionLabel}>По привычкам</Text>
-            <View style={styles.sectionHeaderRight}>
-              {!habitsFold.open && <Text style={styles.subtleSmall}>{reportable.length}</Text>}
-              <Feather
-                name={habitsFold.open ? "chevron-up" : "chevron-down"}
-                size={16}
-                color={colors.textMuted}
-              />
-            </View>
-          </Pressable>
-          {habitsFold.open &&
-            reportGroups.map((group) =>
-              group.habits.length === 0 ? null : (
-                <View key={group.id}>
-                  {/* Named even when only one pile has anything in it: "Дополнительно" not
-                      counting towards the day is the whole reason these are separated. */}
-                  <Text style={styles.groupLabel}>{group.title}</Text>
-                  {group.habits.map((h) => {
-            // A habit is excused its own spent chances as well as the shared days off.
-            const stats = habitStats(h, streakLogs, today, frozenDaysFor(h.id, freezes, habitFreezes));
-            return (
-              <Pressable
-                key={h.id}
-                onPress={() => navigation.navigate("HabitReport", { habitId: h.id, title: h.label })}
-                accessibilityRole="button"
-                accessibilityLabel={`${h.label}: ${stats.streak}`}
-                style={({ pressed }) => [styles.habitRow, pressed && styles.pressedRow]}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.habitName} numberOfLines={1}>
-                    {h.label}
-                  </Text>
-                  <Text style={styles.subtleSmall}>
-                    {stats.streak > 0
-                      ? stats.unit === "days"
-                        ? `${stats.streak} ${plural(stats.streak, ["день", "дня", "дней"])} подряд`
-                        : `${stats.streak} ${plural(stats.streak, ["неделя", "недели", "недель"])} подряд`
-                      : "серии пока нет"}
-                  </Text>
-                </View>
-                {/* Seven dots, oldest on the left — a week at a glance without opening it. */}
-                <View style={styles.strip}>
-                  {stats.week.map((done, i) => (
-                    <View key={i} style={[styles.stripDot, done && styles.stripDotOn]} />
-                  ))}
-                </View>
-                <Feather name="chevron-right" size={16} color={colors.textMuted} />
-              </Pressable>
-              );
-                  })}
-                </View>
-              ),
-            )}
-        </>
+        <Pressable
+          onPress={() => navigation.navigate("HabitsReport")}
+          accessibilityRole="button"
+          accessibilityLabel="По привычкам"
+          style={({ pressed }) => [
+            styles.reviewRow,
+            urgentHabits > 0 && styles.reviewRowDue,
+            pressed && { opacity: 0.7 },
+          ]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.reviewLabel, urgentHabits > 0 && { color: colors.accent }]}>По привычкам</Text>
+            <Text style={styles.reviewHint}>
+              {urgentHabits > 0
+                ? `${urgentHabits} ${plural(urgentHabits, ["ждёт", "ждут", "ждут"])} сегодня — иначе серия оборвётся`
+                : `${reportable.length} ${plural(reportable.length, ["привычка", "привычки", "привычек"])} · своя серия у каждой`}
+            </Text>
+          </View>
+          <Text style={styles.reviewChevron}>›</Text>
+        </Pressable>
       )}
 
       <View style={styles.sessionsCard}>
@@ -257,9 +226,6 @@ export default function ReportScreen({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  sectionLabel: { color: colors.textMuted, fontSize: 12, marginTop: 22, marginBottom: 8 },
-  // Sits inside the already-open section, so it needs less air above it than sectionLabel.
-  groupLabel: { color: colors.textMuted, fontSize: 11, marginTop: 10, marginBottom: 6 },
   subtleSmall: { color: colors.textMuted, fontSize: 11 },
 
   celebration: {
@@ -304,21 +270,4 @@ const styles = StyleSheet.create({
   reviewHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 3 },
   reviewChevron: { color: colors.textMuted, fontSize: 20 },
 
-  sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  sectionHeaderRight: { flexDirection: "row", alignItems: "center", gap: 8 },
-  habitRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginBottom: 8,
-  },
-  pressedRow: { opacity: 0.75 },
-  habitName: { color: colors.text, fontSize: 14, fontWeight: "500" },
-  strip: { flexDirection: "row", gap: 4 },
-  stripDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.cardBorder },
-  stripDotOn: { backgroundColor: colors.accentGreen },
 });
