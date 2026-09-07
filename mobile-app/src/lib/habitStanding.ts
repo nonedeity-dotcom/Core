@@ -15,8 +15,13 @@ import type { Habit, HabitLog } from "../types";
 export type StandingBucket =
   /** Miss today and the run is gone, with nothing left to cover it. */
   | "urgent"
-  /** Ordinary: still owed, and a slip would survive. */
+  /** Ordinary: still owed today, and a slip would survive. */
   | "open"
+  /**
+   * Not owed *today*: a weekly habit you could skip and still close the week. It sits below
+   * the things that are owed today and above the finished ones — not done, just not now.
+   */
+  | "later"
   /** Nothing more owed today (or this week, for a weekly habit). */
   | "done";
 
@@ -26,7 +31,7 @@ export interface HabitStanding {
   note: string | null;
 }
 
-const ORDER: Record<StandingBucket, number> = { urgent: 0, open: 1, done: 2 };
+const ORDER: Record<StandingBucket, number> = { urgent: 0, open: 1, later: 2, done: 3 };
 
 /** Sort key, so the list and any test agree on what "sinks" means. */
 export function standingRank(bucket: StandingBucket): number {
@@ -55,17 +60,23 @@ function weeklyStanding(
 
   // Today through Sunday, today included.
   const daysLeft = 8 - dayOfWeek(today);
+  const days = (n: number) => `${n} ${n === 1 ? "день" : n < 5 ? "дня" : "дней"}`;
+
   if (need > daysLeft) {
     // Not urgent — urgent means "doing it now helps", and here nothing does.
-    return { bucket: "open", note: `за неделю ${done} из ${target} — до конца недели уже не успеть` };
+    return { bucket: "later", note: `за неделю ${done} из ${target} — до конца недели уже не успеть` };
   }
   if (need === daysLeft) {
     return {
       bucket: "urgent",
-      note: `нужны все оставшиеся ${daysLeft} ${daysLeft === 1 ? "день" : daysLeft < 5 ? "дня" : "дней"} — иначе неделя не закроется`,
+      note:
+        daysLeft === 1
+          ? `последний день недели — нужен ещё ${need === 1 ? "раз" : `${need} раза`}`
+          : `нужны все оставшиеся ${days(daysLeft)} — иначе неделя не закроется`,
     };
   }
-  return { bucket: "open", note: `за неделю ${done} из ${target}` };
+  // The slack itself is the point: this is why it sinks below what is owed today.
+  return { bucket: "later", note: `за неделю ${done} из ${target} · ещё ${days(daysLeft)}` };
 }
 
 export interface StandingInput {

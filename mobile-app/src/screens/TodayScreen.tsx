@@ -9,6 +9,8 @@ import { useTodayKey } from "../lib/useTodayKey";
 import { plural } from "../lib/plural";
 import { useFoldSet } from "../lib/useFold";
 import { weekStart, weekDatesThrough } from "../lib/week";
+import { habitStanding, standingRank, type HabitStanding } from "../lib/habitStanding";
+import { useStreak, frozenDaysFor } from "../lib/useStreak";
 import { DEFAULT_DAY_RULE, requiredForDay, type DayRule } from "../lib/dayRule";
 import {
   MAX_TARGET_COUNT,
@@ -65,6 +67,11 @@ export default function TodayScreen() {
     queryFn: () => api.getHabitLog(monday, today) as Promise<HabitLog[]>,
   });
   const weekDates = weekDatesThrough(today);
+
+  // The four months of marks each habit's own run is walked over, plus the chances it has
+  // spent. Shared with the report through React Query's cache rather than fetched twice —
+  // and this is also the one hook that grants a freeze, which is idempotent.
+  const { logs: streakLogs, freezes, habitFreezes, skipRule } = useStreak(today);
 
   // How much of the pile closes a day is a setting; the header is the one place on this
   // screen that has to say what today is actually asking for.
@@ -185,19 +192,26 @@ export default function TodayScreen() {
   };
 
   /**
-   * Whether a habit is finished as far as the list is concerned — which is what decides
-   * where it sits, so it has to be answered once, here, rather than inside each row.
+   * Where each habit stands — which decides both how its row looks and where it sits, so it
+   * is answered once, here, rather than inside each row.
    *
-   * A daily habit is closed when today's count reaches its target; a weekly one when the
-   * week's is met, because Monday's run is not undone by Tuesday arriving.
+   * Same rule the report uses, from the same place: a habit that will lose its run tonight
+   * rises, a weekly one you could skip today and still close the week sinks below what is
+   * actually owed today, and a finished one goes to the bottom.
    */
-  const isClosed = (h: Habit): boolean => {
-    if (habitTarget(h).kind === "weekly") {
-      const w = weeklyProgress(h, weekLogs, weekDates);
-      return w.count >= w.target;
-    }
-    return logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h);
-  };
+  // Today's rows come from the day query, which the optimistic tick writes into — the
+  // four-month one would still say "not done" for a second after a tap and bounce the row
+  // between piles.
+  const allLogs = [...streakLogs.filter((l) => l.date !== today), ...logs];
+
+  const standingOf = (h: Habit): HabitStanding =>
+    habitStanding(h, allLogs, {
+      today,
+      excused: frozenDaysFor(h.id, freezes, habitFreezes),
+      own: habitFreezes[h.id] ?? [],
+      rule: skipRule,
+      weekDates,
+    });
 
   const nowHabits = habits.filter((h) => habitGroup(h) === "now");
   const deciding = habitsThatDecideTheDay(habits);
@@ -243,11 +257,14 @@ export default function TodayScreen() {
         // An empty pile is only worth a heading while you are sorting things into it.
         if (inGroup.length === 0 && !editing) return null;
 
-        // Done ones sink. The split is by group rather than across the whole screen, so
-        // «Ввожу сейчас» — the pile that actually decides the day — stays visibly separate
-        // from the two that do not.
-        const open = inGroup.filter((h) => !isClosed(h));
-        const done = inGroup.filter(isClosed);
+        // Sorted by how much today wants each of them: what breaks tonight first, then what
+        // is owed today, then the weekly ones with room to spare. The split is by group
+        // rather than across the whole screen, so «Ввожу сейчас» — the pile that actually
+        // decides the day — stays visibly separate from the two that do not.
+        const standings = new Map(inGroup.map((h) => [h.id, standingOf(h)] as const));
+        const rank = (h: Habit) => standingRank(standings.get(h.id)!.bucket);
+        const open = inGroup.filter((h) => standings.get(h.id)!.bucket !== "done").sort((a, b) => rank(a) - rank(b));
+        const done = inGroup.filter((h) => standings.get(h.id)!.bucket === "done");
         const doneOpen = folds.isOpen(group.id);
 
         const row = (h: Habit) =>
@@ -271,7 +288,7 @@ export default function TodayScreen() {
               habit={h}
               group={group.id}
               editing={editing}
-              closed={isClosed(h)}
+              standing={standings.get(h.id)!}
               count={logCount(logs.find((l) => l.habitId === h.id))}
               minimalDone={!!logs.find((l) => l.habitId === h.id)?.minimal}
               week={weeklyProgress(h, weekLogs, weekDates)}
@@ -358,7 +375,7 @@ function HabitRow({
   habit,
   group,
   editing,
-  closed,
+  standing,
   count,
   minimalDone,
   week,
@@ -370,9 +387,12 @@ function HabitRow({
   habit: Habit;
   group: ItemGroup;
   editing: boolean;
-  /** Finished for now — today for a daily habit, the week for a weekly one. Decided by the
-   *  list, which needs the same answer to know where to put the row. */
-  closed: boolean;
+  /**
+   * Where this habit stands — finished, owed today, not owed until later in the week, or
+   * about to lose its run tonight. Decided by the list, which needs the same answer to know
+   * where to put the row, and carrying the line printed under the name.
+   */
+  standing: HabitStanding;
   count: number;
   /** The day was closed with the small version — shown as a ring rather than a filled dot. */
   minimalDone: boolean;
@@ -386,6 +406,11 @@ function HabitRow({
   const perDay = perDayTarget(habit);
   const doneToday = count >= perDay;
   const weekly = target.kind === "weekly";
+  const closed = standing.bucket === "done";
+  const urgent = standing.bucket === "urgent";
+  // Not owed today — a weekly habit with room left in the week. Slightly back, the way the
+  // «Потом» pile is: it is on the list, it is just not what today is asking for.
+  const parked = standing.bucket === "later";
   // `closed` — what the checkbox answers — comes from the list. For a daily habit it is
   // today; for a weekly one it is the *week*: "спорт 1 раз в неделю" done on Monday is not
   // undone by Tuesday arriving, and the box used to go back to empty the next morning as if
@@ -396,7 +421,16 @@ function HabitRow({
 
   return (
     <View style={styles.habitBlock}>
-      <View style={[styles.card, styles.cardInBlock, closed && styles.cardChecked, !tickable && styles.cardLater]}>
+      <View
+        style={[
+          styles.card,
+          styles.cardInBlock,
+          closed && styles.cardChecked,
+          urgent && styles.cardUrgent,
+          parked && styles.cardParked,
+          !tickable && styles.cardLater,
+        ]}
+      >
         <Pressable
           // Still tappable on a met week if today has no mark on it: a fourth run in a
           // week of three is a real thing that happened and should be recordable. What
@@ -439,15 +473,18 @@ function HabitRow({
                 {doneToday ? `Готово: ${perDay} из ${perDay}` : `Сделано ${count} из ${perDay}`}
               </Text>
             )}
-            {tickable && weekly && (
-              <Text style={styles.progress}>
-                {/* The box says whether the week is closed; this says how, and whether
-                    today is one of the days behind it. Without the second half a filled
-                    box on Thursday gives no way to tell "done today" from "done Monday". */}
-                {/* "2 из 1" is not a sentence. Past the target the count is still worth
-                    showing — an extra run happened — but as a total, not as a fraction. */}
-                {`${week.count > week.target ? `За неделю ${week.count}, цель ${week.target}` : `За неделю ${week.count} из ${week.target}`}${doneToday ? " · сегодня отмечено" : ""}`}
-              </Text>
+            {/* What today wants from this habit, in the words the report uses too: how much
+                of the week is behind it, how much room is left before it has to happen, or
+                that tonight is the last chance to keep its run. */}
+            {/* A finished daily habit says nothing: the green box says it, and the row is
+                already inside «Выполнено». A finished weekly one still reports its count. */}
+            {tickable && standing.note && !(standing.bucket === "done" && !weekly) && (
+              <View style={styles.noteRow}>
+                {urgent && <Feather name="alert-triangle" size={10} color={colors.accent} />}
+                <Text style={[styles.progress, urgent && styles.progressUrgent]}>
+                  {`${standing.note}${weekly && doneToday ? " · сегодня отмечено" : ""}`}
+                </Text>
+              </View>
             )}
             {!tickable && <Text style={styles.progress}>{describeTarget(target)}</Text>}
           </View>
@@ -708,6 +745,10 @@ const styles = StyleSheet.create({
   cardMain: { flexDirection: "row", gap: 12, alignItems: "flex-start", flex: 1 },
   cardInBlock: { marginBottom: 0 },
   cardChecked: { backgroundColor: "rgba(143,184,154,0.12)", borderColor: colors.accentGreenDark },
+  // Warm accent as an edge, the same mark the report puts on a habit that loses its run
+  // tonight — not a filled card, which on a checklist would shout over the ticking.
+  cardUrgent: { borderLeftWidth: 3, borderLeftColor: colors.accent },
+  cardParked: { opacity: 0.82 },
   cardLater: { opacity: 0.6 },
   cardEditing: { borderColor: colors.accent },
   checkbox: {
@@ -737,6 +778,8 @@ const styles = StyleSheet.create({
   label: { color: colors.text, fontSize: 15, fontWeight: "500" },
   labelLater: { color: colors.textMuted },
   hint: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+  noteRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
+  progressUrgent: { color: colors.accent, fontWeight: "600" },
   progress: { color: colors.textMuted, fontSize: 11, marginTop: 3 },
   autoTag: {
     flexDirection: "row",
