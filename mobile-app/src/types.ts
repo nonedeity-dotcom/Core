@@ -13,6 +13,37 @@ export interface HabitTarget {
   count: number;
 }
 
+/**
+ * When a habit is supposed to happen.
+ *
+ * Everything is optional, and absent means "whenever" — which is what every habit meant
+ * before this existed. Minutes from midnight rather than a string, so comparing is comparing
+ * and the timezone never enters into it: the window is read against the phone's own clock,
+ * the same clock that decides which day it is.
+ */
+export interface HabitSchedule {
+  /** Start of the window, or the deadline itself when `to` is absent. */
+  from?: number;
+  /** End of the window. Absent means `from` is a deadline: do it by then. */
+  to?: number;
+  /**
+   * ISO weekdays (1 = Monday) this habit is expected on. Only meaningful for a weekly
+   * habit — a daily one is owed every day by definition, and letting days narrow that would
+   * be a second, contradictory way of saying how often.
+   */
+  days?: number[];
+  /**
+   * What missing this habit's window costs — its own answer, not the app's.
+   *
+   * Absent means "whatever the default in «Настройки админа» says", which is how one setting
+   * can cover most habits while the odd one disagrees: an hour without the phone in the
+   * morning is a promise worth losing the day over, and "выпить воды" at the same hour is
+   * not. Lives inside the schedule because without a window it means nothing, and clearing
+   * the window should clear it too.
+   */
+  late?: "none" | "fail";
+}
+
 export interface Habit {
   id: string;
   label: string;
@@ -38,6 +69,15 @@ export interface Habit {
    *  instead of by tapping — currently only "screentime" (from creker), see
    *  src/integrations/screenTime.ts. */
   auto?: "screentime" | null;
+  /**
+   * When in the day — and, for a weekly habit, on which days — it is supposed to happen.
+   *
+   * Absent means whenever, which is what every habit meant before this existed and what most
+   * of them should go on meaning: a time is worth setting for the ones that only work at a
+   * particular hour, and for the rest it is a rule with nothing behind it. What a missed
+   * window costs is a separate setting, not a property of the habit — see LateRule.
+   */
+  schedule?: HabitSchedule;
   /**
    * The local date the habit joined the checklist.
    *

@@ -2,6 +2,15 @@ import { dateNDaysAgo } from "./date";
 import { habitTarget, logCount, perDayTarget, weeklyProgress } from "./habits";
 import { habitSkipsLeft, habitStreakDays } from "./habitStats";
 import { DEFAULT_SKIP_RULE, type SkipRule } from "./skipRule";
+import {
+  DEFAULT_LATE_RULE,
+  effectiveLateRule,
+  formatWindow,
+  scheduledDays,
+  scheduledOn,
+  windowState,
+  type LateRule,
+} from "./habitSchedule";
 import { dayOfWeek } from "./week";
 import type { Habit, HabitLog } from "../types";
 
@@ -52,14 +61,30 @@ function weeklyStanding(
   logs: HabitLog[],
   today: string,
   weekDates: string[],
+  nowMinutes: number,
+  lateRule: LateRule,
 ): HabitStanding {
   const target = habitTarget(habit).count;
   const done = weeklyProgress(habit, logs, weekDates).count;
   const need = target - done;
   if (need <= 0) return { bucket: "done", note: `за неделю ${done} из ${target} — закрыта` };
 
-  // Today through Sunday, today included.
-  const daysLeft = 8 - dayOfWeek(today);
+  const window = formatWindow(habit.schedule);
+  // Days it is actually expected on, today included, through Sunday. Chosen weekdays narrow
+  // this: "спорт по вторникам и четвергам" has two days left on Monday, not seven.
+  const expected = scheduledDays(habit.schedule);
+  const daysLeft = Array.from({ length: 8 - dayOfWeek(today) }, (_, i) => dayOfWeek(today) + i).filter((d) =>
+    expected.includes(d),
+  ).length;
+
+  if (!scheduledOn(habit, today)) {
+    return { bucket: "later", note: `за неделю ${done} из ${target} · сегодня не по расписанию` };
+  }
+  const clock = windowState(habit.schedule, nowMinutes);
+  if (clock === "early") return { bucket: "later", note: `за неделю ${done} из ${target} · не раньше ${window}` };
+  if (clock === "late" && lateRule === "fail") {
+    return { bucket: "later", note: `за неделю ${done} из ${target} · время вышло (${window})` };
+  }
   const days = (n: number) => `${n} ${n === 1 ? "день" : n < 5 ? "дня" : "дней"}`;
 
   if (need > daysLeft) {
@@ -81,6 +106,10 @@ function weeklyStanding(
 
 export interface StandingInput {
   today: string;
+  /** Minutes since midnight, passed in so every screen reads the same clock. */
+  nowMinutes: number;
+  /** The default for habits that have not answered for themselves. */
+  lateRule: LateRule;
   /** Every day this habit is let off: the shared days plus its own spent chances. */
   excused: string[];
   /** Only the chances this habit spent itself. */
@@ -91,11 +120,25 @@ export interface StandingInput {
 }
 
 export function habitStanding(habit: Habit, logs: HabitLog[], input: StandingInput): HabitStanding {
-  const { today, excused, own, rule, weekDates } = input;
+  const { today, excused, own, rule, weekDates, nowMinutes } = input;
+  // Each habit answers for itself where it has an answer; the setting is only the fallback.
+  const lateRule = effectiveLateRule(habit, input.lateRule ?? DEFAULT_LATE_RULE);
+  const weekly = habitTarget(habit).kind === "weekly";
+  const window = formatWindow(habit.schedule);
 
-  if (habitTarget(habit).kind === "weekly") return weeklyStanding(habit, logs, today, weekDates);
+  if (weekly) return weeklyStanding(habit, logs, today, weekDates, nowMinutes, lateRule);
 
   if (doneOnDate(habit, logs, today)) return { bucket: "done", note: "сегодня закрыта" };
+
+  // The clock, before anything about chances: a habit set for tonight is not something
+  // today is asking for yet, however thin its budget is.
+  const clock = windowState(habit.schedule, nowMinutes);
+  if (clock === "early") return { bucket: "later", note: `не раньше ${window}` };
+  if (clock === "late") {
+    return lateRule === "fail"
+      ? { bucket: "later", note: `время вышло (${window}) — день провален` }
+      : { bucket: "open", note: `время вышло (${window}) — но отметить ещё можно` };
+  }
 
   // Nothing to lose yet: a habit with no run cannot break one tonight.
   const streak = habitStreakDays(habit, logs, excused);

@@ -18,6 +18,7 @@ import { toDateKey } from "./date";
 import { normalizeDayRule } from "./dayRule";
 import { normalizeSkipRule } from "./skipRule";
 import { normalizeTipPrefs } from "./tipLibrary";
+import { normalizeLateRule, normalizeSchedule } from "./habitSchedule";
 import type {
   Habit,
   HabitTarget,
@@ -120,6 +121,14 @@ function parseData(raw: unknown): BackupData {
           group: isGroup(h.group) ? h.group : "now",
           target: parseTarget(h.target),
           auto: h.auto === "screentime" ? "screentime" : null,
+          // Carried through rather than rebuilt from the parts above. Without these a
+          // restore quietly undid three of the rules the streak runs on: an undated habit
+          // judges nothing, one that lost `nowSince` starts answering for the days it spent
+          // outside the checklist again, and an archived one walks back into it.
+          ...(isDateKey(h.createdAt) ? { createdAt: h.createdAt } : {}),
+          ...(isDateKey(h.nowSince) ? { nowSince: h.nowSince } : {}),
+          ...(isStr(h.archivedAt) ? { archivedAt: h.archivedAt } : {}),
+          ...(normalizeSchedule(h.schedule) ? { schedule: normalizeSchedule(h.schedule) } : {}),
         }
       : null,
   );
@@ -222,6 +231,7 @@ function parseData(raw: unknown): BackupData {
     habitFreezes: parseHabitFreezes(d.habitFreezes),
     // Missing from files written before the reference was editable.
     tipPrefs: normalizeTipPrefs(d.tipPrefs),
+    lateRule: normalizeLateRule(d.lateRule),
   };
 }
 

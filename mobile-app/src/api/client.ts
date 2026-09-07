@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type {
   HabitTarget,
+  HabitSchedule,
   ItemGroup,
   Habit,
   HabitLog,
@@ -16,6 +17,7 @@ import { habitGroup, itemGroup } from "../lib/habits";
 import { DEFAULT_DAY_RULE, normalizeDayRule, type DayRule } from "../lib/dayRule";
 import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skipRule";
 import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipLibrary";
+import { DEFAULT_LATE_RULE, normalizeLateRule, normalizeSchedule, type LateRule } from "../lib/habitSchedule";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -42,6 +44,7 @@ const KEYS = {
   skipRule: "skip-rule-v1",
   habitFreezes: "habit-freezes-v1",
   tipPrefs: "tip-prefs-v1",
+  lateRule: "late-rule-v1",
 };
 
 export interface CalendarPrefs {
@@ -325,7 +328,15 @@ export const api = {
    */
   async updateHabit(
     id: string,
-    data: { label?: string; hint?: string; minimal?: string | null; group?: ItemGroup; target?: HabitTarget },
+    data: {
+      label?: string;
+      hint?: string;
+      minimal?: string | null;
+      group?: ItemGroup;
+      target?: HabitTarget;
+      /** null clears the schedule; undefined leaves it as it was. */
+      schedule?: HabitSchedule | null;
+    },
   ): Promise<{ ok: true }> {
     return withKeyLock(KEYS.habits, async () => {
       const habits = await read<Habit[]>(KEYS.habits, []);
@@ -334,7 +345,15 @@ export const api = {
         habits.map((h) => {
           if (h.id !== id) return h;
           const joiningNow = data.group === "now" && habitGroup(h) !== "now";
-          return joiningNow ? { ...h, ...data, nowSince: tomorrowKey() } : { ...h, ...data };
+          const { schedule, ...rest } = data;
+          const next: Habit = { ...h, ...rest };
+          if (schedule === null) delete next.schedule;
+          else if (schedule !== undefined) {
+            const clean = normalizeSchedule(schedule);
+            if (clean) next.schedule = clean;
+            else delete next.schedule;
+          }
+          return joiningNow ? { ...next, nowSince: tomorrowKey() } : next;
         }),
       );
       return { ok: true as const };
@@ -549,6 +568,15 @@ export const api = {
       await write(KEYS.tipPrefs, normalizeTipPrefs(prefs));
       return { ok: true as const };
     });
+  },
+
+  /** What a missed window costs — see LateRule. A rule about all habits, not about one. */
+  async getLateRule(): Promise<LateRule> {
+    return normalizeLateRule(await read<unknown>(KEYS.lateRule, DEFAULT_LATE_RULE));
+  },
+  async setLateRule(rule: LateRule): Promise<{ ok: true }> {
+    await write(KEYS.lateRule, normalizeLateRule(rule));
+    return { ok: true as const };
   },
 
   async getFreezes(): Promise<string[]> {
@@ -826,6 +854,8 @@ export interface BackupData {
   habitFreezes: Record<string, string[]>;
   /** Edits to the reference. Absent from older files, which import as the untouched one. */
   tipPrefs: TipPrefs;
+  /** What a missed window costs. Absent from older files, which import as "ничего". */
+  lateRule: LateRule;
 }
 
 /** What an import actually changed, so the UI can report it honestly. */
@@ -863,7 +893,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -881,6 +911,7 @@ export async function exportData(): Promise<BackupData> {
       api.getSkipRule(),
       api.getHabitFreezes(),
       api.getTipPrefs(),
+      api.getLateRule(),
     ]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -899,6 +930,7 @@ export async function exportData(): Promise<BackupData> {
     skipRule,
     habitFreezes,
     tipPrefs,
+    lateRule,
   };
 }
 
@@ -922,6 +954,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.skipRule, normalizeSkipRule(data.skipRule)),
       write(KEYS.habitFreezes, data.habitFreezes),
       write(KEYS.tipPrefs, normalizeTipPrefs(data.tipPrefs)),
+      write(KEYS.lateRule, normalizeLateRule(data.lateRule)),
     ]);
     return {
       habits: data.habits.length,

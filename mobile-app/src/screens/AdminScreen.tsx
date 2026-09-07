@@ -14,6 +14,7 @@ import {
   requiredForDay,
   type DayRule,
 } from "../lib/dayRule";
+import { DEFAULT_LATE_RULE, type LateRule } from "../lib/habitSchedule";
 import {
   DEFAULT_SKIP_RULE,
   MAX_SKIPS,
@@ -258,6 +259,64 @@ function SkipRuleCard({ rule, onChange }: { rule: SkipRule; onChange: (rule: Ski
   );
 }
 
+
+/**
+ * What a missed window costs, for the habits that have not answered for themselves.
+ *
+ * The answer is not the same for every habit — an hour without the phone in the morning is a
+ * promise worth losing the day over, and a glass of water at the same hour is not — so each
+ * one can override this in its own editor. What lives here is the default the rest follow.
+ *
+ * "Ничего" is that default, and it is the honest one: a time you set to be reminded is not
+ * the same promise as a time you set to be judged by, and most of them are the first kind.
+ */
+function LateRuleCard({ rule, onChange }: { rule: LateRule; onChange: (rule: LateRule) => void }) {
+  const options: { kind: LateRule; title: string; blurb: string }[] = [
+    {
+      kind: "none",
+      title: "Ничего",
+      blurb: "Время — напоминание. Отметить можно и позже, день засчитается как обычно.",
+    },
+    {
+      kind: "fail",
+      title: "День провален",
+      blurb:
+        "Окно закрылось — отметить уже нельзя, и привычка идёт в этот день как невыполненная. Отказ, а не тихое игнорирование: настройка, которая принимает отметку и потом её не считает, ничего не делает.",
+    },
+  ];
+  const current = options.find((o) => o.kind === rule) ?? options[0];
+
+  return (
+    <View style={styles.limitCard}>
+      <View>
+        <Text style={styles.rowLabel}>Если не выполнить в назначенное время</Text>
+        <Text style={styles.rowHint}>{current.title}</Text>
+      </View>
+
+      <View style={styles.chipRow}>
+        {options.map((o) => (
+          <Pressable
+            key={o.kind}
+            onPress={() => onChange(o.kind)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: rule === o.kind }}
+            style={({ pressed }) => [styles.chip, rule === o.kind && styles.chipOn, pressed && styles.pressed]}
+          >
+            <Text style={[styles.chipText, rule === o.kind && styles.chipTextOn]}>{o.title}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <Text style={styles.rowHint}>{current.blurb}</Text>
+      <Text style={styles.rowHint}>
+        Это значение по умолчанию. У каждой привычки со временем можно выбрать своё — в её
+        редакторе, рядом с часами. Привычек без заданного времени не касается вообще: их
+        по-прежнему можно отметить когда угодно.
+      </Text>
+    </View>
+  );
+}
+
 export default function AdminScreen() {
   const qc = useQueryClient();
 
@@ -275,6 +334,10 @@ export default function AdminScreen() {
   const { data: skipRule = DEFAULT_SKIP_RULE } = useQuery<SkipRule>({
     queryKey: ["skipRule"],
     queryFn: () => api.getSkipRule(),
+  });
+  const { data: lateRule = DEFAULT_LATE_RULE } = useQuery<LateRule>({
+    queryKey: ["lateRule"],
+    queryFn: () => api.getLateRule(),
   });
 
   // Both invalidate the same set: every verdict in the app is derived from these two.
@@ -298,6 +361,13 @@ export default function AdminScreen() {
       invalidate();
     },
   });
+  const setLateRule = useMutation({
+    mutationFn: (rule: LateRule) => api.setLateRule(rule),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["lateRule"] });
+      invalidate();
+    },
+  });
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
@@ -311,6 +381,9 @@ export default function AdminScreen() {
 
       <Text style={[styles.sectionLabel, styles.spaced]}>Пропуски</Text>
       <SkipRuleCard rule={skipRule} onChange={(r) => setSkipRule.mutate(r)} />
+
+      <Text style={[styles.sectionLabel, styles.spaced]}>Время выполнения</Text>
+      <LateRuleCard rule={lateRule} onChange={(r) => setLateRule.mutate(r)} />
     </ScrollView>
   );
 }

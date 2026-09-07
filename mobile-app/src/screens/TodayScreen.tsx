@@ -6,10 +6,19 @@ import { api } from "../api/client";
 import { colors } from "../theme/colors";
 import { confirmDestructive } from "../lib/confirm";
 import { useTodayKey } from "../lib/useTodayKey";
+import { useNowMinutes } from "../lib/useNowMinutes";
+import { DEFAULT_LATE_RULE, type LateRule } from "../lib/habitSchedule";
 import { plural } from "../lib/plural";
 import { useFoldSet } from "../lib/useFold";
 import { weekStart, weekDatesThrough } from "../lib/week";
 import { habitStanding, standingRank, type HabitStanding } from "../lib/habitStanding";
+import {
+  MINUTES_IN_DAY,
+  canMarkNow,
+  formatSchedule,
+  formatWindow,
+  normalizeSchedule,
+} from "../lib/habitSchedule";
 import { useStreak, frozenDaysFor } from "../lib/useStreak";
 import { DEFAULT_DAY_RULE, requiredForDay, type DayRule } from "../lib/dayRule";
 import {
@@ -22,7 +31,7 @@ import {
   weeklyProgress,
 } from "../lib/habits";
 import { syncScreenTimeHabit } from "../integrations/screenTime";
-import type { Habit, HabitLog, HabitTarget, ItemGroup } from "../types";
+import type { Habit, HabitLog, HabitSchedule, HabitTarget, ItemGroup } from "../types";
 
 /**
  * The three piles, in the order they are shown. Only the first decides the day; the reason
@@ -38,6 +47,13 @@ const GROUPS: { id: ItemGroup; title: string; blurb: string }[] = [
 export default function TodayScreen() {
   const qc = useQueryClient();
   const today = useTodayKey();
+  // Re-reads once a minute, so a window closing at 23:00 closes on the screen you are
+  // looking at rather than on the next thing that happens to re-render.
+  const minutes = useNowMinutes();
+  const { data: lateRule = DEFAULT_LATE_RULE } = useQuery<LateRule>({
+    queryKey: ["lateRule"],
+    queryFn: () => api.getLateRule(),
+  });
   const [editingId, setEditingId] = useState<string | null>(null);
   /** Whether the per-row controls and the add row are on show. Off by default. */
   const [editing, setEditing] = useState(false);
@@ -45,6 +61,7 @@ export default function TodayScreen() {
   const [editMinimal, setEditMinimal] = useState("");
   const [editGroup, setEditGroup] = useState<ItemGroup>("now");
   const [editTarget, setEditTarget] = useState<HabitTarget>({ kind: "daily", count: 1 });
+  const [editSchedule, setEditSchedule] = useState<HabitSchedule | null>(null);
   const [newLabel, setNewLabel] = useState("");
   const [adding, setAdding] = useState(false);
   // One per group, and closed again the moment you leave the tab.
@@ -135,8 +152,21 @@ export default function TodayScreen() {
   });
 
   const updateHabit = useMutation({
-    mutationFn: (data: { id: string; label: string; minimal: string | null; group: ItemGroup; target: HabitTarget }) =>
-      api.updateHabit(data.id, { label: data.label, minimal: data.minimal, group: data.group, target: data.target }),
+    mutationFn: (data: {
+      id: string;
+      label: string;
+      minimal: string | null;
+      group: ItemGroup;
+      target: HabitTarget;
+      schedule: HabitSchedule | null;
+    }) =>
+      api.updateHabit(data.id, {
+        label: data.label,
+        minimal: data.minimal,
+        group: data.group,
+        target: data.target,
+        schedule: data.schedule,
+      }),
     onSuccess: () => {
       setEditingId(null);
       invalidateHabits();
@@ -171,6 +201,7 @@ export default function TodayScreen() {
     setEditMinimal(h.minimal ?? "");
     setEditGroup(habitGroup(h));
     setEditTarget(habitTarget(h));
+    setEditSchedule(h.schedule ?? null);
   };
 
   const saveEdit = () => {
@@ -182,6 +213,7 @@ export default function TodayScreen() {
         minimal: editMinimal.trim() || null,
         group: editGroup,
         target: editTarget,
+        schedule: editSchedule,
       });
     } else setEditingId(null);
   };
@@ -211,6 +243,8 @@ export default function TodayScreen() {
       own: habitFreezes[h.id] ?? [],
       rule: skipRule,
       weekDates,
+      nowMinutes: minutes,
+      lateRule,
     });
 
   const nowHabits = habits.filter((h) => habitGroup(h) === "now");
@@ -279,6 +313,8 @@ export default function TodayScreen() {
               onGroup={setEditGroup}
               target={editTarget}
               onTarget={setEditTarget}
+              schedule={editSchedule}
+              onSchedule={setEditSchedule}
               onSave={saveEdit}
               onCancel={() => setEditingId(null)}
             />
@@ -289,6 +325,7 @@ export default function TodayScreen() {
               group={group.id}
               editing={editing}
               standing={standings.get(h.id)!}
+              markable={canMarkNow(h, lateRule, minutes)}
               count={logCount(logs.find((l) => l.habitId === h.id))}
               minimalDone={!!logs.find((l) => l.habitId === h.id)?.minimal}
               week={weeklyProgress(h, weekLogs, weekDates)}
@@ -376,6 +413,7 @@ function HabitRow({
   group,
   editing,
   standing,
+  markable,
   count,
   minimalDone,
   week,
@@ -393,6 +431,12 @@ function HabitRow({
    * where to put the row, and carrying the line printed under the name.
    */
   standing: HabitStanding;
+  /**
+   * False once the window has closed and the rule says a missed window costs the day. The
+   * tap is refused rather than quietly not counting — a setting that accepts the tick and
+   * then ignores it is a setting that does nothing.
+   */
+  markable: boolean;
   count: number;
   /** The day was closed with the small version — shown as a ring rather than a filled dot. */
   minimalDone: boolean;
@@ -436,10 +480,10 @@ function HabitRow({
           // week of three is a real thing that happened and should be recordable. What
           // stops a tap is today already being marked, which is the case where it would
           // do nothing.
-          onPress={() => tickable && !doneToday && onBump()}
-          disabled={!tickable || doneToday}
+          onPress={() => tickable && markable && !doneToday && onBump()}
+          disabled={!tickable || !markable || doneToday}
           accessibilityRole={perDay > 1 ? "button" : "checkbox"}
-          accessibilityState={{ checked: closed, disabled: !tickable || doneToday }}
+          accessibilityState={{ checked: closed, disabled: !tickable || !markable || doneToday }}
           accessibilityLabel={
             weekly
               ? `${habit.label}: за неделю ${week.count} из ${week.target}`
@@ -509,7 +553,7 @@ function HabitRow({
 
       {/* Only where a minimal version was declared, and only while the full one is still
           open. Ticking it closes the day the small way — step 4 of the protocol. */}
-      {tickable && !!habit.minimal && !closed && (
+      {tickable && markable && !!habit.minimal && !closed && (
         <Pressable
           onPress={() => onBump(true)}
           accessibilityRole="button"
@@ -534,6 +578,8 @@ function HabitEditor({
   onGroup,
   target,
   onTarget,
+  schedule,
+  onSchedule,
   onSave,
   onCancel,
 }: {
@@ -545,6 +591,9 @@ function HabitEditor({
   onGroup: (v: ItemGroup) => void;
   target: HabitTarget;
   onTarget: (v: HabitTarget) => void;
+  /** null when the habit can be done whenever, which is the default and usually the answer. */
+  schedule: HabitSchedule | null;
+  onSchedule: (v: HabitSchedule | null) => void;
   onSave: () => void;
   onCancel: () => void;
 }) {
@@ -638,6 +687,8 @@ function HabitEditor({
           ? `День закрыт, когда отмечено ${target.count} ${plural(target.count, ["раз", "раза", "раз"])}.`
           : `${target.count} ${plural(target.count, ["день", "дня", "дней"])} в неделю. Недельные привычки не рушат зачёт дня.`}
       </Text>
+
+      <ScheduleFields target={target} schedule={schedule} onSchedule={onSchedule} />
     </View>
   );
 }
@@ -648,6 +699,213 @@ function describeTarget(target: HabitTarget): string {
     : `${target.count} ${plural(target.count, ["раз", "раза", "раз"])} в неделю`;
 }
 
+
+
+/**
+ * When the habit is supposed to happen: a time or a window, and — for a weekly one — which
+ * days.
+ *
+ * Off by default and folded away, because for most habits the honest answer is "whenever"
+ * and a form that asks for an hour invites inventing one. What a missed window costs is not
+ * here: that is one rule about all habits, and it lives in «Настройки админа».
+ */
+function ScheduleFields({
+  target,
+  schedule,
+  onSchedule,
+}: {
+  target: HabitTarget;
+  schedule: HabitSchedule | null;
+  onSchedule: (v: HabitSchedule | null) => void;
+}) {
+  const on = schedule !== null;
+  const from = schedule?.from;
+  const to = schedule?.to;
+  const days = schedule?.days ?? [];
+  const weekly = target.kind === "weekly";
+
+  const patch = (next: Partial<HabitSchedule>) => onSchedule(normalizeSchedule({ ...schedule, ...next }) ?? {});
+
+  // Steps of 30 minutes: a habit set to 07:45 rather than 08:00 is a false precision, and a
+  // wheel picker for it would be more control than the thing being controlled.
+  const step = (field: "from" | "to", delta: number) => {
+    const base = field === "from" ? (from ?? 8 * 60) : (to ?? (from ?? 8 * 60) + 60);
+    const value = (base + delta * 30 + MINUTES_IN_DAY) % MINUTES_IN_DAY;
+    patch({ [field]: value } as Partial<HabitSchedule>);
+  };
+
+  const clock = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
+
+  return (
+    <>
+      <Text style={styles.editLabel}>Когда</Text>
+      <View style={styles.chipRow}>
+        <Pressable
+          onPress={() => onSchedule(on ? null : { from: 8 * 60 })}
+          accessibilityRole="radio"
+          accessibilityState={{ selected: !on }}
+          style={({ pressed }) => [styles.chip, !on && styles.chipOn, pressed && styles.dimmed]}
+        >
+          <Text style={[styles.chipText, !on && styles.chipTextOn]}>В любое время</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => onSchedule(on ? { ...schedule, from: from ?? 8 * 60 } : { from: 8 * 60 })}
+          accessibilityRole="radio"
+          accessibilityState={{ selected: on }}
+          style={({ pressed }) => [styles.chip, on && styles.chipOn, pressed && styles.dimmed]}
+        >
+          <Text style={[styles.chipText, on && styles.chipTextOn]}>По времени</Text>
+        </Pressable>
+      </View>
+
+      {on && (
+        <>
+          <View style={styles.timeRow}>
+            <Text style={styles.timeLabel}>{to === undefined ? "До" : "С"}</Text>
+            <TimeStepper
+              value={from ?? 8 * 60}
+              label={clock(from ?? 8 * 60)}
+              onStep={(d) => step("from", d)}
+              name={to === undefined ? "срок" : "начало"}
+            />
+          </View>
+
+          {to === undefined ? (
+            <Pressable
+              onPress={() => patch({ to: (from ?? 8 * 60) + 60 })}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.chip, styles.chipWide, pressed && styles.dimmed]}
+            >
+              <Text style={styles.chipText}>Задать промежуток «от — до»</Text>
+            </Pressable>
+          ) : (
+            <View style={styles.timeRow}>
+              <Text style={styles.timeLabel}>До</Text>
+              <TimeStepper value={to} label={clock(to)} onStep={(d) => step("to", d)} name="конец" />
+              <Pressable
+                onPress={() => onSchedule({ ...schedule, to: undefined })}
+                accessibilityRole="button"
+                accessibilityLabel="Убрать промежуток"
+                style={({ pressed }) => [styles.iconBtn, pressed && styles.dimmed]}
+              >
+                <Feather name="x" size={14} color={colors.textMuted} />
+              </Pressable>
+            </View>
+          )}
+        </>
+      )}
+
+      {on && (
+        <>
+          <Text style={styles.editLabel}>Если не успеть</Text>
+          <View style={styles.chipRow}>
+            {([
+              [undefined, "Как в настройках"],
+              ["none", "Ничего"],
+              ["fail", "День провален"],
+            ] as const).map(([value, title]) => {
+              const picked = (schedule?.late ?? undefined) === value;
+              return (
+                <Pressable
+                  key={title}
+                  onPress={() => onSchedule({ ...schedule, late: value })}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: picked }}
+                  style={({ pressed }) => [styles.chip, picked && styles.chipOn, pressed && styles.dimmed]}
+                >
+                  <Text style={[styles.chipText, picked && styles.chipTextOn]}>{title}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </>
+      )}
+
+      {/* Days only for a weekly habit. A daily one is owed every day by definition, and
+          letting days narrow that would be a second, contradictory way of saying how often. */}
+      {weekly && (
+        <>
+          <Text style={styles.editLabel}>В какие дни</Text>
+          <View style={styles.chipRow}>
+            {([1, 2, 3, 4, 5, 6, 7] as const).map((d) => {
+              const picked = days.includes(d);
+              return (
+                <Pressable
+                  key={d}
+                  onPress={() => {
+                    const next = picked ? days.filter((x) => x !== d) : [...days, d];
+                    onSchedule(normalizeSchedule({ ...schedule, days: next }) ?? null);
+                  }}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: picked }}
+                  style={({ pressed }) => [styles.dayChip, picked && styles.chipOn, pressed && styles.dimmed]}
+                >
+                  <Text style={[styles.chipText, picked && styles.chipTextOn]}>{DAY_LABELS[d]}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </>
+      )}
+
+      <Text style={styles.editNote}>
+        {describeSchedule(schedule, weekly)}
+      </Text>
+    </>
+  );
+}
+
+const DAY_LABELS: Record<number, string> = { 1: "пн", 2: "вт", 3: "ср", 4: "чт", 5: "пт", 6: "сб", 7: "вс" };
+
+function describeSchedule(schedule: HabitSchedule | null, weekly: boolean): string {
+  const line = formatSchedule(schedule ?? undefined);
+  if (!line) return weekly ? "В любой день и в любое время." : "В любое время дня.";
+  const window = formatWindow(schedule ?? undefined);
+  const deadline = schedule?.to === undefined && schedule?.from !== undefined;
+  const when = deadline ? `Отметить нужно до ${window}` : "Отметить нужно внутри промежутка";
+  const cost =
+    schedule?.late === "fail"
+      ? "Не успел — день провален, отметить уже нельзя."
+      : schedule?.late === "none"
+        ? "Не успел — ничего: отметить можно и позже."
+        : "Что будет, если не успеть, берётся из «Настроек админа».";
+  return `${line}. ${when}. ${cost}`;
+}
+
+/** −/+ by half an hour, the same stepper shape the rest of the app uses. */
+function TimeStepper({
+  value,
+  label,
+  onStep,
+  name,
+}: {
+  value: number;
+  label: string;
+  onStep: (delta: number) => void;
+  name: string;
+}) {
+  return (
+    <View style={styles.stepper}>
+      <Pressable
+        onPress={() => onStep(-1)}
+        accessibilityRole="button"
+        accessibilityLabel={`Раньше: ${name}`}
+        style={({ pressed }) => [styles.stepBtn, pressed && styles.dimmed]}
+      >
+        <Text style={styles.stepBtnText}>−</Text>
+      </Pressable>
+      <Text style={styles.timeValue}>{label}</Text>
+      <Pressable
+        onPress={() => onStep(1)}
+        accessibilityRole="button"
+        accessibilityLabel={`Позже: ${name}`}
+        style={({ pressed }) => [styles.stepBtn, pressed && styles.dimmed]}
+      >
+        <Text style={styles.stepBtnText}>+</Text>
+      </Pressable>
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
@@ -693,6 +951,27 @@ const styles = StyleSheet.create({
   editLabel: { color: colors.textMuted, fontSize: 11, marginTop: 4 },
   editNote: { color: colors.textMuted, fontSize: 11, lineHeight: 16 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
+  chipWide: { alignSelf: "flex-start" },
+  dayChip: {
+    minWidth: 34,
+    alignItems: "center",
+    paddingHorizontal: 6,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.bg,
+  },
+  timeRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  timeLabel: { color: colors.textMuted, fontSize: 12, minWidth: 20 },
+  timeValue: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "600",
+    fontVariant: ["tabular-nums"],
+    minWidth: 56,
+    textAlign: "center",
+  },
   chip: {
     paddingHorizontal: 10,
     paddingVertical: 6,

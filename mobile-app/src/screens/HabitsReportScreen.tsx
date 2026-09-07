@@ -1,8 +1,12 @@
 import { View, Text, ScrollView, Pressable, StyleSheet } from "react-native";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../api/client";
 import { Feather } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
 import { plural } from "../lib/plural";
 import { useTodayKey } from "../lib/useTodayKey";
+import { useNowMinutes } from "../lib/useNowMinutes";
+import { DEFAULT_LATE_RULE, type LateRule } from "../lib/habitSchedule";
 import { useStreak, frozenDaysFor } from "../lib/useStreak";
 import { habitStats } from "../lib/habitStats";
 import { habitStanding, standingRank, type HabitStanding } from "../lib/habitStanding";
@@ -34,6 +38,13 @@ export default function HabitsReportScreen({
   navigation: { navigate: (screen: string, params?: object) => void };
 }) {
   const today = useTodayKey();
+  // Re-reads once a minute, so a window closing at 23:00 closes on the screen you are
+  // looking at rather than on the next thing that happens to re-render.
+  const minutes = useNowMinutes();
+  const { data: lateRule = DEFAULT_LATE_RULE } = useQuery<LateRule>({
+    queryKey: ["lateRule"],
+    queryFn: () => api.getLateRule(),
+  });
   const { habits, logs, freezes, skipRule, habitFreezes } = useStreak(today);
 
   // Monday through today — what a weekly habit's count is taken over.
@@ -45,7 +56,15 @@ export default function HabitsReportScreen({
     return {
       habit,
       stats: habitStats(habit, logs, today, excused),
-      standing: habitStanding(habit, logs, { today, excused, own, rule: skipRule, weekDates }),
+      standing: habitStanding(habit, logs, {
+        today,
+        excused,
+        own,
+        rule: skipRule,
+        weekDates,
+        nowMinutes: minutes,
+        lateRule,
+      }),
     };
   });
 

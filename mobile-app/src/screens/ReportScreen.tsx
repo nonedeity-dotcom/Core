@@ -11,6 +11,8 @@ import { habitGroup } from "../lib/habits";
 import { STREAK_WINDOW_DAYS } from "../lib/streak";
 import { useStreak, frozenDaysFor } from "../lib/useStreak";
 import { useTodayKey } from "../lib/useTodayKey";
+import { useNowMinutes } from "../lib/useNowMinutes";
+import { DEFAULT_LATE_RULE, type LateRule } from "../lib/habitSchedule";
 import { weekKey, dayOfWeek, weekDatesThrough } from "../lib/week";
 import RotatingTip from "../components/RotatingTip";
 import StreakRing from "../components/StreakRing";
@@ -27,6 +29,13 @@ export default function ReportScreen({
   // Re-renders when the local day turns over, so a report left open overnight
   // rolls onto the new week instead of freezing on yesterday.
   const today = useTodayKey();
+  // Re-reads once a minute, so a window closing at 23:00 closes on the screen you are
+  // looking at rather than on the next thing that happens to re-render.
+  const minutes = useNowMinutes();
+  const { data: lateRule = DEFAULT_LATE_RULE } = useQuery<LateRule>({
+    queryKey: ["lateRule"],
+    queryFn: () => api.getLateRule(),
+  });
   const weekStart = dateNDaysAgo(6);
   // One day wider than computeStreak walks, so the loop can never run off the end of what
   // was fetched. The Этапы screen builds the same key from the same constant, and shares
@@ -96,6 +105,8 @@ export default function ReportScreen({
         excused: frozenDaysFor(h.id, freezes, habitFreezes),
         own: habitFreezes[h.id] ?? [],
         rule: skipRule,
+        nowMinutes: minutes,
+        lateRule,
         weekDates: weekDatesThrough(today),
       }).bucket === "urgent",
   ).length;
