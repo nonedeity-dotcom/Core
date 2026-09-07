@@ -1,7 +1,7 @@
 import { dateNDaysAgo } from "./date";
 import { DEFAULT_DAY_RULE, requiredForDay, type DayRule } from "./dayRule";
+import { DEFAULT_SKIP_RULE, periodBucket, type SkipRule } from "./skipRule";
 import { habitsThatDecideTheDay, logCount, perDayTarget } from "./habits";
-import { weekKey } from "./week";
 import type { Habit, HabitLog } from "../types";
 
 /** How far back a streak is counted — comfortably past the 66-day mark. */
@@ -148,37 +148,79 @@ export function computeStreak(
   return streak;
 }
 
-/** One skipped day a week may be frozen instead of breaking the chain. */
-export const FREEZES_PER_WEEK = 1;
+/**
+ * How much of the skip budget the current run has already spent.
+ *
+ * For a calendar period that is simply "the frozen days in the same week/month". For "за всю
+ * цепочку" there is no calendar bucket: the budget belongs to the run, so this walks back
+ * from `from` counting frozen days and stops at the first day that genuinely failed — that
+ * day is where the previous chain ended and where the budget was last refilled.
+ */
+function skipsUsed(
+  habits: Habit[],
+  logs: HabitLog[],
+  frozenDays: Set<string>,
+  dayRule: DayRule,
+  rule: SkipRule,
+  candidate: string,
+  from: number,
+): number {
+  const bucket = periodBucket(candidate, rule.period);
+  if (bucket !== null) {
+    let used = 0;
+    for (const day of frozenDays) if (periodBucket(day, rule.period) === bucket) used++;
+    return used;
+  }
+
+  let used = 0;
+  for (let i = from; i < STREAK_WINDOW_DAYS; i++) {
+    const day = dateNDaysAgo(i);
+    if (frozenDays.has(day)) {
+      used++;
+      continue;
+    }
+    // A day that actually held keeps the run going; one that failed unfrozen ended it, and
+    // everything before it belongs to a chain that is already over.
+    if (!dayCounts(habits, logs, day, dayRule)) break;
+  }
+  return used;
+}
 
 /**
  * The day that should be frozen right now, or null.
  *
  * Only ever yesterday, and only when there was a chain to protect: a gap older than that has
  * already broken the streak, and rescuing it retroactively would mean the number changed
- * under someone who had already seen it. Two missed days in a row are a real break —
- * yesterday's freeze cannot cover the day before it as well.
+ * under someone who had already seen it.
+ *
+ * Never two days running, whatever the budget says. A second day off is not a slip, and a
+ * chain that survives an open-ended gap has stopped measuring anything — so the day before
+ * yesterday having been frozen rules yesterday out on its own.
  */
 export function freezeCandidate(
   habits: Habit[],
   logs: HabitLog[],
   frozen: string[],
   today: string,
-  rule: DayRule = DEFAULT_DAY_RULE,
+  dayRule: DayRule = DEFAULT_DAY_RULE,
+  rule: SkipRule = DEFAULT_SKIP_RULE,
 ): string | null {
   if (habits.length === 0) return null;
+  // Per-habit skips protect each habit's own streak instead; the day gets no cover at all.
+  if (rule.mode !== "shared" || rule.count <= 0) return null;
 
   const yesterday = dateNDaysAgo(1);
   const beforeYesterday = dateNDaysAgo(2);
-  if (dayCounts(habits, logs, yesterday, rule)) return null;
+  if (dayCounts(habits, logs, yesterday, dayRule)) return null;
 
   const frozenDays = new Set(frozen);
   if (frozenDays.has(yesterday)) return null;
+  // Two in a row is a real break — this is the rule the budget cannot buy its way past.
+  if (frozenDays.has(beforeYesterday)) return null;
   // Nothing to save: the chain was already broken the day before.
-  if (!dayCounts(habits, logs, beforeYesterday, rule) && !frozenDays.has(beforeYesterday)) return null;
-  // One a week, counted in the week the skipped day falls in.
-  const week = weekKey(yesterday);
-  if (frozen.filter((d) => weekKey(d) === week).length >= FREEZES_PER_WEEK) return null;
+  if (!dayCounts(habits, logs, beforeYesterday, dayRule)) return null;
+
+  if (skipsUsed(habits, logs, frozenDays, dayRule, rule, yesterday, 2) >= rule.count) return null;
 
   return yesterday;
 }

@@ -14,6 +14,7 @@ import ReminderScreen from "../screens/ReminderScreen";
 import SettingsScreen from "../screens/SettingsScreen";
 import LibraryScreen from "../screens/LibraryScreen";
 import ArchiveScreen from "../screens/ArchiveScreen";
+import AdminScreen from "../screens/AdminScreen";
 import HeaderRefresh from "../components/HeaderRefresh";
 import PhasesScreen from "../screens/PhasesScreen";
 import HabitReportScreen from "../screens/HabitReportScreen";
@@ -109,6 +110,7 @@ export default function RootTabs() {
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: "Настройки" }} />
         <Stack.Screen name="Library" component={LibraryScreen} options={{ title: "Подсказки" }} />
         <Stack.Screen name="Archive" component={ArchiveScreen} options={{ title: "Архив привычек" }} />
+        <Stack.Screen name="Admin" component={AdminScreen} options={{ title: "Настройки админа" }} />
         <Stack.Screen name="Phases" component={PhasesScreen} options={{ title: "Этапы" }} />
         {/* Titled from the habit's own name, so the header says which one you opened. */}
         <Stack.Screen

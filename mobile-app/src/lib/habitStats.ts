@@ -1,6 +1,7 @@
 import { dateNDaysAgo } from "./date";
 import { habitTarget, logCount, perDayTarget } from "./habits";
 import { weekKey } from "./week";
+import { DEFAULT_SKIP_RULE, periodBucket, type SkipRule } from "./skipRule";
 import type { Habit, HabitLog } from "../types";
 
 /** As far back as a single habit's history is walked — same window as the global streak. */
@@ -31,8 +32,9 @@ function doneOn(habit: Habit, logs: HabitLog[], date: string): boolean {
  * question and the reason this exists: a habit added a week into a 40-day streak inherits
  * that 40 and looks settled when it is three days old.
  *
- * A frozen day is skipped rather than counted — the freeze is a day off from everything,
- * so it should not break a single habit either, and it did not earn a tick.
+ * `frozen` is every day this habit is excused from: the shared day-off, plus — when skips
+ * are set per habit — the days this habit spent its own chances on. Skipped rather than
+ * counted, both ways: the day was forgiven, it was not done.
  */
 export function habitStreakDays(habit: Habit, logs: HabitLog[], frozen: string[] = []): number {
   const frozenDays = new Set(frozen);
@@ -145,4 +147,51 @@ export function habitStats(habit: Habit, logs: HabitLog[], today: string, frozen
     daysSinceStart: firstDay ? daysBetweenInclusive(firstDay, today) : 0,
     week: Array.from({ length: 7 }, (_, i) => doneOn(habit, logs, dateNDaysAgo(6 - i))),
   };
+}
+
+
+/**
+ * The day this habit should spend one of its own chances on, or null.
+ *
+ * The per-habit mirror of freezeCandidate, and the same three rules: only yesterday, only
+ * when there was a run to protect, and never two days running whatever the budget says. The
+ * difference is what it saves — this habit's own streak in its own report, not the day.
+ *
+ * A weekly habit is left out: its streak is counted in weeks, and a missed day is not a
+ * missed week.
+ */
+export function habitFreezeCandidate(
+  habit: Habit,
+  logs: HabitLog[],
+  frozen: string[],
+  rule: SkipRule = DEFAULT_SKIP_RULE,
+): string | null {
+  if (rule.mode !== "perHabit" || rule.count <= 0) return null;
+  if (habitTarget(habit).kind === "weekly") return null;
+
+  const yesterday = dateNDaysAgo(1);
+  const beforeYesterday = dateNDaysAgo(2);
+  if (doneOn(habit, logs, yesterday)) return null;
+
+  const frozenDays = new Set(frozen);
+  if (frozenDays.has(yesterday) || frozenDays.has(beforeYesterday)) return null;
+  // Nothing to save: this habit's run had already ended.
+  if (!doneOn(habit, logs, beforeYesterday)) return null;
+
+  const bucket = periodBucket(yesterday, rule.period);
+  let used = 0;
+  if (bucket !== null) {
+    for (const day of frozenDays) if (periodBucket(day, rule.period) === bucket) used++;
+  } else {
+    // "За всю цепочку": walk back to the day this habit's run actually ended.
+    for (let i = 2; i < HABIT_WINDOW_DAYS; i++) {
+      const day = dateNDaysAgo(i);
+      if (frozenDays.has(day)) {
+        used++;
+        continue;
+      }
+      if (!doneOn(habit, logs, day)) break;
+    }
+  }
+  return used >= rule.count ? null : yesterday;
 }

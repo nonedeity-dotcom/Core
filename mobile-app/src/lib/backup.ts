@@ -16,6 +16,7 @@ import {
 } from "../notifications/reminders";
 import { toDateKey } from "./date";
 import { normalizeDayRule } from "./dayRule";
+import { normalizeSkipRule } from "./skipRule";
 import type {
   Habit,
   HabitTarget,
@@ -214,7 +215,22 @@ function parseData(raw: unknown): BackupData {
     // Missing from every file written before the day rule was settable; normalizeDayRule
     // turns anything it does not recognise into the default.
     dayRule: normalizeDayRule(d.dayRule),
+    // Same for the skip allowance: an older file imports as one shared skip a week, which
+    // is what the app did before it was settable.
+    skipRule: normalizeSkipRule(d.skipRule),
+    habitFreezes: parseHabitFreezes(d.habitFreezes),
   };
+}
+
+/** Days each habit spent its own chance on. Anything that is not a list of date keys is dropped. */
+function parseHabitFreezes(raw: unknown): Record<string, string[]> {
+  if (!isObj(raw)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [id, days] of Object.entries(raw)) {
+    const valid = list(days).filter(isDateKey);
+    if (valid.length > 0) out[id] = valid;
+  }
+  return out;
 }
 
 function parseReminder(raw: unknown): ReminderSettings | null {

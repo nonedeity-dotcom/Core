@@ -14,6 +14,7 @@ import type {
 import { todayKey, tomorrowKey } from "../lib/date";
 import { habitGroup, itemGroup } from "../lib/habits";
 import { DEFAULT_DAY_RULE, normalizeDayRule, type DayRule } from "../lib/dayRule";
+import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skipRule";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -37,6 +38,8 @@ const KEYS = {
   freezes: "streak-freezes-v1",
   nowSinceRepair: "nowsince-repair-v1",
   dayRule: "day-rule-v1",
+  skipRule: "skip-rule-v1",
+  habitFreezes: "habit-freezes-v1",
 };
 
 export interface CalendarPrefs {
@@ -492,6 +495,45 @@ export const api = {
     return { ok: true as const };
   },
 
+  /**
+   * How many skipped days a chain forgives, over what period, and whether the budget belongs
+   * to the day or to each habit. Read by the streak, the freeze grant and both reports.
+   */
+  async getSkipRule(): Promise<SkipRule> {
+    return normalizeSkipRule(await read<unknown>(KEYS.skipRule, DEFAULT_SKIP_RULE));
+  },
+  async setSkipRule(rule: SkipRule): Promise<{ ok: true }> {
+    await write(KEYS.skipRule, normalizeSkipRule(rule));
+    return { ok: true as const };
+  },
+
+  /**
+   * Days each habit spent one of its own chances on, by habit id.
+   *
+   * Granted once and never recomputed, the same as the shared freezes and for the same
+   * reason: a forgiveness derived on every render would let a number move under someone who
+   * had already read it.
+   */
+  async getHabitFreezes(): Promise<Record<string, string[]>> {
+    const stored = await read<Record<string, string[]>>(KEYS.habitFreezes, {});
+    if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return {};
+    const out: Record<string, string[]> = {};
+    for (const [id, days] of Object.entries(stored)) {
+      if (Array.isArray(days)) out[id] = days.filter((d) => typeof d === "string");
+    }
+    return out;
+  },
+  /** Idempotent — granting the same day to the same habit twice is a no-op. */
+  async grantHabitFreeze(habitId: string, date: string): Promise<{ ok: true }> {
+    return withKeyLock(KEYS.habitFreezes, async () => {
+      const current = await read<Record<string, string[]>>(KEYS.habitFreezes, {});
+      const days = Array.isArray(current[habitId]) ? current[habitId] : [];
+      if (days.includes(date)) return { ok: true as const };
+      await write(KEYS.habitFreezes, { ...current, [habitId]: [...days, date].sort() });
+      return { ok: true as const };
+    });
+  },
+
   async getFreezes(): Promise<string[]> {
     const stored = await read<string[]>(KEYS.freezes, []);
     return stored.filter((d) => typeof d === "string");
@@ -761,6 +803,10 @@ export interface BackupData {
    * was settable, which import as the default — all of them.
    */
   dayRule: DayRule;
+  /** The skip allowance. Absent from older files, which import as one shared skip a week. */
+  skipRule: SkipRule;
+  /** Days each habit spent its own chance on, by habit id. Absent from older files. */
+  habitFreezes: Record<string, string[]>;
 }
 
 /** What an import actually changed, so the UI can report it honestly. */
@@ -798,7 +844,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -813,6 +859,8 @@ export async function exportData(): Promise<BackupData> {
       read<number>(KEYS.screenTimeLimit, DEFAULT_SCREEN_TIME_LIMIT_MIN),
       api.getFocusIntervals(),
       api.getDayRule(),
+      api.getSkipRule(),
+      api.getHabitFreezes(),
     ]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -828,6 +876,8 @@ export async function exportData(): Promise<BackupData> {
     screenTimeLimitMinutes: limit,
     focusIntervals,
     dayRule,
+    skipRule,
+    habitFreezes,
   };
 }
 
@@ -848,6 +898,8 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.screenTimeLimit, data.screenTimeLimitMinutes),
       write(KEYS.focusIntervals, data.focusIntervals),
       write(KEYS.dayRule, normalizeDayRule(data.dayRule)),
+      write(KEYS.skipRule, normalizeSkipRule(data.skipRule)),
+      write(KEYS.habitFreezes, data.habitFreezes),
     ]);
     return {
       habits: data.habits.length,
@@ -993,6 +1045,21 @@ export async function mergeData(data: BackupData): Promise<ImportStats> {
     const freezes = await read<string[]>(KEYS.freezes, []);
     const mergedFreezes = [...new Set([...freezes, ...data.freezes])].sort();
     if (mergedFreezes.length !== freezes.length) await write(KEYS.freezes, mergedFreezes);
+
+    // --- per-habit freezes: the same union, per habit. Ids are matched as they are rather
+    // than through the label map above, so a chance spent on a habit this device does not
+    // have is carried harmlessly and lines up if that habit ever arrives. ---
+    const habitFreezes = await read<Record<string, string[]>>(KEYS.habitFreezes, {});
+    let habitFreezesChanged = false;
+    for (const [id, days] of Object.entries(data.habitFreezes)) {
+      const current = Array.isArray(habitFreezes[id]) ? habitFreezes[id] : [];
+      const merged = [...new Set([...current, ...days])].sort();
+      if (merged.length !== current.length) {
+        habitFreezes[id] = merged;
+        habitFreezesChanged = true;
+      }
+    }
+    if (habitFreezesChanged) await write(KEYS.habitFreezes, habitFreezes);
 
     // The screen-time limit is a setting of *this* phone, not history — merging
     // deliberately leaves it alone.

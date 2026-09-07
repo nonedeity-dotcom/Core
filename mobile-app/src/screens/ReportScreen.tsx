@@ -10,7 +10,7 @@ import { habitStats } from "../lib/habitStats";
 import { habitGroup } from "../lib/habits";
 import { STREAK_WINDOW_DAYS } from "../lib/streak";
 import { useFold } from "../lib/useFold";
-import { useStreak } from "../lib/useStreak";
+import { useStreak, frozenDaysFor } from "../lib/useStreak";
 import { useTodayKey } from "../lib/useTodayKey";
 import { weekKey, dayOfWeek } from "../lib/week";
 import RotatingTip from "../components/RotatingTip";
@@ -75,7 +75,7 @@ export default function ReportScreen({
   const reviewDue = !reviewWritten && dayOfWeek(today) >= 5;
 
   // Also where the weekly freeze is granted — see useStreak.
-  const { streak, freezes } = useStreak(today);
+  const { streak, freezes, habitFreezes } = useStreak(today);
   // Folded on arrival, every time: the report is one number, and a list left permanently
   // unfolded buried it. See useFold.
   const habitsFold = useFold();
@@ -169,7 +169,8 @@ export default function ReportScreen({
                       counting towards the day is the whole reason these are separated. */}
                   <Text style={styles.groupLabel}>{group.title}</Text>
                   {group.habits.map((h) => {
-            const stats = habitStats(h, streakLogs, today, freezes);
+            // A habit is excused its own spent chances as well as the shared days off.
+            const stats = habitStats(h, streakLogs, today, frozenDaysFor(h.id, freezes, habitFreezes));
             return (
               <Pressable
                 key={h.id}

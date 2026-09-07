@@ -8,6 +8,7 @@ import { useTodayKey } from "../lib/useTodayKey";
 import { HABIT_WINDOW_DAYS, habitStats } from "../lib/habitStats";
 import { habitTarget } from "../lib/habits";
 import HistoryCalendar from "../components/HistoryCalendar";
+import { frozenDaysFor } from "../lib/useStreak";
 import type { Habit, HabitLog } from "../types";
 
 /**
@@ -36,12 +37,18 @@ export default function HabitReportScreen({ route }: { route: { params: { habitI
     queryKey: ["freezes"],
     queryFn: () => api.getFreezes(),
   });
+  const { data: habitFreezes = {} } = useQuery<Record<string, string[]>>({
+    queryKey: ["habitFreezes"],
+    queryFn: () => api.getHabitFreezes(),
+  });
 
   const habit = habits.find((h) => h.id === habitId);
   if (!habit) return null;
   const archived = !!habit.archivedAt;
 
-  const stats = habitStats(habit, logs, today, freezes);
+  // The shared days off plus the chances this habit spent on itself.
+  const excused = frozenDaysFor(habit.id, freezes, habitFreezes);
+  const stats = habitStats(habit, logs, today, excused);
   const target = habitTarget(habit);
 
   return (
@@ -68,7 +75,7 @@ export default function HabitReportScreen({ route }: { route: { params: { habitI
 
       {/* Only this habit — the question here is "when did I skip *this*", not whether the
           day as a whole counted. */}
-      <HistoryCalendar today={today} habits={habits} habit={habit} frozen={freezes} alwaysOpen />
+      <HistoryCalendar today={today} habits={habits} habit={habit} frozen={excused} alwaysOpen />
     </View>
   );
 }

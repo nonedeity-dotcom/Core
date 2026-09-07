@@ -5,6 +5,8 @@ import { dateNDaysAgo } from "./date";
 import { announcePhase } from "../notifications/phaseAlerts";
 import { computeStreak, freezeCandidate, STREAK_WINDOW_DAYS } from "./streak";
 import { DEFAULT_DAY_RULE, type DayRule } from "./dayRule";
+import { DEFAULT_SKIP_RULE, type SkipRule } from "./skipRule";
+import { habitFreezeCandidate } from "./habitStats";
 import type { Habit, HabitLog } from "../types";
 
 /**
@@ -23,6 +25,9 @@ export function useStreak(today: string): {
   logs: HabitLog[];
   freezes: string[];
   rule: DayRule;
+  skipRule: SkipRule;
+  /** Days each habit spent one of its own chances on, by habit id. */
+  habitFreezes: Record<string, string[]>;
 } {
   const qc = useQueryClient();
   const windowStart = dateNDaysAgo(STREAK_WINDOW_DAYS);
@@ -45,19 +50,40 @@ export function useStreak(today: string): {
     queryKey: ["dayRule"],
     queryFn: () => api.getDayRule(),
   });
+  const { data: skipRule = DEFAULT_SKIP_RULE, isSuccess: skipLoaded } = useQuery<SkipRule>({
+    queryKey: ["skipRule"],
+    queryFn: () => api.getSkipRule(),
+  });
+  const { data: habitFreezes = {}, isSuccess: habitFreezesLoaded } = useQuery<Record<string, string[]>>({
+    queryKey: ["habitFreezes"],
+    queryFn: () => api.getHabitFreezes(),
+  });
 
   // Both writes below act on the streak, and a streak read before the logs arrive is 0 —
   // which is not "the chain is broken", it is "we don't know yet". Acting on it would clear
   // the record of what has been announced on every single launch, and re-send the stretch's
   // notification each time.
-  const ready = habits.length > 0 && logsLoaded && freezesLoaded && ruleLoaded;
+  const ready =
+    habits.length > 0 && logsLoaded && freezesLoaded && ruleLoaded && skipLoaded && habitFreezesLoaded;
 
   useEffect(() => {
     if (!ready) return;
-    const candidate = freezeCandidate(habits, logs, freezes, today, rule);
+    const candidate = freezeCandidate(habits, logs, freezes, today, rule, skipRule);
     if (!candidate) return;
     api.grantFreeze(candidate).then(() => qc.invalidateQueries({ queryKey: ["freezes"] }));
-  }, [ready, habits, logs, freezes, today, rule, qc]);
+  }, [ready, habits, logs, freezes, today, rule, skipRule, qc]);
+
+  // The per-habit half of the same grant. Only one of the two ever fires — the mode decides
+  // which — but both are written the moment yesterday closes rather than re-derived on
+  // every render, so a number cannot move under someone who has already read it.
+  useEffect(() => {
+    if (!ready || skipRule.mode !== "perHabit") return;
+    for (const habit of habits) {
+      const day = habitFreezeCandidate(habit, logs, frozenDaysFor(habit.id, freezes, habitFreezes), skipRule);
+      if (!day) continue;
+      api.grantHabitFreeze(habit.id, day).then(() => qc.invalidateQueries({ queryKey: ["habitFreezes"] }));
+    }
+  }, [ready, habits, logs, freezes, habitFreezes, skipRule, qc]);
 
   const streak = computeStreak(habits, logs, freezes, rule);
 
@@ -68,5 +94,21 @@ export function useStreak(today: string): {
     announcePhase(streak);
   }, [ready, streak]);
 
-  return { streak, habits, logs, freezes, rule };
+  return { streak, habits, logs, freezes, rule, skipRule, habitFreezes };
+}
+
+/**
+ * Every day one habit is excused from: the shared days off, plus the chances that habit
+ * spent on itself.
+ *
+ * Both, always, whatever mode is set now. A day the app forgave under one setting stays
+ * forgiven under the next — the record of what was granted is history, not a preference.
+ */
+export function frozenDaysFor(
+  habitId: string,
+  freezes: string[],
+  habitFreezes: Record<string, string[]>,
+): string[] {
+  const own = habitFreezes[habitId];
+  return own && own.length > 0 ? [...new Set([...freezes, ...own])] : freezes;
 }
