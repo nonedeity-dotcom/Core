@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { AppState } from "react-native";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { ROTATION } from "../content/library";
+import { DEFAULT_TIP_PREFS, rotationFor, type TipPrefs } from "./tipLibrary";
 import type { Tip } from "../content/library";
 
 // The counter must move once per "opening the app", and a launch and a return
@@ -22,14 +23,23 @@ export interface RotatingTip {
 
 export function useRotatingTip(): RotatingTip | null {
   const [index, setIndex] = useState<number | null>(null);
+  // The rotation is what is left after your own edits — hidden tips are gone from it, your
+  // own are in it, and the order is yours. So its length is not known until this loads.
+  const { data: prefs = DEFAULT_TIP_PREFS, isSuccess } = useQuery<TipPrefs>({
+    queryKey: ["tipPrefs"],
+    queryFn: () => api.getTipPrefs(),
+  });
+  const rotation = rotationFor(prefs);
+  const length = rotation.length;
 
   useEffect(() => {
+    if (!isSuccess || length === 0) return;
     let alive = true;
     const show = (i: number) => {
       if (alive) setIndex(i);
     };
 
-    (advancedThisSession ? api.getTipCursor() : api.advanceTipCursor(ROTATION.length)).then(show);
+    (advancedThisSession ? api.getTipCursor() : api.advanceTipCursor(length)).then(show);
     advancedThisSession = true;
 
     let previous = AppState.currentState;
@@ -39,7 +49,7 @@ export function useRotatingTip(): RotatingTip | null {
       // and burning a tip on those would make the number jump for no reason
       // the user can see.
       if (previous === "background" && state === "active") {
-        api.advanceTipCursor(ROTATION.length).then(show);
+        api.advanceTipCursor(length).then(show);
       }
       previous = state;
     });
@@ -48,9 +58,12 @@ export function useRotatingTip(): RotatingTip | null {
       alive = false;
       sub.remove();
     };
-  }, []);
+    // Only the length: re-running this on every edit to a tip's text would burn a step of
+    // the rotation for a typo fix.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuccess, length]);
 
-  if (index === null || ROTATION.length === 0) return null;
-  const safe = ((index % ROTATION.length) + ROTATION.length) % ROTATION.length;
-  return { tip: ROTATION[safe], number: safe + 1, total: ROTATION.length };
+  if (index === null || length === 0) return null;
+  const safe = ((index % length) + length) % length;
+  return { tip: rotation[safe], number: safe + 1, total: length };
 }

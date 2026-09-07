@@ -1,4 +1,5 @@
 import { View, Text, StyleSheet } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import { useFold } from "../lib/useFold";
 import { useRotatingTip } from "../lib/useRotatingTip";
 import { colors } from "../theme/colors";
@@ -21,14 +22,18 @@ export default function RotatingTip() {
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.label}>
-        Подсказка {rotating.number} из {rotating.total}
-      </Text>
+      <View style={styles.labelRow}>
+        <Feather name="zap" size={12} color={colors.accent} />
+        <Text style={styles.label}>
+          Подсказка {rotating.number} из {rotating.total}
+        </Text>
+      </View>
       <TipCard
         tip={rotating.tip}
         number={rotating.number}
         expanded={open}
         onToggle={toggle}
+        highlight
       />
     </View>
   );
@@ -36,5 +41,8 @@ export default function RotatingTip() {
 
 const styles = StyleSheet.create({
   wrap: { marginBottom: 18 },
-  label: { color: colors.textMuted, fontSize: 12, marginBottom: 8 },
+  labelRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 },
+  // Accent, not muted: the label used to be the same grey as every other caption on the
+  // screen, so the one card that is advice rather than a measurement read as more chrome.
+  label: { color: colors.accent, fontSize: 12, fontWeight: "600", letterSpacing: 0.3 },
 });

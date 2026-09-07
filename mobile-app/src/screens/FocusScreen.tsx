@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, DEFAULT_FOCUS_INTERVALS, type FocusIntervals } from "../api/client";
 import { colors } from "../theme/colors";
 import TipCard from "../components/TipCard";
-import { TIPS, rotationNumber } from "../content/library";
+import { DEFAULT_TIP_PREFS, allTips, rotationNumberFor, type TipPrefs } from "../lib/tipLibrary";
 import { todayKey } from "../lib/date";
 import { plural } from "../lib/plural";
 import { useFold } from "../lib/useFold";
@@ -54,7 +54,8 @@ const PRESETS: { workMin: number; breakMin: number }[] = [
  * The sound tip, pulled from the reference by id. Content lives in library.ts and nowhere
  * else, so the wording here and in the Подсказки screen can never drift apart.
  */
-const SOUND_TIP = TIPS.find((t) => t.id === "focus-sound")!;
+/** Pinned to this screen by id, so an edit to it in the reference shows up here too. */
+const SOUND_TIP_ID = "focus-sound";
 
 export default function FocusScreen() {
   const qc = useQueryClient();
@@ -73,6 +74,13 @@ export default function FocusScreen() {
 
   const [editing, setEditing] = useState(false);
   const [soundTipOpen, setSoundTipOpen] = useState(false);
+  // Through the edited reference, not the bundle: a tip rewritten in «Подсказки» should read
+  // the same here, and one hidden there should not reappear on this screen.
+  const { data: tipPrefs = DEFAULT_TIP_PREFS } = useQuery<TipPrefs>({
+    queryKey: ["tipPrefs"],
+    queryFn: () => api.getTipPrefs(),
+  });
+  const soundTip = allTips(tipPrefs).find((t) => t.id === SOUND_TIP_ID) ?? null;
   const soundsFold = useFold();
   const [sounds, setSounds] = useState<FocusSounds>({});
   const [picking, setPicking] = useState<FocusPhase | null>(null);
@@ -590,14 +598,16 @@ export default function FocusScreen() {
       {/* The one piece of the source that belongs on this screen rather than only in the
           reference: what to have playing, and what not to have playing before you start.
           Rendered through TipCard so it reads and behaves like every other tip. */}
-      <View style={styles.tipSlot}>
-        <TipCard
-          tip={SOUND_TIP}
-          expanded={soundTipOpen}
-          onToggle={() => setSoundTipOpen((v) => !v)}
-          number={rotationNumber(SOUND_TIP.id)}
-        />
-      </View>
+      {soundTip && (
+        <View style={styles.tipSlot}>
+          <TipCard
+            tip={soundTip}
+            expanded={soundTipOpen}
+            onToggle={() => setSoundTipOpen((v) => !v)}
+            number={rotationNumberFor(tipPrefs, soundTip.id)}
+          />
+        </View>
+      )}
 
       {/* The alarm itself. It closes on its own after ten seconds, and closing it early does
           exactly the same thing — the button is a way to stop the noise, not a gate the next

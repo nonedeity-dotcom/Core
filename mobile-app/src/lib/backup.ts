@@ -17,6 +17,7 @@ import {
 import { toDateKey } from "./date";
 import { normalizeDayRule } from "./dayRule";
 import { normalizeSkipRule } from "./skipRule";
+import { normalizeTipPrefs } from "./tipLibrary";
 import type {
   Habit,
   HabitTarget,
@@ -219,6 +220,8 @@ function parseData(raw: unknown): BackupData {
     // is what the app did before it was settable.
     skipRule: normalizeSkipRule(d.skipRule),
     habitFreezes: parseHabitFreezes(d.habitFreezes),
+    // Missing from files written before the reference was editable.
+    tipPrefs: normalizeTipPrefs(d.tipPrefs),
   };
 }
 

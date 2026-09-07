@@ -14,12 +14,18 @@ export default function TipCard({
   expanded,
   onToggle,
   number,
+  highlight = false,
 }: {
   tip: Tip;
   expanded: boolean;
   onToggle: () => void;
   /** Position in the rotation, when the tip has one. */
   number?: number | null;
+  /**
+   * The one on the report screen, where it is the only thing that is not a number about
+   * you. Off in the reference: fifty-five accented cards is not emphasis, it is wallpaper.
+   */
+  highlight?: boolean;
 }) {
   return (
     <Pressable
@@ -27,12 +33,14 @@ export default function TipCard({
       accessibilityRole="button"
       accessibilityState={{ expanded }}
       accessibilityLabel={tip.short}
-      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.card, highlight && styles.cardHighlight, pressed && styles.pressed]}
     >
       <View style={styles.row}>
         {/* The rotation advances on every app open, so the number is the only
             way to tell where in the loop you are. */}
-        {number != null && <Text style={styles.number}>{number}</Text>}
+        {number != null && (
+          <Text style={[styles.number, highlight && styles.numberHighlight]}>{number}</Text>
+        )}
         <Text style={styles.short}>{tip.short}</Text>
         <Feather
           name={expanded ? "chevron-up" : "chevron-down"}
@@ -66,6 +74,14 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     marginBottom: 10,
   },
+  // Warm accent, the app's "this wants your attention" colour, as a tint and a left edge
+  // rather than a filled card: the dark theme is the point, and a solid orange block on the
+  // first screen would be the loudest thing in an app arguing for less to look at.
+  cardHighlight: {
+    backgroundColor: "rgba(224,138,85,0.10)",
+    borderLeftWidth: 3,
+    borderLeftColor: colors.accent,
+  },
   pressed: { opacity: 0.75 },
   row: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   number: {
@@ -75,6 +91,7 @@ const styles = StyleSheet.create({
     minWidth: 18,
     marginTop: 3,
   },
+  numberHighlight: { color: colors.accent, fontWeight: "700" },
   short: { color: colors.text, fontSize: 14, lineHeight: 19, flex: 1 },
   chevron: { marginTop: 2 },
   full: { color: colors.textMuted, fontSize: 13, lineHeight: 19, marginTop: 10 },

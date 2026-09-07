@@ -15,6 +15,7 @@ import { todayKey, tomorrowKey } from "../lib/date";
 import { habitGroup, itemGroup } from "../lib/habits";
 import { DEFAULT_DAY_RULE, normalizeDayRule, type DayRule } from "../lib/dayRule";
 import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skipRule";
+import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipLibrary";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -40,6 +41,7 @@ const KEYS = {
   dayRule: "day-rule-v1",
   skipRule: "skip-rule-v1",
   habitFreezes: "habit-freezes-v1",
+  tipPrefs: "tip-prefs-v1",
 };
 
 export interface CalendarPrefs {
@@ -534,6 +536,21 @@ export const api = {
     });
   },
 
+  /**
+   * Your edits to the reference: rewritten lines, hidden tips, your own, and the order the
+   * rotation runs in. The built-in tips themselves stay in the bundle — this is only the
+   * difference between them and what you want to read.
+   */
+  async getTipPrefs(): Promise<TipPrefs> {
+    return normalizeTipPrefs(await read<unknown>(KEYS.tipPrefs, DEFAULT_TIP_PREFS));
+  },
+  async setTipPrefs(prefs: TipPrefs): Promise<{ ok: true }> {
+    return withKeyLock(KEYS.tipPrefs, async () => {
+      await write(KEYS.tipPrefs, normalizeTipPrefs(prefs));
+      return { ok: true as const };
+    });
+  },
+
   async getFreezes(): Promise<string[]> {
     const stored = await read<string[]>(KEYS.freezes, []);
     return stored.filter((d) => typeof d === "string");
@@ -807,6 +824,8 @@ export interface BackupData {
   skipRule: SkipRule;
   /** Days each habit spent its own chance on, by habit id. Absent from older files. */
   habitFreezes: Record<string, string[]>;
+  /** Edits to the reference. Absent from older files, which import as the untouched one. */
+  tipPrefs: TipPrefs;
 }
 
 /** What an import actually changed, so the UI can report it honestly. */
@@ -844,7 +863,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -861,6 +880,7 @@ export async function exportData(): Promise<BackupData> {
       api.getDayRule(),
       api.getSkipRule(),
       api.getHabitFreezes(),
+      api.getTipPrefs(),
     ]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -878,6 +898,7 @@ export async function exportData(): Promise<BackupData> {
     dayRule,
     skipRule,
     habitFreezes,
+    tipPrefs,
   };
 }
 
@@ -900,6 +921,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.dayRule, normalizeDayRule(data.dayRule)),
       write(KEYS.skipRule, normalizeSkipRule(data.skipRule)),
       write(KEYS.habitFreezes, data.habitFreezes),
+      write(KEYS.tipPrefs, normalizeTipPrefs(data.tipPrefs)),
     ]);
     return {
       habits: data.habits.length,
