@@ -24,6 +24,7 @@ import ReviewScreen from "../screens/ReviewScreen";
 import BalanceProfileScreen from "../screens/balance/ProfileScreen";
 import DiaryScreen from "../screens/balance/DiaryScreen";
 import AddFoodScreen from "../screens/balance/AddFoodScreen";
+import BalanceStatsScreen from "../screens/balance/StatsScreen";
 import SectionMenu, { type Section } from "./SectionMenu";
 
 const Tab = createBottomTabNavigator();
@@ -76,9 +77,9 @@ function Tabs() {
 /**
  * «Баланс» — второй раздел приложения, со своим набором вкладок.
  *
- * Пока в нём один экран: профиль и нормы, из которых считается всё остальное. Дневник и
- * статистика встанут рядом теми же вкладками, когда будут готовы, — каркас для этого и
- * делается первым.
+ * Три вкладки в порядке от ежедневного к разовому: дневник открывают каждый день,
+ * статистику — раз в неделю посмотреть, куда всё идёт, а профиль настраивают один раз и
+ * возвращаются к нему, только когда меняется вес или цель.
  */
 function BalanceTabs() {
   return (
@@ -94,6 +95,7 @@ function BalanceTabs() {
     >
       {/* Дневник первым: за ним открывают «Баланс» каждый день, а профиль настраивают раз. */}
       <Tab.Screen name="Дневник" component={DiaryScreen} options={{ tabBarIcon: icon("book-open") }} />
+      <Tab.Screen name="Статистика" component={BalanceStatsScreen} options={{ tabBarIcon: icon("trending-up") }} />
       <Tab.Screen name="Профиль" component={BalanceProfileScreen} options={{ tabBarIcon: icon("user") }} />
     </Tab.Navigator>
   );

@@ -19,7 +19,7 @@ import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skip
 import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipLibrary";
 import { DEFAULT_LATE_RULE, normalizeLateRule, normalizeSchedule, type LateRule } from "../lib/habitSchedule";
 import { normalizeProfile, type Profile } from "../lib/balance/profile";
-import { normalizeEntry, normalizeProduct, RECENT_LIMIT, type FoodEntry, type FoodProduct, type Meal } from "../lib/balance/food";
+import { normalizeDish, normalizeEntry, normalizeProduct, type Dish, type FoodEntry, type FoodProduct } from "../lib/balance/food";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -50,6 +50,7 @@ const KEYS = {
   balanceProfile: "balance-profile-v1",
   balanceProducts: "balance-products-v1",
   balanceFoodLog: "balance-food-log-v1",
+  balanceDishes: "balance-dishes-v1",
 };
 
 export interface CalendarPrefs {
@@ -626,6 +627,32 @@ export const api = {
     });
   },
 
+  /** Блюда — сохранённые наборы продуктов. Хранят ссылки, а не числа: это рецепт. */
+  async getDishes(): Promise<Dish[]> {
+    const raw = await read<unknown[]>(KEYS.balanceDishes, []);
+    return (Array.isArray(raw) ? raw : []).map(normalizeDish).filter((d): d is Dish => d !== null);
+  },
+  async saveDish(dish: Omit<Dish, "id"> & { id?: string }): Promise<Dish> {
+    return withKeyLock(KEYS.balanceDishes, async () => {
+      const dishes = await read<Dish[]>(KEYS.balanceDishes, []);
+      const clean = normalizeDish({ ...dish, id: dish.id ?? uid() });
+      if (!clean) throw new Error("Пустое название");
+      const exists = dishes.some((d) => d.id === clean.id);
+      await write(
+        KEYS.balanceDishes,
+        exists ? dishes.map((d) => (d.id === clean.id ? { ...d, ...clean } : d)) : [...dishes, clean],
+      );
+      return clean;
+    });
+  },
+  async removeDish(id: string): Promise<{ ok: true }> {
+    return withKeyLock(KEYS.balanceDishes, async () => {
+      const dishes = await read<Dish[]>(KEYS.balanceDishes, []);
+      await write(KEYS.balanceDishes, dishes.filter((d) => d.id !== id));
+      return { ok: true as const };
+    });
+  },
+
   async getFoodLog(from: string, to: string): Promise<FoodEntry[]> {
     const raw = await read<unknown[]>(KEYS.balanceFoodLog, []);
     return (Array.isArray(raw) ? raw : [])
@@ -644,10 +671,15 @@ export const api = {
       await write(KEYS.balanceFoodLog, [...logs, clean]);
       return clean;
     });
-    if (saved.productId) {
+    const at = new Date().toISOString();
+    if (saved.dishId) {
+      await withKeyLock(KEYS.balanceDishes, async () => {
+        const dishes = await read<Dish[]>(KEYS.balanceDishes, []);
+        await write(KEYS.balanceDishes, dishes.map((d) => (d.id === saved.dishId ? { ...d, lastUsedAt: at } : d)));
+      });
+    } else if (saved.productId) {
       await withKeyLock(KEYS.balanceProducts, async () => {
         const products = await read<FoodProduct[]>(KEYS.balanceProducts, []);
-        const at = new Date().toISOString();
         await write(KEYS.balanceProducts, products.map((p) => (p.id === saved.productId ? { ...p, lastUsedAt: at } : p)));
       });
     }
@@ -942,6 +974,7 @@ export interface BackupData {
   balanceProfile: Profile | null;
   balanceProducts: FoodProduct[];
   balanceFoodLog: FoodEntry[];
+  balanceDishes: Dish[];
 }
 
 /** What an import actually changed, so the UI can report it honestly. */
@@ -979,7 +1012,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -1001,6 +1034,7 @@ export async function exportData(): Promise<BackupData> {
       api.getBalanceProfile(),
       read<FoodProduct[]>(KEYS.balanceProducts, []),
       read<FoodEntry[]>(KEYS.balanceFoodLog, []),
+      read<Dish[]>(KEYS.balanceDishes, []),
     ]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -1023,6 +1057,7 @@ export async function exportData(): Promise<BackupData> {
     balanceProfile,
     balanceProducts,
     balanceFoodLog,
+    balanceDishes,
   };
 }
 
@@ -1050,6 +1085,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.balanceProfile, data.balanceProfile),
       write(KEYS.balanceProducts, data.balanceProducts),
       write(KEYS.balanceFoodLog, data.balanceFoodLog),
+      write(KEYS.balanceDishes, data.balanceDishes),
     ]);
     return {
       habits: data.habits.length,

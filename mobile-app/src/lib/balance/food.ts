@@ -46,8 +46,31 @@ export interface FoodEntry extends Nutrition {
   meal: Meal;
   /** Откуда взято — только чтобы посчитать «часто ем»; числа ниже уже свои. */
   productId: string;
+  /** Заполнено, если добавляли блюдо целиком, а не отдельный продукт. */
+  dishId?: string;
   name: string;
   grams: number;
+}
+
+/** Один продукт внутри блюда и его вес в этом блюде. */
+export interface DishItem {
+  productId: string;
+  grams: number;
+}
+
+/**
+ * Блюдо — сохранённый набор продуктов, который добавляется одной кнопкой.
+ *
+ * Хранит ссылки на продукты, а не их числа: блюдо это рецепт, и если поправить в твороге
+ * калорийность, то и завтрашняя запеканка должна считаться по новой. Запись в дневнике при
+ * этом останется прежней — она числа уже скопировала. Разница ровно та, что нужна: рецепт
+ * живёт, съеденное не переписывается.
+ */
+export interface Dish {
+  id: string;
+  name: string;
+  items: DishItem[];
+  lastUsedAt?: string;
 }
 
 /** Сколько продуктов помнит «Часто ем». */
@@ -103,6 +126,28 @@ export function normalizeEntry(value: unknown): FoodEntry | null {
     protein: round(num(v.protein), 1),
     fat: round(num(v.fat), 1),
     carb: round(num(v.carb), 1),
+  };
+}
+
+export function normalizeDish(value: unknown): Dish | null {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as Record<string, unknown>;
+  if (!isStr(v.id) || !isStr(v.name) || v.name.trim() === "") return null;
+  const items = (Array.isArray(v.items) ? v.items : [])
+    .map((raw) => {
+      if (typeof raw !== "object" || raw === null) return null;
+      const i = raw as Record<string, unknown>;
+      const grams = round(num(i.grams));
+      // Пустой productId — это не продукт, а дырка: он никогда ни к чему не привяжется и
+      // будет вечно считаться потерянным составом. Такой пункт выбрасывается здесь.
+      return isStr(i.productId) && i.productId !== "" && grams > 0 ? { productId: i.productId, grams } : null;
+    })
+    .filter((i): i is DishItem => i !== null);
+  return {
+    id: v.id,
+    name: v.name.trim(),
+    items,
+    ...(isStr(v.lastUsedAt) ? { lastUsedAt: v.lastUsedAt } : {}),
   };
 }
 
@@ -190,4 +235,40 @@ export function portionsFromGrams(product: FoodProduct, grams: number): number {
 /** Сколько осталось до нормы. Отрицательное — это перебор, и так и должно читаться. */
 export function remaining(target: number, eaten: number): number {
   return Math.round(target - eaten);
+}
+
+
+export interface DishTotals extends Nutrition {
+  grams: number;
+  /** Сколько продуктов блюда не нашлось — их удалили из списка после того, как собрали блюдо. */
+  missing: number;
+}
+
+/**
+ * Во что складывается блюдо по текущим продуктам.
+ *
+ * Удалённый продукт не обнуляет блюдо и не притворяется нулём: он просто не участвует, а
+ * `missing` позволяет сказать об этом вслух. Молча посчитать запеканку без творога — это
+ * то же самое, что соврать.
+ */
+export function dishTotals(dish: Dish, products: FoodProduct[]): DishTotals {
+  const byId = new Map(products.map((p) => [p.id, p]));
+  let grams = 0;
+  let missing = 0;
+  const parts: Nutrition[] = [];
+  for (const item of dish.items) {
+    const product = byId.get(item.productId);
+    if (!product) {
+      missing++;
+      continue;
+    }
+    grams += item.grams;
+    parts.push(nutritionFor(product, item.grams));
+  }
+  return { ...sumNutrition(parts), grams: round(grams), missing };
+}
+
+/** Последние использованные блюда — то же правило, что и у продуктов. */
+export function recentDishes(dishes: Dish[], limit = RECENT_LIMIT): Dish[] {
+  return [...dishes].sort((a, b) => String(b.lastUsedAt ?? "").localeCompare(String(a.lastUsedAt ?? ""))).slice(0, limit);
 }

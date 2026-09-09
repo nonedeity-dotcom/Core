@@ -7,10 +7,13 @@ import { colors } from "../../theme/colors";
 import { confirmDestructive } from "../../lib/confirm";
 import {
   MEAL_LABELS,
+  dishTotals,
   nutritionFor,
   portionsFromGrams,
+  recentDishes,
   recentProducts,
   searchProducts,
+  type Dish,
   type FoodProduct,
   type Meal,
 } from "../../lib/balance/food";
@@ -36,10 +39,15 @@ export default function AddFoodScreen({
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<FoodProduct | null>(null);
   const [creating, setCreating] = useState(false);
+  const [buildingDish, setBuildingDish] = useState(false);
 
   const { data: products = [] } = useQuery<FoodProduct[]>({
     queryKey: ["foodProducts"],
     queryFn: () => api.getFoodProducts(),
+  });
+  const { data: dishes = [] } = useQuery<Dish[]>({
+    queryKey: ["dishes"],
+    queryFn: () => api.getDishes(),
   });
 
   const add = useMutation({
@@ -65,8 +73,48 @@ export default function AddFoodScreen({
     onSuccess: () => qc.invalidateQueries({ queryKey: ["foodProducts"] }),
   });
 
+  const saveDish = useMutation({
+    mutationFn: (d: Parameters<typeof api.saveDish>[0]) => api.saveDish(d),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dishes"] });
+      setBuildingDish(false);
+    },
+  });
+  const removeDish = useMutation({
+    mutationFn: (id: string) => api.removeDish(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dishes"] }),
+  });
+
+  /** Блюдо ложится в дневник одной записью: добавляли его целиком, значит и убирать целиком. */
+  const addDish = (dish: Dish) => {
+    const totals = dishTotals(dish, products);
+    if (totals.grams <= 0) return;
+    add.mutate({
+      date,
+      meal,
+      productId: "",
+      dishId: dish.id,
+      name: dish.name,
+      grams: totals.grams,
+      kcal: totals.kcal,
+      protein: totals.protein,
+      fat: totals.fat,
+      carb: totals.carb,
+    });
+  };
+
   if (creating) {
     return <ProductForm onSave={(p) => saveProduct.mutate(p)} onCancel={() => setCreating(false)} />;
+  }
+
+  if (buildingDish) {
+    return (
+      <DishForm
+        products={products}
+        onSave={(name, items) => saveDish.mutate({ name, items })}
+        onCancel={() => setBuildingDish(false)}
+      />
+    );
   }
 
   if (picked) {
@@ -98,6 +146,44 @@ export default function AddFoodScreen({
         accessibilityLabel="Поиск продукта"
       />
 
+      {query.trim() === "" && dishes.length > 0 && (
+        <>
+          <Text style={styles.sectionLabel}>Блюда</Text>
+          {recentDishes(dishes).map((d) => {
+            const totals = dishTotals(d, products);
+            return (
+              <Pressable
+                key={d.id}
+                onPress={() => addDish(d)}
+                onLongPress={() =>
+                  confirmDestructive(
+                    "Удалить блюдо?",
+                    `«${d.name}» исчезнет из списка. Записи в дневнике останутся.`,
+                    () => removeDish.mutate(d.id),
+                    "Удалить",
+                  )
+                }
+                accessibilityRole="button"
+                accessibilityLabel={`${d.name}, ${totals.kcal} ккал — добавить целиком`}
+                style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowName} numberOfLines={1}>
+                    {d.name}
+                  </Text>
+                  <Text style={styles.rowDetail}>
+                    {`${totals.grams} г · ${totals.kcal} ккал · Б ${totals.protein} · Ж ${totals.fat} · У ${totals.carb}`}
+                    {/* Молча посчитать запеканку без творога — это то же самое, что соврать. */}
+                    {totals.missing > 0 ? ` · ${totals.missing} продукт(ов) удалено` : ""}
+                  </Text>
+                </View>
+                <Feather name="plus" size={16} color={colors.accentGreen} />
+              </Pressable>
+            );
+          })}
+        </>
+      )}
+
       {query.trim() === "" && recent.length > 0 && (
         <>
           <Text style={styles.sectionLabel}>Часто ем</Text>
@@ -128,6 +214,19 @@ export default function AddFoodScreen({
       >
         <Feather name="plus" size={16} color={colors.textMuted} />
         <Text style={styles.addText}>Свой продукт</Text>
+      </Pressable>
+
+      <Pressable
+        onPress={() => setBuildingDish(true)}
+        disabled={products.length === 0}
+        accessibilityRole="button"
+        accessibilityLabel="Собрать блюдо"
+        style={({ pressed }) => [styles.addRow, products.length === 0 && styles.rowOff, pressed && styles.pressed]}
+      >
+        <Feather name="layers" size={16} color={colors.textMuted} />
+        <Text style={styles.addText}>
+          {products.length === 0 ? "Блюдо — сначала заведи продукты" : "Собрать блюдо из продуктов"}
+        </Text>
       </Pressable>
     </ScrollView>
   );
@@ -265,6 +364,130 @@ function AmountForm({
         style={({ pressed }) => [styles.primary, value <= 0 && styles.primaryOff, pressed && styles.pressed]}
       >
         <Text style={styles.primaryText}>Добавить</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+/**
+ * Блюдо: название и продукты с весами.
+ *
+ * Собирается из того, что уже заведено, — своего рода рецепт. Числа не копируются: поправишь
+ * калорийность творога, и запеканка пересчитается сама. Уже съеденное при этом не меняется,
+ * потому что записи дневника свои числа скопировали.
+ */
+function DishForm({
+  products,
+  onSave,
+  onCancel,
+}: {
+  products: FoodProduct[];
+  onSave: (name: string, items: { productId: string; grams: number }[]) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [items, setItems] = useState<{ productId: string; grams: number }[]>([]);
+  const [query, setQuery] = useState("");
+
+  const byId = new Map(products.map((p) => [p.id, p]));
+  const totals = dishTotals({ id: "draft", name, items }, products);
+  const canSave = name.trim() !== "" && items.length > 0;
+
+  return (
+    <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
+      <Text style={styles.pickedName}>Своё блюдо</Text>
+      <Text style={styles.caption}>Набор продуктов, который добавляется одной кнопкой</Text>
+
+      <TextInput
+        value={name}
+        onChangeText={setName}
+        placeholder="Название блюда"
+        placeholderTextColor={colors.textMuted}
+        style={styles.search}
+        accessibilityLabel="Название блюда"
+      />
+
+      {items.length > 0 && (
+        <>
+          <Text style={styles.sectionLabel}>В блюде</Text>
+          {items.map((item, i) => {
+            const product = byId.get(item.productId);
+            return (
+              <View key={`${item.productId}-${i}`} style={styles.row}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowName}>{product?.name ?? "Продукт удалён"}</Text>
+                  <Text style={styles.rowDetail}>{`${item.grams} г`}</Text>
+                </View>
+                <Pressable
+                  onPress={() => setItems(items.map((x, j) => (j === i ? { ...x, grams: Math.max(5, x.grams - 25) } : x)))}
+                  accessibilityLabel={`Меньше: ${product?.name ?? ""}`}
+                  style={({ pressed }) => [styles.miniBtn, pressed && styles.pressed]}
+                >
+                  <Text style={styles.miniBtnText}>−</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setItems(items.map((x, j) => (j === i ? { ...x, grams: x.grams + 25 } : x)))}
+                  accessibilityLabel={`Больше: ${product?.name ?? ""}`}
+                  style={({ pressed }) => [styles.miniBtn, pressed && styles.pressed]}
+                >
+                  <Text style={styles.miniBtnText}>+</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setItems(items.filter((_, j) => j !== i))}
+                  accessibilityLabel={`Убрать: ${product?.name ?? ""}`}
+                  style={({ pressed }) => [styles.miniBtn, pressed && styles.pressed]}
+                >
+                  <Feather name="x" size={13} color={colors.textMuted} />
+                </Pressable>
+              </View>
+            );
+          })}
+          <View style={styles.previewCard}>
+            <Text style={styles.previewKcal}>{totals.kcal}</Text>
+            <Text style={styles.previewUnit}>{`ккал · ${totals.grams} г`}</Text>
+            <Text style={styles.rowHint}>{`Б ${totals.protein} · Ж ${totals.fat} · У ${totals.carb}`}</Text>
+          </View>
+        </>
+      )}
+
+      <Text style={styles.sectionLabel}>Добавить продукт</Text>
+      <TextInput
+        value={query}
+        onChangeText={setQuery}
+        placeholder="Найти…"
+        placeholderTextColor={colors.textMuted}
+        style={styles.search}
+        accessibilityLabel="Поиск продукта для блюда"
+      />
+      {searchProducts(products, query)
+        .slice(0, 8)
+        .map((p) => (
+          <Pressable
+            key={p.id}
+            onPress={() => setItems([...items, { productId: p.id, grams: p.portionG ?? 100 }])}
+            accessibilityRole="button"
+            accessibilityLabel={`В блюдо: ${p.name}`}
+            style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowName}>{p.name}</Text>
+              <Text style={styles.rowDetail}>{`${p.kcal} ккал на 100 г`}</Text>
+            </View>
+            <Feather name="plus" size={16} color={colors.textMuted} />
+          </Pressable>
+        ))}
+
+      <Pressable
+        onPress={() => canSave && onSave(name.trim(), items)}
+        disabled={!canSave}
+        accessibilityRole="button"
+        accessibilityLabel="Сохранить блюдо"
+        style={({ pressed }) => [styles.primary, !canSave && styles.primaryOff, pressed && styles.pressed]}
+      >
+        <Text style={styles.primaryText}>Сохранить блюдо</Text>
+      </Pressable>
+      <Pressable onPress={onCancel} accessibilityRole="button" style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
+        <Text style={styles.backText}>Отмена</Text>
       </Pressable>
     </ScrollView>
   );
@@ -413,6 +636,16 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   addText: { color: colors.textMuted, fontSize: 13 },
+  rowOff: { opacity: 0.5 },
+  miniBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.bg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  miniBtnText: { color: colors.text, fontSize: 15, fontWeight: "600" },
   back: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", paddingVertical: 8 },
   backText: { color: colors.textMuted, fontSize: 13 },
   pickedName: { color: colors.text, fontSize: 20, fontWeight: "600", marginTop: 4 },
