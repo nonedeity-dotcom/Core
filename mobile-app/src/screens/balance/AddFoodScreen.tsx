@@ -108,6 +108,23 @@ export default function AddFoodScreen({
       setEditingDish(null);
     },
   });
+  const addCatalog = useMutation({
+    mutationFn: () => api.addStarterCatalog(),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["foodProducts"] });
+      qc.invalidateQueries({ queryKey: ["dishes"] });
+      notify(
+        r.products === 0 && r.dishes === 0 ? "Всё уже на месте" : "Базовый набор добавлен",
+        r.products === 0 && r.dishes === 0
+          ? "Ни одного нового продукта: они уже есть в списке."
+          : `${r.products} ${plural(r.products, ["продукт", "продукта", "продуктов"])} и ${r.dishes} ${plural(
+              r.dishes,
+              ["блюдо", "блюда", "блюд"],
+            )}. Теперь это твои продукты — правь и удаляй как обычные.`,
+      );
+    },
+  });
+
   const removeDish = useMutation({
     mutationFn: (id: string) => api.removeDish(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["dishes"] }),
@@ -307,7 +324,7 @@ export default function AddFoodScreen({
       {found.length === 0 && (
         <Text style={styles.empty}>
           {products.length === 0
-            ? "Пока пусто. Заведи первый продукт — дальше он будет в один тап."
+            ? "Пока пусто. Добавь базовый набор кнопкой ниже или заведи первый продукт руками — дальше он будет в один тап."
             : "Ничего не нашлось. Проверь название или заведи новый продукт."}
         </Text>
       )}
@@ -328,6 +345,28 @@ export default function AddFoodScreen({
       >
         <Feather name="plus" size={16} color={colors.textMuted} />
         <Text style={styles.addText}>Свой продукт</Text>
+      </Pressable>
+
+      {/* Числа справочные, и об этом сказано до нажатия, а не после: жирность творога и
+          состав хлеба гуляют на десятки процентов, и набор — точка отсчёта, а не истина. */}
+      <Pressable
+        onPress={() =>
+          confirmDestructive(
+            "Добавить базовый набор?",
+            "Около сорока обычных продуктов и пять блюд из них — крупы, мясо, молочное, овощи, фрукты, масла. " +
+              "Числа ориентировочные, по справочникам: у пачки в руках свои, поправь их карандашом. " +
+              "Уже заведённое не тронется, добавлять можно хоть каждый день.",
+            () => addCatalog.mutate(),
+            "Добавить",
+            false,
+          )
+        }
+        accessibilityRole="button"
+        accessibilityLabel="Добавить базовый набор"
+        style={({ pressed }) => [styles.addRow, pressed && styles.pressed]}
+      >
+        <Feather name="download" size={16} color={colors.textMuted} />
+        <Text style={styles.addText}>Базовый набор продуктов и блюд</Text>
       </Pressable>
 
       <Pressable

@@ -21,6 +21,7 @@ import { DEFAULT_LATE_RULE, normalizeLateRule, normalizeSchedule, type LateRule 
 import { normalizeProfile, type Profile } from "../lib/balance/profile";
 import { normalizeDish, normalizeEntry, normalizeProduct, type Dish, type FoodEntry, type FoodProduct } from "../lib/balance/food";
 import { normalizeWeightEntry, type WeightEntry } from "../lib/balance/weight";
+import { CATALOG_DISHES, CATALOG_PRODUCTS } from "../lib/balance/catalog";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -627,6 +628,60 @@ export const api = {
       // неделе не должно исчезать оттого, что продукт больше не нужен в списке.
       return { ok: true as const };
     });
+  },
+
+  /**
+   * Кладёт базовый набор в списки продуктов и блюд.
+   *
+   * Не при первом запуске, а по нажатию: это чужие сорок позиций в личном списке, и
+   * появляться там сами они не должны. Повторное нажатие ничего не добавляет — сверка идёт
+   * и по id набора, и по названию, чтобы «Банан», заведённый руками, не задвоился.
+   *
+   * Уже добавленное не переписывается: поправил калорийность хлеба под свою пачку — она и
+   * останется, сколько раз набор ни добавляй.
+   */
+  async addStarterCatalog(): Promise<{ products: number; dishes: number }> {
+    const added = await withKeyLock(KEYS.balanceProducts, async () => {
+      const products = await read<FoodProduct[]>(KEYS.balanceProducts, []);
+      const ids = new Set(products.map((x) => x.id));
+      const names = new Set(products.map((x) => x.name.trim().toLowerCase()));
+      const fresh = CATALOG_PRODUCTS.filter((x) => !ids.has(x.id) && !names.has(x.name.toLowerCase()));
+      if (fresh.length > 0) await write(KEYS.balanceProducts, [...products, ...fresh]);
+      return fresh.length;
+    });
+
+    const dishes = await withKeyLock(KEYS.balanceDishes, async () => {
+      const stored = await read<Dish[]>(KEYS.balanceDishes, []);
+      const ids = new Set(stored.map((d) => d.id));
+      const names = new Set(stored.map((d) => d.name.trim().toLowerCase()));
+
+      // Состав перепривязывается к тому, что реально лежит в списке.
+      //
+      // Продукт набора мог не добавиться, потому что такой же уже был заведён руками, — и
+      // тогда id набора никуда не ведёт. Раньше блюдо из-за этого просто пропадало:
+      // свой «банан» в списке отменял «Творог с бананом». Теперь ищется по названию.
+      const products = await read<FoodProduct[]>(KEYS.balanceProducts, []);
+      const byId = new Set(products.map((x) => x.id));
+      const byName = new Map(products.map((x) => [x.name.trim().toLowerCase(), x.id] as const));
+      const resolve = (catalogId: string): string | null => {
+        if (byId.has(catalogId)) return catalogId;
+        const fromCatalog = CATALOG_PRODUCTS.find((x) => x.id === catalogId);
+        return fromCatalog ? byName.get(fromCatalog.name.toLowerCase()) ?? null : null;
+      };
+
+      const fresh: Dish[] = [];
+      for (const dish of CATALOG_DISHES) {
+        if (ids.has(dish.id) || names.has(dish.name.toLowerCase())) continue;
+        const items = dish.items.map((i) => ({ ...i, productId: resolve(i.productId) }));
+        // Блюдо без части состава — соврать в сумме, поэтому такое не кладётся вовсе.
+        if (items.some((i) => i.productId === null)) continue;
+        fresh.push({ ...dish, items: items as Dish["items"] });
+      }
+      if (fresh.length > 0) await write(KEYS.balanceDishes, [...stored, ...fresh]);
+      return fresh.length;
+    });
+
+    return { products: added, dishes };
   },
 
   /** Блюда — сохранённые наборы продуктов. Хранят ссылки, а не числа: это рецепт. */

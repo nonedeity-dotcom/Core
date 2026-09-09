@@ -35,6 +35,51 @@ const UNIT_WORDS: Array<[RegExp, Unit]> = [
 ];
 
 /**
+ * Меры, у которых нет веса.
+ *
+ * Стакан кефира — это не число граммов: стаканы разные, и приложение не знает, какой у тебя.
+ * Без этого списка «два стакана кефира» превращалось в два грамма кефира — число мелкое,
+ * правдоподобное и полностью выдуманное. Теперь такая строка честно остаётся непонятой.
+ *
+ * «Кусок» и «долька» сюда не входят: у продукта, который так меряют, вес куска задан в нём
+ * самом, и «три куска хлеба» считается по нему.
+ */
+const UNKNOWN_MEASURES = /^(стакан|стакана|стаканов|чашка|чашки|чашек|тарелка|тарелки|тарелок|банка|банки|банок|бутылка|бутылки|горсть|горсти|щепотка|щепотку|пачка|пачки)$/i;
+
+/**
+ * Числа словами.
+ *
+ * «Пара яиц» и «полтора банана» — обычная речь, а не изыск, и без этой таблицы «пара»
+ * молча превращалась в одну штуку. Дальше десятка не идёт: считать словами столько уже
+ * никто не будет.
+ */
+const NUMBER_WORDS: Record<string, number> = {
+  пол: 0.5,
+  половина: 0.5,
+  половину: 0.5,
+  полторы: 1.5,
+  полтора: 1.5,
+  один: 1,
+  одна: 1,
+  одно: 1,
+  два: 2,
+  две: 2,
+  пара: 2,
+  пару: 2,
+  двое: 2,
+  три: 3,
+  трое: 3,
+  четыре: 4,
+  пять: 5,
+  шесть: 6,
+  семь: 7,
+  восемь: 8,
+  девять: 9,
+  десять: 10,
+  десяток: 10,
+};
+
+/**
  * Грубая основа слова.
  *
  * Полноценная морфология здесь не нужна и вредна: сверяются два десятка своих названий, а не
@@ -141,6 +186,18 @@ function parseChunk(raw: string, products: FoodProduct[]): ParsedItem {
     }
   });
 
+  // Число словом — если цифрой не написали.
+  if (amountAt === -1) {
+    tokens.forEach((t, i) => {
+      if (amountAt !== -1) return;
+      const word = NUMBER_WORDS[t.toLowerCase().replace(/ё/g, "е")];
+      if (word !== undefined) {
+        amount = word;
+        amountAt = i;
+      }
+    });
+  }
+
   // Единица: слово рядом с числом. Если её не назвали — решает сам продукт.
   let named: Unit | null = null;
   const rest: string[] = [];
@@ -153,6 +210,11 @@ function parseChunk(raw: string, products: FoodProduct[]): ParsedItem {
     }
     rest.push(t);
   });
+
+  // Названа мера, которую не во что перевести, — считать нечем, сколько бы её ни было.
+  if (tokens.some((t) => UNKNOWN_MEASURES.test(t))) {
+    return { raw, productId: matchProduct(rest, products)?.id ?? null, amount, unit: named ?? "g", grams: null };
+  }
 
   const product = matchProduct(rest, products);
   if (!product) {
@@ -174,13 +236,18 @@ function parseChunk(raw: string, products: FoodProduct[]): ParsedItem {
   // спорной зоне не страшен: разобранное показывается и правится до записи.
   const unit: Unit =
     named ?? (own === "g" || perUnit <= 0 ? "g" : amount < perUnit ? own : "g");
+
+  // Числа нет, но у продукта есть своя единица — значит одна: «яблоко» это яблоко, «кусок
+  // хлеба» это кусок, «мёд ложка» это ложка. Для граммовых продуктов так нельзя: «рис» без
+  // числа — не один грамм риса, а незаконченная фраза, и она честно остаётся непонятой.
+  const count = amount > 0 ? amount : unit !== "g" ? 1 : 0;
   // Назвали штуки у продукта, который считается граммами, — считать нечем, берём граммы.
-  const grams = unit === "g" || perUnit <= 0 ? Math.round(amount) : Math.round(amount * perUnit);
+  const grams = unit === "g" || perUnit <= 0 ? Math.round(count) : Math.round(count * perUnit);
 
   return {
     raw,
     productId: product.id,
-    amount,
+    amount: count,
     unit: unit === "g" || perUnit <= 0 ? "g" : unit,
     grams: grams > 0 ? grams : null,
   };
