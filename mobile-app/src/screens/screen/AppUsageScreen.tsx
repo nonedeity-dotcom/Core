@@ -10,6 +10,8 @@ import { formatCompact, formatDuration, formatWithUnits } from "../../lib/screen
 import { dayCount, resolveSelection, shiftRange, type Selection } from "../../lib/screen/period";
 import { describeChange, usageChange } from "../../lib/screen/compare";
 import { hourlyFor, METRIC_LABELS, type Metric } from "../../integrations/usageSync";
+
+const METRICS: Metric[] = ["time", "launches"];
 import PeriodBar from "../../components/screen/PeriodBar";
 import ValueChart, { type ChartKind } from "../../components/screen/ValueChart";
 import { ChartToggle } from "./UsageScreen";
@@ -35,7 +37,7 @@ export default function AppUsageScreen({
   const today = useTodayKey();
   const packageName = route.params?.packageName ?? "";
   const [selection, setSelection] = useState<Selection>({ kind: "preset", preset: "month" });
-  const [metric, setMetric] = useState<Metric>("usage");
+  const [metric, setMetric] = useState<Metric>("time");
   const [chart, setChart] = useState<ChartKind>("bars");
   const [picked, setPicked] = useState<string | null>(null);
 
@@ -58,7 +60,9 @@ export default function AppUsageScreen({
   });
   const { data: hourly } = useQuery({
     queryKey: ["hourly", range.from, metric, packageName],
-    queryFn: () => hourlyFor(range.from, metric === "screen" ? "usage" : metric, packageName),
+    // Одно приложение — своя область по определению: «общий» и «телефон» тут не значат
+    // ничего, поэтому область фиксирована, а выбирать остаётся только метрику.
+    queryFn: () => hourlyFor(range.from, "apps", metric, [], packageName),
     enabled: single,
   });
 
@@ -69,7 +73,7 @@ export default function AppUsageScreen({
   const dayPoints = datesBetween(range.from, range.to).map((date) => ({
     key: date,
     label: weekdayLabel(date),
-    value: metric === "sessions" ? (byDate.get(date)?.launchCount ?? 0) : (byDate.get(date)?.usageMillis ?? 0),
+    value: metric === "launches" ? (byDate.get(date)?.launchCount ?? 0) : (byDate.get(date)?.usageMillis ?? 0),
   }));
   const hourPoints = (hourly ?? []).map((h) => ({ key: `${h.hour}`, label: `${h.hour}`, value: h.value }));
 
@@ -78,8 +82,8 @@ export default function AppUsageScreen({
   const prevTotal = prevHistory.reduce((sum, h) => sum + h.usageMillis, 0);
   const prevLaunches = prevHistory.reduce((sum, h) => sum + h.launchCount, 0);
   const change = usageChange(
-    metric === "sessions" ? launches : total,
-    metric === "sessions" ? prevLaunches : prevTotal,
+    metric === "launches" ? launches : total,
+    metric === "launches" ? prevLaunches : prevTotal,
     span,
   );
   const daysUsed = history.filter((h) => h.usageMillis > 0).length;
@@ -93,7 +97,7 @@ export default function AppUsageScreen({
       <PeriodBar selection={selection} onChange={setSelection} today={today} />
 
       <View style={styles.metrics}>
-        {(["usage", "sessions"] as Metric[]).map((m) => (
+        {METRICS.map((m) => (
           <Pressable
             key={m}
             onPress={() => setMetric(m)}
@@ -120,10 +124,10 @@ export default function AppUsageScreen({
           <Image source={{ uri: info.icon }} style={styles.bigIcon} accessibilityIgnoresInvertColors />
         )}
         <Text style={styles.big}>
-          {metric === "sessions" ? `${launches}` : formatDuration(total)}
+          {metric === "launches" ? `${launches}` : formatDuration(total)}
         </Text>
         <Text style={styles.caption}>
-          {metric === "sessions"
+          {metric === "launches"
             ? `${plural(launches, ["запуск", "запуска", "запусков"])} за ${span} ${plural(span, ["день", "дня", "дней"])}`
             : `за ${span} ${plural(span, ["день", "дня", "дней"])} · ${formatCompact(Math.round(total / span))} в день`}
         </Text>
@@ -142,7 +146,7 @@ export default function AppUsageScreen({
         </View>
         {single ? (
           hourly ? (
-            <ValueChart points={hourPoints} kind={chart} counts={metric === "sessions"} />
+            <ValueChart points={hourPoints} kind={chart} counts={metric === "launches"} />
           ) : (
             <Text style={styles.hint}>
               Почасовая картина есть только у последних дней: подробные события система хранит
@@ -154,7 +158,7 @@ export default function AppUsageScreen({
             <ValueChart
               points={dayPoints}
               kind={chart}
-              counts={metric === "sessions"}
+              counts={metric === "launches"}
               selected={picked}
               onSelect={(d) => setPicked(d === picked ? null : d)}
             />

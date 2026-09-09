@@ -6,7 +6,9 @@ import {
   buildScreenOnIntervals,
   countLaunches,
   measuredThroughMs,
+  launchEvents,
   onlyPackage,
+  subtractHourly,
   toDailyUsage,
   toHourlyLaunches,
   toHourlyUsage,
@@ -121,13 +123,27 @@ export async function syncUsage(nowMs = Date.now()): Promise<UsageSyncResult> {
   return { days: Math.max(written.days, days.length), events: events.length, denied: false };
 }
 
-/** Метрика, которую сейчас показывает график. */
-export type Metric = "usage" | "sessions" | "screen";
+/**
+ * Чьё время показывать.
+ *
+ * «Общий» — всё, что было на включённом экране. «Приложения» — то, что человек выбирал
+ * открыть. «Телефон» — всё остальное: рабочий стол, шторка, «недавние», переходы между
+ * приложениями. Ровно две части и их сумма, поэтому числа сходятся без оговорок.
+ */
+export type Scope = "all" | "apps" | "phone";
+
+export const SCOPE_LABELS: Record<Scope, string> = {
+  all: "Общий",
+  apps: "Приложения",
+  phone: "Телефон",
+};
+
+/** Что рисует график: время или открытия. Крупные числа показываются оба сразу. */
+export type Metric = "time" | "launches";
 
 export const METRIC_LABELS: Record<Metric, string> = {
-  usage: "В приложениях",
-  sessions: "Запуски",
-  screen: "Экран",
+  time: "Время",
+  launches: "Заходы",
 };
 
 /**
@@ -137,10 +153,15 @@ export const METRIC_LABELS: Record<Metric, string> = {
  * система держит считанные дни, и почасовая картина существует ровно для них. Для дня, по
  * которому событий уже нет, честный ответ — `null`, а не двадцать четыре нуля: разница между
  * «в эти часы не пользовался» и «эти часы никто не помнит» здесь и есть весь смысл.
+ *
+ * «Телефон» считается вычитанием: всё экранное время минус то, что забрали приложения. Это
+ * то же определение, что и в дневных числах, — иначе график и список говорили бы разное.
  */
 export async function hourlyFor(
   date: string,
+  scope: Scope,
   metric: Metric,
+  homePackages: string[] = [],
   packageName?: string,
 ): Promise<HourlyValue[] | null> {
   if (!hasUsageAccess()) return null;
@@ -152,14 +173,25 @@ export async function hourlyFor(
 
   const events = await queryRawEvents(startMs - SESSION_LOOKBACK_MS, Math.min(endMs, nowMs));
   if (events.length === 0) return null;
+  const home = new Set(homePackages);
 
-  if (metric === "sessions") {
-    const filtered = packageName ? events.filter((e) => e.packageName === packageName) : events;
-    return toHourlyLaunches(filtered, startMs, endMs);
+  if (metric === "launches") {
+    const opened = launchEvents(events).filter((e) => {
+      if (packageName) return e.packageName === packageName;
+      if (scope === "apps") return !home.has(e.packageName);
+      if (scope === "phone") return home.has(e.packageName);
+      return true;
+    });
+    // Отбор уже сделан, дедупликация внутри повторно ничего не изменит.
+    return toHourlyLaunches(opened, startMs, endMs);
   }
-  const intervals =
-    metric === "screen"
-      ? buildScreenOnIntervals(events, startMs, endMs, nowMs)
-      : buildIntervals(events, startMs, endMs, nowMs);
-  return toHourlyUsage(packageName ? onlyPackage(intervals, packageName) : intervals);
+
+  const foreground = buildIntervals(events, startMs, endMs, nowMs);
+  if (packageName) return toHourlyUsage(onlyPackage(foreground, packageName));
+
+  const apps = toHourlyUsage(foreground.filter((i) => !home.has(i.packageName)));
+  if (scope === "apps") return apps;
+
+  const screen = toHourlyUsage(buildScreenOnIntervals(events, startMs, endMs, nowMs));
+  return scope === "all" ? screen : subtractHourly(screen, apps);
 }

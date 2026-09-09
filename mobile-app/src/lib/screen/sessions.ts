@@ -216,18 +216,21 @@ export function toDailyUsage(
 }
 
 /**
- * Сколько раз каждое приложение открывали, по дням.
+ * Настоящие открытия приложений из потока событий.
  *
- * Считается смена приложения на переднем плане, а не каждое событие «вышел на передний
- * план». Система шлёт последнее при переходе между экранами внутри самого приложения:
- * открыл переписку, вернулся в список — два события, одно приложение, ноль новых открытий.
- * Из-за этого счётчик разбухал в разы и переставал значить хоть что-нибудь.
+ * Система шлёт «вышел на передний план» и при переходе между экранами внутри самого
+ * приложения: открыл переписку, вернулся в список — два события, одно приложение, ноль
+ * новых открытий. Поэтому считается смена приложения, а не каждое событие.
  *
  * Погасший экран и замок сбрасывают текущее: вернуться в то же приложение после блокировки
  * — это открыть его снова, а не продолжить, и человек это переживает именно так.
+ *
+ * Отдельной функцией, потому что открытия считают в двух местах — по дням и по часам, — а
+ * правило у них должно быть одно. Раньше по часам считались сырые события, и график
+ * открытий показывал одни числа, а список рядом с ним другие.
  */
-export function countLaunches(events: RawEvent[], rangeStartMs: number, rangeEndMs: number): Map<string, number> {
-  const launches = new Map<string, number>();
+export function launchEvents(events: RawEvent[]): RawEvent[] {
+  const out: RawEvent[] = [];
   let current: string | null = null;
 
   for (const event of [...events].sort((a, b) => a.timestampMs - b.timestampMs)) {
@@ -238,8 +241,16 @@ export function countLaunches(events: RawEvent[], rangeStartMs: number, rangeEnd
     if (event.type !== "foreground") continue;
     const wasSame = current === event.packageName;
     current = event.packageName;
-    if (wasSame) continue;
-    // Окно проверяется после смены: событие до его начала всё равно задаёт, что было
+    if (!wasSame) out.push(event);
+  }
+  return out;
+}
+
+/** Сколько раз каждое приложение открывали, по дням. */
+export function countLaunches(events: RawEvent[], rangeStartMs: number, rangeEndMs: number): Map<string, number> {
+  const launches = new Map<string, number>();
+  for (const event of launchEvents(events)) {
+    // Окно проверяется после отбора: событие до его начала всё равно задаёт, что было
     // открыто, иначе первое утреннее приложение считалось бы открытым дважды.
     if (event.timestampMs < rangeStartMs || event.timestampMs >= rangeEndMs) continue;
     const k = `${toDateKey(new Date(event.timestampMs))}|${event.packageName}`;
@@ -291,15 +302,25 @@ export function toHourlyUsage(intervals: Interval[]): HourlyValue[] {
   return totals.map((value, hour) => ({ hour, value }));
 }
 
-/** Запуски по часам суток — то же для метрики «сколько раз открывал». */
+/** Открытия по часам суток — тем же правилом, что и по дням. */
 export function toHourlyLaunches(events: RawEvent[], rangeStartMs: number, rangeEndMs: number): HourlyValue[] {
   const counts = new Array<number>(24).fill(0);
-  for (const event of events) {
-    if (event.type !== "foreground") continue;
+  for (const event of launchEvents(events)) {
     if (event.timestampMs < rangeStartMs || event.timestampMs >= rangeEndMs) continue;
     counts[new Date(event.timestampMs).getHours()] += 1;
   }
   return counts.map((value, hour) => ({ hour, value }));
+}
+
+/**
+ * Почасовая разность двух рядов, не уходящая в минус.
+ *
+ * Так получается «телефон»: всё экранное время минус то, что забрали приложения. Минус
+ * здесь означал бы, что приложение было на переднем плане при погашенном экране, — такого
+ * не бывает, но поток событий с пропущенным «экран погас» это изобразить может.
+ */
+export function subtractHourly(whole: HourlyValue[], part: HourlyValue[]): HourlyValue[] {
+  return whole.map((h, i) => ({ hour: h.hour, value: Math.max(0, h.value - (part[i]?.value ?? 0)) }));
 }
 
 /** Только интервалы одного пакета — для почасового графика отдельного приложения. */

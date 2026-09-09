@@ -8,12 +8,19 @@ import { plural } from "../../lib/plural";
 import { useTodayKey } from "../../lib/useTodayKey";
 import { datesBetween, weekdayLabel } from "../../lib/date";
 import { syncFromCreker } from "../../integrations/screenTime";
-import { syncUsage, hourlyFor, METRIC_LABELS, type Metric } from "../../integrations/usageSync";
+import {
+  syncUsage,
+  hourlyFor,
+  METRIC_LABELS,
+  SCOPE_LABELS,
+  type Metric,
+  type Scope,
+} from "../../integrations/usageSync";
 import { hasUsageAccess, openUsageAccessSettings } from "../../../modules/creker-usage";
 import { pickTextFile, saveTextFile } from "../../lib/backupFile";
 import { fromCsv, toCsv } from "../../lib/screen/csv";
 import { notify } from "../../lib/confirm";
-import { formatCompact } from "../../lib/screen/duration";
+import { formatCompact, formatDuration } from "../../lib/screen/duration";
 import { dayCount, resolveSelection, shiftRange, type Selection } from "../../lib/screen/period";
 import { describeChange, usageChange } from "../../lib/screen/compare";
 import {
@@ -21,19 +28,29 @@ import {
   totalScreenMillis,
   totalsByApp,
   type AppDay,
+  type AppTotal,
   type ScreenDay,
 } from "../../lib/screen/usage";
 import UsageRing, { sliceColor } from "../../components/screen/UsageRing";
 import ValueChart, { type ChartKind } from "../../components/screen/ValueChart";
 import PeriodBar from "../../components/screen/PeriodBar";
 
-const METRICS: Metric[] = ["usage", "sessions", "screen"];
+const SCOPES: Scope[] = ["all", "apps", "phone"];
+const METRICS: Metric[] = ["time", "launches"];
+/** Условный пакет строки «Телефон» — своего у неё нет, она собрана из нескольких. */
+const PHONE = "__phone__";
 
 /**
  * «Экран»: сколько времени ушло в телефон и куда именно.
  *
- * Приложение считает само по системным событиям. creker остаётся ровно для одного — отдать
- * историю за дни до установки, которых система уже не помнит.
+ * Разделено на две части и их сумму. «Приложения» — то, что человек выбирал открыть.
+ * «Телефон» — всё остальное, что было на включённом экране: рабочий стол, шторка,
+ * «недавние», переходы между приложениями. «Общий» — сумма, она же время включённого
+ * экрана.
+ *
+ * Части считаются вычитанием, а не сложением кусочков: приложения известны точно, экранное
+ * время известно точно, а «телефон» — это разница. Складывать пришлось бы то, чего система
+ * не называет: у шторки нет своего имени в потоке событий, она просто отсутствие приложения.
  */
 export default function UsageScreen({
   navigation,
@@ -43,11 +60,10 @@ export default function UsageScreen({
   const qc = useQueryClient();
   const today = useTodayKey();
   const [selection, setSelection] = useState<Selection>({ kind: "preset", preset: "day" });
-  const [metric, setMetric] = useState<Metric>("usage");
+  const [scope, setScope] = useState<Scope>("all");
+  const [metric, setMetric] = useState<Metric>("time");
   const [chart, setChart] = useState<ChartKind>("bars");
 
-  // Доступ выдаётся переключателем на системном экране, а не диалогом, — значит вернуться
-  // оттуда можно с любым исходом, и спрашивать надо каждый раз при возвращении.
   const [access, setAccess] = useState<boolean>(() => hasUsageAccess());
   const refresh = useCallback(() => {
     const granted = hasUsageAccess();
@@ -58,7 +74,6 @@ export default function UsageScreen({
   const range = resolveSelection(selection, today);
   const spanDays = dayCount(range);
   const single = spanDays === 1;
-  // Предыдущий такой же период — то, с чем сравнивается текущий.
   const prev = shiftRange(range, -spanDays);
 
   const { data: days = [] } = useQuery<ScreenDay[]>({
@@ -93,10 +108,15 @@ export default function UsageScreen({
     queryKey: ["screenImported"],
     queryFn: () => api.getScreenImportedThrough(),
   });
-  // Почасовая картина есть только у свежих дней: подробные события система хранит недолго.
+
+  const homeList = Object.entries(icons)
+    .filter(([, info]) => info.isHome)
+    .map(([packageName]) => packageName);
+  const home = new Set(homeList);
+
   const { data: hourly } = useQuery({
-    queryKey: ["hourly", range.from, metric, access],
-    queryFn: () => hourlyFor(range.from, metric),
+    queryKey: ["hourly", range.from, scope, metric, access],
+    queryFn: () => hourlyFor(range.from, scope, metric, homeList),
     enabled: single,
   });
 
@@ -115,13 +135,6 @@ export default function UsageScreen({
     },
   });
 
-  /**
-   * Выгрузка истории в файл и загрузка обратно.
-   *
-   * Тот же CSV, что пишет creker, — намеренно: файл, выгруженный там, читается здесь без
-   * перевода. Это последний мост между приложениями, и он не требует, чтобы creker был
-   * установлен, — достаточно файла с него.
-   */
   const exportCsv = useMutation({
     mutationFn: async () => {
       const [d, a] = await Promise.all([
@@ -144,8 +157,8 @@ export default function UsageScreen({
       const text = await pickTextFile();
       if (text === null) return null;
       const parsed = fromCsv(text);
-      const written = await api.mergeScreenData(parsed.days, parsed.apps);
-      return { ...parsed, written };
+      await api.mergeScreenData(parsed.days, parsed.apps);
+      return parsed;
     },
     onSuccess: (r) => {
       if (r === null) return;
@@ -163,8 +176,6 @@ export default function UsageScreen({
     },
   });
 
-  // Пересчёт при открытии и при каждом возвращении: пропущенная неделя — это неделя,
-  // которой уже не будет, система столько подробностей не хранит.
   useEffect(() => {
     if (refresh()) measure.mutate();
     const sub = AppState.addEventListener("change", (state) => {
@@ -175,89 +186,104 @@ export default function UsageScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh]);
 
+  /** Числа одной группы за период. */
+  const measureOf = (dayRows: ScreenDay[], appRows: AppDay[]) => {
+    const screenMs = totalScreenMillis(dayRows);
+    const apps = appRows.filter((r) => !home.has(r.packageName));
+    const appsMs = apps.reduce((sum, r) => sum + r.usageMillis, 0);
+    const appsLaunches = apps.reduce((sum, r) => sum + r.launchCount, 0);
+    const homeLaunches = appRows
+      .filter((r) => home.has(r.packageName))
+      .reduce((sum, r) => sum + r.launchCount, 0);
+    // Телефон — разница, а не сумма кусочков: у шторки нет своего имени в событиях.
+    const phoneMs = Math.max(0, screenMs - appsMs);
+    return {
+      all: { time: screenMs, launches: appsLaunches + homeLaunches },
+      apps: { time: appsMs, launches: appsLaunches },
+      phone: { time: phoneMs, launches: homeLaunches },
+    };
+  };
+
+  const now = measureOf(days, allApps);
+  const before = measureOf(prevDays, allPrevApps);
+  const value = now[scope];
+  const change = usageChange(
+    metric === "time" ? value.time : value.launches,
+    metric === "time" ? before[scope].time : before[scope].launches,
+    spanDays,
+  );
+
   /**
-   * Домашний экран — не приложение, но и не ничто.
+   * Список под карточкой.
    *
-   * Он мелькает между всем остальным: каждый переход, каждая разблокировка. Отсюда и его
-   * числа — часы времени и тысячи заходов, среди которых нет ни одного намеренного. В
-   * «приложениях» и «заходах» ему поэтому не место: он забивал бы список тем, что человек
-   * не выбирал.
-   *
-   * А в «экране» — место ровно его: это метрика про сам телефон, и оболочка телефона —
-   * его часть, а не чужая. Там он идёт обычной строкой, со своим временем и заходами.
+   * В «общем» к приложениям добавляется одна строка «Телефон» — тогда сумма строк равна
+   * крупному числу над ними, и ничего не надо досчитывать в уме. В «телефоне» списка нет:
+   * список из одной строки — это не список.
    */
-  const home = new Set(
-    Object.entries(icons)
-      .filter(([, info]) => info.isHome)
-      .map(([packageName]) => packageName),
+  const appTotals = totalsByApp(allApps.filter((r) => !home.has(r.packageName)));
+  const phoneRow: AppTotal = {
+    packageName: PHONE,
+    label: "Телефон",
+    usageMillis: now.phone.time,
+    launchCount: now.phone.launches,
+    daysUsed: spanDays,
+    shareOfTop: 0,
+    shareOfTotal: 0,
+  };
+  const rows =
+    scope === "phone"
+      ? []
+      : scope === "apps"
+        ? appTotals
+        : [...appTotals, phoneRow].sort((a, b) => b.usageMillis - a.usageMillis);
+  const rowsSum = rows.reduce((sum, r) => sum + r.usageMillis, 0);
+  const topRow = rows.reduce((m, r) => Math.max(m, r.usageMillis), 0);
+
+  const prevByPackage = new Map(
+    totalsByApp(allPrevApps.filter((r) => !home.has(r.packageName))).map((t) => [t.packageName, t] as const),
   );
-  const showHome = metric === "screen";
-  const apps = showHome ? allApps : allApps.filter((r) => !home.has(r.packageName));
-  const prevApps = showHome ? allPrevApps : allPrevApps.filter((r) => !home.has(r.packageName));
-  const homeMs = allApps
-    .filter((r) => home.has(r.packageName))
-    .reduce((sum, r) => sum + r.usageMillis, 0);
 
-  const screenMs = totalScreenMillis(days);
-  const totals = totalsByApp(apps);
-  const prevTotals = totalsByApp(prevApps);
-  const prevByPackage = new Map(prevTotals.map((t) => [t.packageName, t] as const));
-  const appsMs = totals.reduce((sum, t) => sum + t.usageMillis, 0);
-  const launches = totals.reduce((sum, t) => sum + t.launchCount, 0);
-
-  // Крупное число зависит от метрики, а кольцо — всегда про приложения: доли времени в
-  // приложениях от экранного времени не считаются, экран бывает включён и без них.
-  const headline =
-    metric === "screen" ? screenMs : metric === "sessions" ? launches : appsMs;
-  const prevHeadline =
-    metric === "screen"
-      ? totalScreenMillis(prevDays)
-      : metric === "sessions"
-        ? prevTotals.reduce((s, t) => s + t.launchCount, 0)
-        : prevTotals.reduce((s, t) => s + t.usageMillis, 0);
-  const change = usageChange(headline, prevHeadline, spanDays);
-
-  const byDate = new Map(
-    days.map((d) => [d.date, metric === "screen" ? d.screenMillis : 0] as const),
-  );
-  if (metric !== "screen") {
-    for (const row of apps) {
-      const add = metric === "sessions" ? row.launchCount : row.usageMillis;
-      byDate.set(row.date, (byDate.get(row.date) ?? 0) + add);
-    }
+  const byDate = new Map<string, { screen: number; apps: number; launches: number }>();
+  for (const date of datesBetween(range.from, range.to)) {
+    byDate.set(date, { screen: 0, apps: 0, launches: 0 });
   }
-  const dayPoints = datesBetween(range.from, range.to).map((date) => ({
-    key: date,
-    label: weekdayLabel(date),
-    value: byDate.get(date) ?? 0,
-  }));
-  // Часы подписаны все двадцать четыре — график прокручивается, места хватает.
-  const hourPoints = (hourly ?? []).map((h) => ({
-    key: `${h.hour}`,
-    label: `${h.hour}`,
-    value: h.value,
-  }));
+  for (const d of days) {
+    const slot = byDate.get(d.date);
+    if (slot) slot.screen = d.screenMillis;
+  }
+  for (const row of allApps) {
+    const slot = byDate.get(row.date);
+    if (!slot) continue;
+    if (!home.has(row.packageName)) slot.apps += row.usageMillis;
+    slot.launches += row.launchCount;
+  }
+  const dayPoints = datesBetween(range.from, range.to).map((date) => {
+    const slot = byDate.get(date) ?? { screen: 0, apps: 0, launches: 0 };
+    const time =
+      scope === "all" ? slot.screen : scope === "apps" ? slot.apps : Math.max(0, slot.screen - slot.apps);
+    return { key: date, label: weekdayLabel(date), value: metric === "time" ? time : slot.launches };
+  });
+  const hourPoints = (hourly ?? []).map((h) => ({ key: `${h.hour}`, label: `${h.hour}`, value: h.value }));
 
   const earliest = earliestStoredDay(everDays, everApps);
-  // Период уходит глубже, чем мы помним: это не ноль, а незнание, и сказать надо прямо.
   const incomplete = earliest !== null && earliest > range.from;
-  const empty = screenMs === 0 && totals.length === 0;
+  const empty = now.all.time === 0 && appTotals.length === 0;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
       <PeriodBar selection={selection} onChange={setSelection} today={today} />
 
-      <View style={styles.metrics}>
-        {METRICS.map((m) => (
+      <View style={styles.scopes}>
+        {SCOPES.map((s) => (
           <Pressable
-            key={m}
-            onPress={() => setMetric(m)}
+            key={s}
+            onPress={() => setScope(s)}
             accessibilityRole="radio"
-            accessibilityState={{ selected: metric === m }}
-            accessibilityLabel={`Метрика: ${METRIC_LABELS[m]}`}
-            style={({ pressed }) => [styles.metric, metric === m && styles.metricOn, pressed && styles.pressed]}
+            accessibilityState={{ selected: scope === s }}
+            accessibilityLabel={`Показать: ${SCOPE_LABELS[s]}`}
+            style={({ pressed }) => [styles.scope, scope === s && styles.scopeOn, pressed && styles.pressed]}
           >
-            <Text style={[styles.metricText, metric === m && styles.metricTextOn]}>{METRIC_LABELS[m]}</Text>
+            <Text style={[styles.scopeText, scope === s && styles.scopeTextOn]}>{SCOPE_LABELS[s]}</Text>
           </Pressable>
         ))}
       </View>
@@ -305,38 +331,58 @@ export default function UsageScreen({
         </View>
       ) : (
         <>
+          {/* Оба числа сразу: переключать группу, чтобы увидеть заходы, — это прятать
+              половину ответа за лишним нажатием. */}
           <View style={styles.card}>
-            {metric === "sessions" ? (
+            {scope === "phone" ? (
               <>
-                <Text style={styles.big}>{headline}</Text>
-                <Text style={styles.bigUnit}>
-                  {plural(headline, ["запуск", "запуска", "запусков"])}
-                </Text>
+                <Text style={styles.big}>{formatDuration(value.time)}</Text>
+                <Text style={styles.bigUnit}>всего</Text>
               </>
             ) : (
-              <UsageRing totals={totals} totalMs={headline} />
+              <UsageRing totals={rows} totalMs={value.time} />
             )}
+            <Text style={styles.launches}>
+              {`${value.launches} ${plural(value.launches, ["заход", "захода", "заходов"])}`}
+            </Text>
             {change && <Text style={styles.change}>{describeChange(change)}</Text>}
-            {spanDays > 1 && metric !== "sessions" && (
+            {spanDays > 1 && (
               <Text style={styles.perDay}>
-                {`${formatCompact(Math.round(headline / spanDays))} в день в среднем за ${spanDays} ${plural(
+                {`${formatCompact(Math.round(value.time / spanDays))} в день в среднем за ${spanDays} ${plural(
                   spanDays,
                   ["день", "дня", "дней"],
                 )}`}
               </Text>
             )}
-
           </View>
 
           <View style={styles.card}>
-            {/* Заголовка нет: подписи под графиком уже говорят, часы это или дни, а
-                строка над ними только съедала высоту. */}
             <View style={styles.chartHead}>
+              <View style={styles.metrics}>
+                {METRICS.map((m) => (
+                  <Pressable
+                    key={m}
+                    onPress={() => setMetric(m)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: metric === m }}
+                    accessibilityLabel={`График: ${METRIC_LABELS[m]}`}
+                    style={({ pressed }) => [
+                      styles.metric,
+                      metric === m && styles.metricOn,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={[styles.metricText, metric === m && styles.metricTextOn]}>
+                      {METRIC_LABELS[m]}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
               <ChartToggle kind={chart} onChange={setChart} />
             </View>
             {single ? (
               hourly ? (
-                <ValueChart points={hourPoints} kind={chart} counts={metric === "sessions"} />
+                <ValueChart points={hourPoints} kind={chart} counts={metric === "launches"} />
               ) : (
                 <Text style={styles.hint}>
                   Почасовая картина есть только у последних дней: подробные события система
@@ -344,73 +390,96 @@ export default function UsageScreen({
                 </Text>
               )
             ) : (
-              <ValueChart points={dayPoints} kind={chart} counts={metric === "sessions"} />
+              <ValueChart points={dayPoints} kind={chart} counts={metric === "launches"} />
             )}
           </View>
 
-          <Text style={styles.sectionLabel}>
-            {`Приложения · ${totals.length} ${plural(totals.length, ["штука", "штуки", "штук"])}`}
-            {/* Приписка — только там, где его нет, и только когда он правда набрал время:
-                иначе это объяснение того, чего человек не видел. */}
-            {!showHome && homeMs > 0 ? ` · домашний экран (${formatCompact(homeMs)}) — в «Экране»` : ""}
-          </Text>
-          {totals.map((total, i) => {
-            const before = prevByPackage.get(total.packageName);
-            const appChange = usageChange(
-              metric === "sessions" ? total.launchCount : total.usageMillis,
-              before ? (metric === "sessions" ? before.launchCount : before.usageMillis) : 0,
-              spanDays,
-            );
-            return (
-              <Pressable
-                key={total.packageName}
-                onPress={() =>
-                  navigation.navigate("AppUsage", { packageName: total.packageName, title: total.label })
-                }
-                accessibilityRole="button"
-                accessibilityLabel={`${total.label}, ${formatCompact(total.usageMillis)}, ${Math.round(
-                  total.shareOfTotal * 100,
-                )} процентов`}
-                style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-              >
-                {/* Полоска за строкой — доля от самого большого приложения. Список
-                    отсортирован по времени, и полоска делает разрыв между первым и пятым
-                    видимым, не заставляя вычитать числа. */}
-                <View
-                  style={[styles.rowFill, { width: `${total.shareOfTop * 100}%`, backgroundColor: sliceColor(i) }]}
-                />
-                {icons[total.packageName]?.icon ? (
-                  <Image
-                    source={{ uri: icons[total.packageName].icon as string }}
-                    style={styles.icon}
-                    accessibilityIgnoresInvertColors
-                  />
-                ) : (
-                  <View style={[styles.dot, { backgroundColor: sliceColor(i) }]} />
-                )}
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.rowName} numberOfLines={1}>
-                    {total.label}
-                  </Text>
-                  <Text style={styles.rowDetail} numberOfLines={1}>
-                    {`${Math.round(total.shareOfTotal * 100)} % · ${total.launchCount} ${plural(
-                      total.launchCount,
-                      ["запуск", "запуска", "запусков"],
-                    )}`}
-                    {appChange ? ` · ${appChange.isDecrease ? "−" : "+"}${appChange.percent} %` : ""}
-                  </Text>
-                </View>
-                <Text style={styles.rowValue}>
-                  {metric === "sessions" ? `${total.launchCount}` : formatCompact(total.usageMillis)}
-                </Text>
-              </Pressable>
-            );
-          })}
+          {rows.length > 0 && (
+            <>
+              <Text style={styles.sectionLabel}>
+                {scope === "all"
+                  ? "Из чего сложилось"
+                  : `Приложения · ${rows.length} ${plural(rows.length, ["штука", "штуки", "штук"])}`}
+              </Text>
+              {rows.map((row, i) => {
+                const isPhone = row.packageName === PHONE;
+                const beforeRow = prevByPackage.get(row.packageName);
+                const rowChange = isPhone
+                  ? usageChange(
+                      metric === "time" ? now.phone.time : now.phone.launches,
+                      metric === "time" ? before.phone.time : before.phone.launches,
+                      spanDays,
+                    )
+                  : usageChange(
+                      metric === "time" ? row.usageMillis : row.launchCount,
+                      beforeRow ? (metric === "time" ? beforeRow.usageMillis : beforeRow.launchCount) : 0,
+                      spanDays,
+                    );
+                const share = rowsSum > 0 ? row.usageMillis / rowsSum : 0;
+                return (
+                  <Pressable
+                    key={row.packageName}
+                    onPress={() =>
+                      isPhone
+                        ? setScope("phone")
+                        : navigation.navigate("AppUsage", { packageName: row.packageName, title: row.label })
+                    }
+                    accessibilityRole="button"
+                    accessibilityLabel={`${row.label}, ${formatCompact(row.usageMillis)}, ${Math.round(
+                      share * 100,
+                    )} процентов`}
+                    style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+                  >
+                    <View
+                      style={[
+                        styles.rowFill,
+                        { width: `${(topRow > 0 ? row.usageMillis / topRow : 0) * 100}%`, backgroundColor: sliceColor(i) },
+                      ]}
+                    />
+                    {isPhone ? (
+                      <View style={[styles.dot, { backgroundColor: sliceColor(i) }]} />
+                    ) : icons[row.packageName]?.icon ? (
+                      <Image
+                        source={{ uri: icons[row.packageName].icon as string }}
+                        style={styles.icon}
+                        accessibilityIgnoresInvertColors
+                      />
+                    ) : (
+                      <View style={[styles.dot, { backgroundColor: sliceColor(i) }]} />
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.rowName} numberOfLines={1}>
+                        {row.label}
+                      </Text>
+                      <Text style={styles.rowDetail} numberOfLines={1}>
+                        {`${Math.round(share * 100)} % · ${row.launchCount} ${plural(row.launchCount, [
+                          "заход",
+                          "захода",
+                          "заходов",
+                        ])}`}
+                        {rowChange ? ` · ${rowChange.isDecrease ? "−" : "+"}${rowChange.percent} %` : ""}
+                      </Text>
+                    </View>
+                    <Text style={styles.rowValue}>
+                      {metric === "launches" ? `${row.launchCount}` : formatCompact(row.usageMillis)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </>
+          )}
+
+          {scope === "phone" && (
+            <Text style={styles.footnote}>
+              Сюда попадает всё, что было на включённом экране, но не в приложении: рабочий
+              стол, шторка уведомлений, «недавние» и доли секунды на каждом переключении между
+              приложениями. Заходы считаются только у рабочего стола — у шторки нет своего
+              имени в том, что сообщает система.
+            </Text>
+          )}
         </>
       )}
 
-      {/* Разовое действие, а не способ жить: приложение считает само, а у creker остаётся
-          только то, что он намерил до этого. Забрал — и creker больше не нужен. */}
       <Pressable
         onPress={() => importCreker.mutate()}
         disabled={importCreker.isPending}
@@ -500,21 +569,34 @@ export function ChartToggle({ kind, onChange }: { kind: ChartKind; onChange: (ki
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  chartHead: { flexDirection: "row", justifyContent: "flex-end", marginBottom: 10 },
+  chartHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  // Три группы — крупная и заметная строка: с неё начинается всё, что показано ниже.
+  scopes: { flexDirection: "row", gap: 6, marginBottom: 12 },
+  scope: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 9,
+    borderRadius: 12,
+    backgroundColor: colors.card,
+  },
+  scopeOn: { backgroundColor: "rgba(143,184,154,0.14)" },
+  scopeText: { color: colors.textMuted, fontSize: 13 },
+  scopeTextOn: { color: colors.accentGreen, fontWeight: "600" },
+  // Время или заходы — мельче: это про то, чем нарисован график, а не про то, что показано.
+  metrics: { flexDirection: "row", gap: 2, backgroundColor: colors.bg, borderRadius: 16, padding: 2 },
+  metric: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14 },
+  metricOn: { backgroundColor: colors.cardBorder },
+  metricText: { color: colors.textMuted, fontSize: 11 },
+  metricTextOn: { color: colors.text, fontWeight: "600" },
+  launches: { color: colors.text, fontSize: 13, textAlign: "center", marginTop: 12 },
   toggle: { flexDirection: "row", gap: 2, backgroundColor: colors.bg, borderRadius: 16, padding: 2 },
   toggleBtn: { width: 30, height: 26, alignItems: "center", justifyContent: "center", borderRadius: 14 },
   toggleOn: { backgroundColor: colors.accentGreen },
-  metrics: { flexDirection: "row", gap: 6, marginBottom: 12 },
-  metric: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 7,
-    borderRadius: 10,
-    backgroundColor: colors.card,
-  },
-  metricOn: { backgroundColor: "rgba(143,184,154,0.14)" },
-  metricText: { color: colors.textMuted, fontSize: 12 },
-  metricTextOn: { color: colors.accentGreen, fontWeight: "600" },
   card: {
     backgroundColor: colors.card,
     borderRadius: 16,
