@@ -5,12 +5,14 @@ import {
   buildIntervals,
   buildScreenOnIntervals,
   countLaunches,
-  measuredThroughMs,
+  countUnlocks,
   launchEvents,
+  measuredThroughMs,
   onlyPackage,
   subtractHourly,
   toDailyUsage,
   toHourlyLaunches,
+  toHourlyUnlocks,
   toHourlyUsage,
   type HourlyValue,
 } from "../lib/screen/sessions";
@@ -74,10 +76,12 @@ export async function syncUsage(nowMs = Date.now()): Promise<UsageSyncResult> {
   const screenIntervals = buildScreenOnIntervals(events, windowStartMs, nowMs, nowMs);
   const screenRows = toDailyUsage(screenIntervals);
 
+  const unlocks = countUnlocks(events, windowStartMs, nowMs);
   const days: ScreenDay[] = screenRows.map((row) => ({
     date: row.date,
     screenMillis: row.usageMillis,
     updatedAt: measuredThroughMs(row.date, nowMs),
+    unlocks: unlocks.get(row.date) ?? 0,
   }));
 
   // Названия берутся из кэша, а недостающие — у системы. Иконка рисуется один раз на
@@ -176,11 +180,12 @@ export async function hourlyFor(
   const home = new Set(homePackages);
 
   if (metric === "launches") {
+    // У «телефона» заходы — это разблокировки, и по часам тоже: иначе график и крупное
+    // число под ним считали бы разные вещи.
+    if (scope === "phone" && !packageName) return toHourlyUnlocks(events, startMs, endMs);
     const opened = launchEvents(events).filter((e) => {
       if (packageName) return e.packageName === packageName;
-      if (scope === "apps") return !home.has(e.packageName);
-      if (scope === "phone") return home.has(e.packageName);
-      return true;
+      return scope !== "apps" || !home.has(e.packageName);
     });
     // Отбор уже сделан, дедупликация внутри повторно ничего не изменит.
     return toHourlyLaunches(opened, startMs, endMs);

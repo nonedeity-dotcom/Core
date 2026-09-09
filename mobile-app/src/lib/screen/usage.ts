@@ -15,6 +15,14 @@ export interface ScreenDay {
    * Ноль значит «неизвестно»: строка от сборки creker старше этой колонки.
    */
   updatedAt: number;
+  /**
+   * Сколько раз в этот день телефон разблокировали.
+   *
+   * Отсутствует у дней, записанных до появления этого числа, и у всего, что пришло из
+   * creker: он такого не считал. Пересчитать задним числом нечем — подробные события
+   * система хранит несколько суток.
+   */
+  unlocks?: number;
 }
 
 /** Время одного приложения за один день. */
@@ -49,7 +57,12 @@ export function normalizeScreenDay(value: unknown): ScreenDay | null {
   if (typeof value !== "object" || value === null) return null;
   const v = value as Record<string, unknown>;
   if (!isStr(v.date) || !DATE_RE.test(v.date)) return null;
-  return { date: v.date, screenMillis: Math.round(num(v.screenMillis)), updatedAt: Math.round(num(v.updatedAt)) };
+  return {
+    date: v.date,
+    screenMillis: Math.round(num(v.screenMillis)),
+    updatedAt: Math.round(num(v.updatedAt)),
+    ...(typeof v.unlocks === "number" && Number.isFinite(v.unlocks) ? { unlocks: Math.round(num(v.unlocks)) } : {}),
+  };
 }
 
 export function normalizeAppDay(value: unknown): AppDay | null {
@@ -74,6 +87,11 @@ export function daysInRange(days: ScreenDay[], from: string, to: string): Screen
 
 export function appsInRange(rows: AppDay[], from: string, to: string): AppDay[] {
   return rows.filter((r) => inRange(r.date, from, to));
+}
+
+/** Сколько раз телефон разблокировали за период. */
+export function totalUnlocks(days: ScreenDay[]): number {
+  return days.reduce((sum, d) => sum + (d.unlocks ?? 0), 0);
 }
 
 /** Сумма экранного времени за период. */

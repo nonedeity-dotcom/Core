@@ -313,6 +313,39 @@ export function toHourlyLaunches(events: RawEvent[], rangeStartMs: number, range
 }
 
 /**
+ * Сколько раз телефон разблокировали, по дням.
+ *
+ * Считается событие «замок убран» — оно и означает разблокировку: ввёл пароль, приложил
+ * палец, и экран блокировки ушёл. Это единственное число про телефон, которое человек
+ * узнаёт: открытий рабочего стола за день бывают сотни, и ни одно из них он не помнит, а
+ * «сколько раз я сегодня брался за телефон» — вопрос, на который хочется ответ.
+ *
+ * У кого блокировка не настроена вовсе, событий нет и число будет нулевым. Это честно:
+ * разблокировок и правда не было.
+ */
+export function countUnlocks(events: RawEvent[], rangeStartMs: number, rangeEndMs: number): Map<string, number> {
+  const unlocks = new Map<string, number>();
+  for (const event of events) {
+    if (event.type !== "keyguardHidden") continue;
+    if (event.timestampMs < rangeStartMs || event.timestampMs >= rangeEndMs) continue;
+    const key = toDateKey(new Date(event.timestampMs));
+    unlocks.set(key, (unlocks.get(key) ?? 0) + 1);
+  }
+  return unlocks;
+}
+
+/** Разблокировки по часам суток — для однодневного графика. */
+export function toHourlyUnlocks(events: RawEvent[], rangeStartMs: number, rangeEndMs: number): HourlyValue[] {
+  const counts = new Array<number>(24).fill(0);
+  for (const event of events) {
+    if (event.type !== "keyguardHidden") continue;
+    if (event.timestampMs < rangeStartMs || event.timestampMs >= rangeEndMs) continue;
+    counts[new Date(event.timestampMs).getHours()] += 1;
+  }
+  return counts.map((value, hour) => ({ hour, value }));
+}
+
+/**
  * Почасовая разность двух рядов, не уходящая в минус.
  *
  * Так получается «телефон»: всё экранное время минус то, что забрали приложения. Минус

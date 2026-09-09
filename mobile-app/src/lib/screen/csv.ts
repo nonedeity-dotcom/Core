@@ -16,7 +16,9 @@ const HEADER = "type,package_name,date,value_millis,launch_count";
 
 export function toCsv(days: ScreenDay[], apps: AppDay[]): string {
   const rows = [
-    ...days.map((d) => `screen,,${d.date},${d.screenMillis},0`),
+    // В колонке открытий у строки экрана едут разблокировки: у creker там всегда ноль,
+    // так что формат остаётся тем же, а место не пропадает зря.
+    ...days.map((d) => `screen,,${d.date},${d.screenMillis},${d.unlocks ?? 0}`),
     ...apps.map((a) => `app,${escapeField(a.packageName)},${a.date},${a.usageMillis},${a.launchCount}`),
   ];
   return rows.length === 0 ? HEADER : `${HEADER}\n${rows.join("\n")}`;
@@ -62,7 +64,12 @@ export function fromCsv(csv: string): ParsedCsv {
     if (kind === "screen") {
       // Досчитанность в файл не пишется: чужой файл не может поручиться за то, до какого
       // момента день был измерён здесь. Ноль — честное «неизвестно».
-      const row = normalizeScreenDay({ date, screenMillis: value, updatedAt: 0 });
+      const row = normalizeScreenDay({
+        date,
+        screenMillis: value,
+        updatedAt: 0,
+        unlocks: Number.isFinite(launches) ? launches : 0,
+      });
       if (row) days.push(row);
       else skipped++;
     } else if (kind === "app") {

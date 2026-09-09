@@ -26,6 +26,7 @@ import { describeChange, usageChange } from "../../lib/screen/compare";
 import {
   earliestStoredDay,
   totalScreenMillis,
+  totalUnlocks,
   totalsByApp,
   type AppDay,
   type AppTotal,
@@ -186,23 +187,33 @@ export default function UsageScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh]);
 
-  /** Числа одной группы за период. */
+  /**
+   * Числа одной группы за период.
+   *
+   * У телефона считаются не открытия рабочего стола, а разблокировки. Открытий рабочего
+   * стола за день бывают сотни, и ни одного из них человек не помнит; «сколько раз я
+   * сегодня брался за телефон» — вопрос, на который ответ хочется знать.
+   */
   const measureOf = (dayRows: ScreenDay[], appRows: AppDay[]) => {
     const screenMs = totalScreenMillis(dayRows);
     const apps = appRows.filter((r) => !home.has(r.packageName));
     const appsMs = apps.reduce((sum, r) => sum + r.usageMillis, 0);
     const appsLaunches = apps.reduce((sum, r) => sum + r.launchCount, 0);
-    const homeLaunches = appRows
-      .filter((r) => home.has(r.packageName))
-      .reduce((sum, r) => sum + r.launchCount, 0);
+    const unlocks = totalUnlocks(dayRows);
     // Телефон — разница, а не сумма кусочков: у шторки нет своего имени в событиях.
     const phoneMs = Math.max(0, screenMs - appsMs);
     return {
-      all: { time: screenMs, launches: appsLaunches + homeLaunches },
+      all: { time: screenMs, launches: appsLaunches + unlocks },
       apps: { time: appsMs, launches: appsLaunches },
-      phone: { time: phoneMs, launches: homeLaunches },
+      phone: { time: phoneMs, launches: unlocks },
     };
   };
+
+  /** Как называть счётчик в этой группе: у телефона это не заходы. */
+  const countWord = (n: number, forScope: Scope): string =>
+    forScope === "phone"
+      ? plural(n, ["разблокировка", "разблокировки", "разблокировок"])
+      : plural(n, ["заход", "захода", "заходов"]);
 
   const now = measureOf(days, allApps);
   const before = measureOf(prevDays, allPrevApps);
@@ -343,7 +354,7 @@ export default function UsageScreen({
               <UsageRing totals={rows} totalMs={value.time} />
             )}
             <Text style={styles.launches}>
-              {`${value.launches} ${plural(value.launches, ["заход", "захода", "заходов"])}`}
+              {`${value.launches} ${countWord(value.launches, scope)}`}
             </Text>
             {change && <Text style={styles.change}>{describeChange(change)}</Text>}
             {spanDays > 1 && (
@@ -452,11 +463,10 @@ export default function UsageScreen({
                         {row.label}
                       </Text>
                       <Text style={styles.rowDetail} numberOfLines={1}>
-                        {`${Math.round(share * 100)} % · ${row.launchCount} ${plural(row.launchCount, [
-                          "заход",
-                          "захода",
-                          "заходов",
-                        ])}`}
+                        {`${Math.round(share * 100)} % · ${row.launchCount} ${countWord(
+                          row.launchCount,
+                          isPhone ? "phone" : "apps",
+                        )}`}
                         {rowChange ? ` · ${rowChange.isDecrease ? "−" : "+"}${rowChange.percent} %` : ""}
                       </Text>
                     </View>
@@ -473,8 +483,9 @@ export default function UsageScreen({
             <Text style={styles.footnote}>
               Сюда попадает всё, что было на включённом экране, но не в приложении: рабочий
               стол, шторка уведомлений, «недавние» и доли секунды на каждом переключении между
-              приложениями. Заходы считаются только у рабочего стола — у шторки нет своего
-              имени в том, что сообщает система.
+              приложениями. Вместо заходов здесь разблокировки — сколько раз телефон брали в
+              руки и снимали блокировку. У дней, записанных раньше, их нет: пересчитать задним
+              числом нечем, система хранит подробные события несколько суток.
             </Text>
           )}
         </>
