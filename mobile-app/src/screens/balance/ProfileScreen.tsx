@@ -3,12 +3,15 @@ import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { colors } from "../../theme/colors";
+import { todayKey } from "../../lib/date";
+import { plural } from "../../lib/plural";
 import {
   ACTIVITY_FACTORS,
   ACTIVITY_HINTS,
   ACTIVITY_LABELS,
   DEFAULT_PROFILE,
   GOAL_LABELS,
+  GOAL_SHIFT,
   LIMITS,
   bmr,
   normalizeProfile,
@@ -59,16 +62,40 @@ export default function BalanceProfileScreen() {
     save.mutate(merged);
   };
 
+  const logWeight = useMutation({
+    mutationFn: (kg: number) => api.setWeight(todayKey(), kg),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["weightLog"] }),
+  });
+
+  const setWeight = (kg: number) => {
+    patch({ weightKg: kg });
+    logWeight.mutate(kg);
+  };
+
   const t = targets(draft);
   const filled = stored !== null && stored !== undefined;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
+      {/* Числа ниже — не профиль, а пример, пока их не подтвердили. Экран показывал полную
+          норму, а дневник в это же время писал «норма ещё не посчитана»: два экрана
+          отвечали на один вопрос по-разному, потому что нетронутый профиль никуда не
+          записывался. Теперь об этом сказано прямо, и есть чем согласиться. */}
       {!filled && (
-        <Text style={styles.intro}>
-          Заполни четыре числа — дальше «Баланс» сам посчитает, сколько тебе есть. Всё
-          хранится на телефоне, никуда не уходит.
-        </Text>
+        <View style={styles.introCard}>
+          <Text style={styles.intro}>
+            Это пример, а не твои данные: пока ничего не записано, и дневник норму не
+            показывает. Поправь числа под себя — или согласись с этими, если они верные.
+          </Text>
+          <Pressable
+            onPress={() => patch({})}
+            accessibilityRole="button"
+            accessibilityLabel="Сохранить профиль"
+            style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
+          >
+            <Text style={styles.primaryText}>Всё верно, считай норму</Text>
+          </Pressable>
+        </View>
       )}
 
       <Text style={styles.sectionLabel}>Норма на день</Text>
@@ -80,9 +107,16 @@ export default function BalanceProfileScreen() {
           <Macro label="Жиры" value={t.fatG} />
           <Macro label="Углеводы" value={t.carbG} />
         </View>
+        {/* Читалось как «расход 2635 × 1.55», хотя коэффициент в расходе уже учтён: строка
+            показывала умножение, которого не происходит. Теперь это разбор по шагам. */}
         <Text style={styles.formula}>
-          {`Базовый обмен ${bmr(draft)} · расход ${tdee(draft)} × ${ACTIVITY_FACTORS[draft.activity]} · цель ${
-            GOAL_LABELS[draft.goal].toLowerCase()
+          {`Базовый обмен ${bmr(draft)} × ${ACTIVITY_FACTORS[draft.activity]} = расход ${tdee(draft)} ккал`}
+        </Text>
+        <Text style={styles.formula}>
+          {`Цель «${GOAL_LABELS[draft.goal].toLowerCase()}»: ${
+            GOAL_SHIFT[draft.goal] === 0
+              ? "норма равна расходу"
+              : `${GOAL_SHIFT[draft.goal] > 0 ? "+" : "−"}${Math.abs(GOAL_SHIFT[draft.goal])} ккал`
           }`}
         </Text>
         {/* Формула выведена на выборке, а не на вас: приложение не притворяется, что знает
@@ -109,7 +143,7 @@ export default function BalanceProfileScreen() {
       <Stepper
         label="Возраст"
         value={`${draft.age}`}
-        unit="лет"
+        unit={plural(draft.age, ["год", "года", "лет"])}
         onStep={(d) => patch({ age: draft.age + d })}
         min={draft.age <= LIMITS.age.min}
         max={draft.age >= LIMITS.age.max}
@@ -122,12 +156,15 @@ export default function BalanceProfileScreen() {
         min={draft.heightCm <= LIMITS.heightCm.min}
         max={draft.heightCm >= LIMITS.heightCm.max}
       />
+      {/* Вес — единственное, что здесь меняется регулярно, поэтому он же и записывается в
+          дневник веса: иначе тренд на «Статистике» не знал бы о правках из профиля, а
+          профиль — о взвешиваниях из дневника. */}
       <Stepper
         label="Вес"
         value={draft.weightKg.toFixed(1)}
         unit="кг"
         step={0.5}
-        onStep={(d) => patch({ weightKg: Math.round((draft.weightKg + d) * 10) / 10 })}
+        onStep={(d) => setWeight(Math.round((draft.weightKg + d) * 10) / 10)}
         min={draft.weightKg <= LIMITS.weightKg.min}
         max={draft.weightKg >= LIMITS.weightKg.max}
       />
@@ -239,8 +276,23 @@ function Stepper({
 }
 
 const styles = StyleSheet.create({
+  introCard: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    marginBottom: 18,
+  },
+  primary: {
+    marginTop: 14,
+    alignItems: "center",
+    paddingVertical: 11,
+    borderRadius: 12,
+    backgroundColor: colors.accentGreenDark,
+  },
+  primaryText: { color: colors.bg, fontSize: 14, fontWeight: "600" },
   container: { flex: 1, backgroundColor: colors.bg },
-  intro: { color: colors.textMuted, fontSize: 12, lineHeight: 17, marginBottom: 18 },
+  intro: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
   sectionLabel: { color: colors.textMuted, fontSize: 12, marginBottom: 8 },
   spaced: { marginTop: 18 },
   card: {

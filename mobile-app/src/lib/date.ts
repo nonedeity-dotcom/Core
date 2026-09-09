@@ -81,3 +81,31 @@ export function datesBetween(from: string, to: string): string[] {
   }
   return out;
 }
+
+/**
+ * Соседний день от ключа: `shiftDate("2026-09-01", -1)` → "2026-08-31".
+ *
+ * Считается настоящей датой, а не арифметикой по строке, поэтому месяцы, годы и високосный
+ * февраль получаются сами. Полдень взят намеренно: в дни перевода часов полночь может
+ * съехать на сутки назад, а полдень — нет.
+ */
+export function shiftDate(dateKey: string, delta: number): string {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const cursor = new Date(y, m - 1, d, 12);
+  cursor.setDate(cursor.getDate() + delta);
+  return toDateKey(cursor);
+}
+
+/**
+ * Сколько дней от `from` до `to` (отрицательно, если `to` раньше).
+ *
+ * Через UTC-полночь обеих дат: это не время, а номер календарного дня, и разница номеров не
+ * должна зависеть ни от часового пояса, ни от перевода часов.
+ */
+export function daysBetween(from: string, to: string): number {
+  const dayNumber = (key: string) => {
+    const [y, m, d] = key.split("-").map(Number);
+    return Date.UTC(y, m - 1, d) / 86400000;
+  };
+  return dayNumber(to) - dayNumber(from);
+}

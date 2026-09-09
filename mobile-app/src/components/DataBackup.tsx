@@ -37,15 +37,19 @@ function describeImport(stats: ImportStats, mode: ImportMode): string {
       stats.habitLog
     } ${plural(stats.habitLog, ["отметка", "отметки", "отметок"])}.`;
   }
-  const added = stats.habits + stats.habitLog + stats.sessions + stats.energy + stats.rewards;
+  const added = stats.habits + stats.habitLog + stats.sessions + stats.energy + stats.rewards + stats.balance;
   if (added === 0) return "Всё из этого файла уже есть — ничего не изменилось.";
-  return `Добавлено: ${stats.habits} ${plural(stats.habits, ["привычка", "привычки", "привычек"])}, ${
-    stats.habitLog
-  } ${plural(stats.habitLog, ["отметка", "отметки", "отметок"])}, ${stats.sessions} ${plural(stats.sessions, [
-    "сессия",
-    "сессии",
-    "сессий",
-  ])}.`;
+  const parts = [
+    `${stats.habits} ${plural(stats.habits, ["привычка", "привычки", "привычек"])}`,
+    `${stats.habitLog} ${plural(stats.habitLog, ["отметка", "отметки", "отметок"])}`,
+    `${stats.sessions} ${plural(stats.sessions, ["сессия", "сессии", "сессий"])}`,
+  ];
+  // «Баланс» упоминается, только когда из него что-то пришло: у того, кто им не пользуется,
+  // строчка «0 записей Баланса» — это шум про раздел, которого для него нет.
+  if (stats.balance > 0) {
+    parts.push(`${stats.balance} ${plural(stats.balance, ["запись", "записи", "записей"])} «Баланса»`);
+  }
+  return `Добавлено: ${parts.join(", ")}.`;
 }
 
 /**

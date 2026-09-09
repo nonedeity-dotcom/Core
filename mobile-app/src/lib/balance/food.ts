@@ -120,6 +120,10 @@ export function normalizeEntry(value: unknown): FoodEntry | null {
     date: v.date,
     meal: MEALS.includes(v.meal as Meal) ? (v.meal as Meal) : "snack",
     productId: isStr(v.productId) ? v.productId : "",
+    // Пронесённый dishId — не украшение: по нему блюдо получает отметку «только что
+    // использовано», из которой строится порядок в списке. Терялся здесь, и порядок блюд
+    // молча не работал.
+    ...(isStr(v.dishId) && v.dishId !== "" ? { dishId: v.dishId } : {}),
     name: v.name,
     grams: round(num(v.grams)),
     kcal: round(num(v.kcal)),
@@ -216,6 +220,49 @@ export function searchProducts(products: FoodProduct[], query: string): FoodProd
     .filter((p) => p.name.toLowerCase().includes(q))
     .sort((a, b) => {
       // Совпадение с начала названия важнее совпадения где-то в середине.
+      const ai = a.name.toLowerCase().indexOf(q);
+      const bi = b.name.toLowerCase().indexOf(q);
+      return ai !== bi ? ai - bi : a.name.localeCompare(b.name, "ru");
+    });
+}
+
+/**
+ * Питательность записи в пересчёте на 100 г — то, из чего она была посчитана.
+ *
+ * Берётся из самой записи, а не из продукта: продукт мог измениться или исчезнуть, а
+ * поправка веса в дневнике не должна тихо пересчитывать съеденное по новым числам. Запись
+ * знает свои граммы и свои макросы, и этого достаточно.
+ */
+export function per100(entry: FoodEntry): Nutrition {
+  if (entry.grams <= 0) return { ...ZERO };
+  const k = 100 / entry.grams;
+  return {
+    kcal: entry.kcal * k,
+    protein: entry.protein * k,
+    fat: entry.fat * k,
+    carb: entry.carb * k,
+  };
+}
+
+/** Та же запись, но на другой вес. Для правки «съел не 200 г, а 150». */
+export function rescaleEntry(entry: FoodEntry, grams: number): Nutrition {
+  return nutritionFor(per100(entry), grams);
+}
+
+/**
+ * Поиск по блюдам — тем же правилом, что и по продуктам.
+ *
+ * Раньше блюда просто исчезали, стоило начать печатать: искалось только среди продуктов, а
+ * список блюд показывался лишь при пустом поле. Блюдо с названием «Курица с рисом» нельзя
+ * было найти по слову «курица», и после двух десятков блюд часть переставала быть доступной
+ * вообще.
+ */
+export function searchDishes(dishes: Dish[], query: string): Dish[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return dishes;
+  return dishes
+    .filter((d) => d.name.toLowerCase().includes(q))
+    .sort((a, b) => {
       const ai = a.name.toLowerCase().indexOf(q);
       const bi = b.name.toLowerCase().indexOf(q);
       return ai !== bi ? ai - bi : a.name.localeCompare(b.name, "ru");

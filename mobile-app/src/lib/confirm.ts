@@ -30,3 +30,18 @@ export function confirmDestructive(
     { text: confirmLabel, style: destructive ? "destructive" : "default", onPress: onConfirm },
   ]);
 }
+
+/**
+ * Сообщение без вопроса — когда нажатие не может сделать то, чего от него ждут.
+ *
+ * `Alert.alert` в вебе — пустышка, поэтому здесь та же подмена, что и выше: молчащая
+ * кнопка выглядит сломанной, и лучше сказать, почему она не сработала.
+ */
+export function notify(title: string, message: string): void {
+  if (Platform.OS === "web") {
+    // eslint-disable-next-line no-alert
+    if (typeof window !== "undefined") window.alert(`${title}\n\n${message}`);
+    return;
+  }
+  Alert.alert(title, message, [{ text: "Понятно" }]);
+}

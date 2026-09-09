@@ -4,7 +4,9 @@ import { Feather } from "@expo/vector-icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { colors } from "../../theme/colors";
-import { confirmDestructive } from "../../lib/confirm";
+import { plural } from "../../lib/plural";
+import { todayKey } from "../../lib/date";
+import { confirmDestructive, notify } from "../../lib/confirm";
 import {
   MEAL_LABELS,
   dishTotals,
@@ -12,6 +14,7 @@ import {
   portionsFromGrams,
   recentDishes,
   recentProducts,
+  searchDishes,
   searchProducts,
   type Dish,
   type FoodProduct,
@@ -33,13 +36,19 @@ export default function AddFoodScreen({
   navigation: { goBack: () => void };
 }) {
   const qc = useQueryClient();
-  const date = route.params?.date ?? "";
+  // Без даты запись уходила в день "" — она не попадала ни в один экран и не находилась
+  // никогда. Экран всегда открывают с датой, но цена промаха здесь слишком велика.
+  const date = route.params?.date ?? todayKey();
   const meal = route.params?.meal ?? "snack";
 
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<FoodProduct | null>(null);
   const [creating, setCreating] = useState(false);
   const [buildingDish, setBuildingDish] = useState(false);
+  // Правка вместо «удалить и завести заново»: опечатка в калорийности иначе тянется во все
+  // будущие записи, а исправить её было нечем.
+  const [editingProduct, setEditingProduct] = useState<FoodProduct | null>(null);
+  const [editingDish, setEditingDish] = useState<Dish | null>(null);
 
   const { data: products = [] } = useQuery<FoodProduct[]>({
     queryKey: ["foodProducts"],
@@ -61,10 +70,17 @@ export default function AddFoodScreen({
 
   const saveProduct = useMutation({
     mutationFn: (p: Omit<FoodProduct, "id"> & { id?: string }) => api.saveFoodProduct(p),
-    onSuccess: (saved) => {
+    onSuccess: (saved, sent) => {
       qc.invalidateQueries({ queryKey: ["foodProducts"] });
-      setCreating(false);
-      setPicked(saved);
+      // Правка блюд их не пересчитывает вручную: они хранят ссылки, а не числа.
+      qc.invalidateQueries({ queryKey: ["dishes"] });
+      if (sent.id) {
+        // После правки возвращаемся к списку: правили продукт, а не собирались есть.
+        setEditingProduct(null);
+      } else {
+        setCreating(false);
+        setPicked(saved);
+      }
     },
   });
 
@@ -78,6 +94,7 @@ export default function AddFoodScreen({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["dishes"] });
       setBuildingDish(false);
+      setEditingDish(null);
     },
   });
   const removeDish = useMutation({
@@ -88,7 +105,12 @@ export default function AddFoodScreen({
   /** Блюдо ложится в дневник одной записью: добавляли его целиком, значит и убирать целиком. */
   const addDish = (dish: Dish) => {
     const totals = dishTotals(dish, products);
-    if (totals.grams <= 0) return;
+    // Все продукты блюда удалены — считать нечего. Раньше нажатие просто ничего не делало,
+    // и это выглядело как сломанная кнопка, а не как объяснимое состояние.
+    if (totals.grams <= 0) {
+      alertEmptyDish(dish.name);
+      return;
+    }
     add.mutate({
       date,
       meal,
@@ -103,16 +125,29 @@ export default function AddFoodScreen({
     });
   };
 
-  if (creating) {
-    return <ProductForm onSave={(p) => saveProduct.mutate(p)} onCancel={() => setCreating(false)} />;
+  if (creating || editingProduct) {
+    return (
+      <ProductForm
+        product={editingProduct}
+        onSave={(p) => saveProduct.mutate(editingProduct ? { ...p, id: editingProduct.id } : p)}
+        onCancel={() => {
+          setCreating(false);
+          setEditingProduct(null);
+        }}
+      />
+    );
   }
 
-  if (buildingDish) {
+  if (buildingDish || editingDish) {
     return (
       <DishForm
+        dish={editingDish}
         products={products}
-        onSave={(name, items) => saveDish.mutate({ name, items })}
-        onCancel={() => setBuildingDish(false)}
+        onSave={(name, items) => saveDish.mutate(editingDish ? { id: editingDish.id, name, items } : { name, items })}
+        onCancel={() => {
+          setBuildingDish(false);
+          setEditingDish(null);
+        }}
       />
     );
   }
@@ -132,6 +167,9 @@ export default function AddFoodScreen({
 
   const recent = recentProducts(products);
   const found = searchProducts(products, query);
+  // Блюда ищутся наравне с продуктами. Раньше их список показывался только при пустом поле,
+  // и «Курица с рисом» не находилась по слову «курица».
+  const foundDishes = query.trim() === "" ? recentDishes(dishes) : searchDishes(dishes, query);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
@@ -146,10 +184,10 @@ export default function AddFoodScreen({
         accessibilityLabel="Поиск продукта"
       />
 
-      {query.trim() === "" && dishes.length > 0 && (
+      {foundDishes.length > 0 && (
         <>
           <Text style={styles.sectionLabel}>Блюда</Text>
-          {recentDishes(dishes).map((d) => {
+          {foundDishes.map((d) => {
             const totals = dishTotals(d, products);
             return (
               <Pressable
@@ -177,6 +215,15 @@ export default function AddFoodScreen({
                     {totals.missing > 0 ? ` · ${totals.missing} продукт(ов) удалено` : ""}
                   </Text>
                 </View>
+                <Pressable
+                  onPress={() => setEditingDish(d)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Изменить блюдо: ${d.name}`}
+                  hitSlop={8}
+                  style={({ pressed }) => [styles.editBtn, pressed && styles.pressed]}
+                >
+                  <Feather name="edit-2" size={13} color={colors.textMuted} />
+                </Pressable>
                 <Feather name="plus" size={16} color={colors.accentGreen} />
               </Pressable>
             );
@@ -188,13 +235,19 @@ export default function AddFoodScreen({
         <>
           <Text style={styles.sectionLabel}>Часто ем</Text>
           {recent.map((p) => (
-            <ProductRow key={p.id} product={p} onPress={() => setPicked(p)} onRemove={() => askRemove(p)} />
+            <ProductRow
+              key={p.id}
+              product={p}
+              onPress={() => setPicked(p)}
+              onEdit={() => setEditingProduct(p)}
+              onRemove={() => askRemove(p)}
+            />
           ))}
         </>
       )}
 
       <Text style={styles.sectionLabel}>
-        {query.trim() === "" ? "Все продукты" : `Найдено: ${found.length}`}
+        {query.trim() === "" ? "Все продукты" : `Продукты: ${found.length}`}
       </Text>
       {found.length === 0 && (
         <Text style={styles.empty}>
@@ -204,7 +257,13 @@ export default function AddFoodScreen({
         </Text>
       )}
       {found.map((p) => (
-        <ProductRow key={p.id} product={p} onPress={() => setPicked(p)} onRemove={() => askRemove(p)} />
+        <ProductRow
+          key={p.id}
+          product={p}
+          onPress={() => setPicked(p)}
+          onEdit={() => setEditingProduct(p)}
+          onRemove={() => askRemove(p)}
+        />
       ))}
 
       <Pressable
@@ -231,6 +290,13 @@ export default function AddFoodScreen({
     </ScrollView>
   );
 
+  function alertEmptyDish(name: string) {
+    notify(
+      "Блюдо осталось без продуктов",
+      `Все продукты, из которых собрано «${name}», удалены — считать нечего. Собери его заново или удали долгим нажатием.`,
+    );
+  }
+
   function askRemove(p: FoodProduct) {
     confirmDestructive(
       "Удалить продукт?",
@@ -244,10 +310,12 @@ export default function AddFoodScreen({
 function ProductRow({
   product,
   onPress,
+  onEdit,
   onRemove,
 }: {
   product: FoodProduct;
   onPress: () => void;
+  onEdit: () => void;
   onRemove: () => void;
 }) {
   return (
@@ -267,6 +335,15 @@ function ProductRow({
           {product.portionG ? ` · порция ${product.portionG} г` : ""}
         </Text>
       </View>
+      <Pressable
+        onPress={onEdit}
+        accessibilityRole="button"
+        accessibilityLabel={`Изменить продукт: ${product.name}`}
+        hitSlop={8}
+        style={({ pressed }) => [styles.editBtn, pressed && styles.pressed]}
+      >
+        <Feather name="edit-2" size={13} color={colors.textMuted} />
+      </Pressable>
       <Feather name="chevron-right" size={16} color={colors.textMuted} />
     </Pressable>
   );
@@ -320,7 +397,9 @@ function AmountForm({
 
         {product.portionG ? (
           <>
-            <Text style={styles.rowHint}>{`Это ${portions} ${portions === 1 ? "порция" : "порции"} по ${product.portionG} г`}</Text>
+            <Text style={styles.rowHint}>
+              {`Это ${portions} ${plural(portions, ["порция", "порции", "порций"])} по ${product.portionG} г`}
+            </Text>
             <View style={styles.chipRow}>
               {[0.5, 1, 1.5, 2].map((p) => (
                 <Pressable
@@ -377,16 +456,20 @@ function AmountForm({
  * потому что записи дневника свои числа скопировали.
  */
 function DishForm({
+  dish,
   products,
   onSave,
   onCancel,
 }: {
+  dish: Dish | null;
   products: FoodProduct[];
   onSave: (name: string, items: { productId: string; grams: number }[]) => void;
   onCancel: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [items, setItems] = useState<{ productId: string; grams: number }[]>([]);
+  const [name, setName] = useState(dish?.name ?? "");
+  const [items, setItems] = useState<{ productId: string; grams: number }[]>(
+    dish ? dish.items.map((i) => ({ ...i })) : [],
+  );
   const [query, setQuery] = useState("");
 
   const byId = new Map(products.map((p) => [p.id, p]));
@@ -395,8 +478,12 @@ function DishForm({
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-      <Text style={styles.pickedName}>Своё блюдо</Text>
-      <Text style={styles.caption}>Набор продуктов, который добавляется одной кнопкой</Text>
+      <Text style={styles.pickedName}>{dish ? dish.name : "Своё блюдо"}</Text>
+      <Text style={styles.caption}>
+        {dish
+          ? "Уже записанное в дневник не изменится — там свои числа"
+          : "Набор продуктов, который добавляется одной кнопкой"}
+      </Text>
 
       <TextInput
         value={name}
@@ -484,7 +571,7 @@ function DishForm({
         accessibilityLabel="Сохранить блюдо"
         style={({ pressed }) => [styles.primary, !canSave && styles.primaryOff, pressed && styles.pressed]}
       >
-        <Text style={styles.primaryText}>Сохранить блюдо</Text>
+        <Text style={styles.primaryText}>{dish ? "Сохранить изменения" : "Сохранить блюдо"}</Text>
       </Pressable>
       <Pressable onPress={onCancel} accessibilityRole="button" style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
         <Text style={styles.backText}>Отмена</Text>
@@ -495,26 +582,33 @@ function DishForm({
 
 /** Новый продукт: название и четыре числа на 100 г, плюс необязательный вес порции. */
 function ProductForm({
+  product,
   onSave,
   onCancel,
 }: {
+  product: FoodProduct | null;
   onSave: (p: Omit<FoodProduct, "id">) => void;
   onCancel: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [kcal, setKcal] = useState("");
-  const [protein, setProtein] = useState("");
-  const [fat, setFat] = useState("");
-  const [carb, setCarb] = useState("");
-  const [portion, setPortion] = useState("");
+  const show = (v: number | undefined) => (v === undefined || v === 0 ? "" : String(v));
+  const [name, setName] = useState(product?.name ?? "");
+  const [kcal, setKcal] = useState(show(product?.kcal));
+  const [protein, setProtein] = useState(show(product?.protein));
+  const [fat, setFat] = useState(show(product?.fat));
+  const [carb, setCarb] = useState(show(product?.carb));
+  const [portion, setPortion] = useState(show(product?.portionG));
 
   const num = (v: string) => Math.max(0, Number(v.replace(",", ".")) || 0);
   const canSave = name.trim() !== "";
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-      <Text style={styles.pickedName}>Свой продукт</Text>
-      <Text style={styles.caption}>Значения — на 100 граммов</Text>
+      <Text style={styles.pickedName}>{product ? product.name : "Свой продукт"}</Text>
+      <Text style={styles.caption}>
+        {product
+          ? "Значения на 100 г. Уже записанное в дневник не пересчитается — там свои числа"
+          : "Значения — на 100 граммов"}
+      </Text>
 
       <View style={styles.formCard}>
         <TextInput
@@ -619,6 +713,14 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   pressed: { opacity: 0.75 },
+  editBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.cardBorder,
+  },
   rowName: { color: colors.text, fontSize: 14 },
   rowDetail: { color: colors.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
   rowLabel: { color: colors.text, fontSize: 14, fontWeight: "500" },

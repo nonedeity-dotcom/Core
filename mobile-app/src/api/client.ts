@@ -20,6 +20,7 @@ import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipL
 import { DEFAULT_LATE_RULE, normalizeLateRule, normalizeSchedule, type LateRule } from "../lib/habitSchedule";
 import { normalizeProfile, type Profile } from "../lib/balance/profile";
 import { normalizeDish, normalizeEntry, normalizeProduct, type Dish, type FoodEntry, type FoodProduct } from "../lib/balance/food";
+import { normalizeWeightEntry, type WeightEntry } from "../lib/balance/weight";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -51,6 +52,7 @@ const KEYS = {
   balanceProducts: "balance-products-v1",
   balanceFoodLog: "balance-food-log-v1",
   balanceDishes: "balance-dishes-v1",
+  balanceWeight: "balance-weight-v1",
 };
 
 export interface CalendarPrefs {
@@ -692,6 +694,71 @@ export const api = {
       return { ok: true as const };
     });
   },
+  /**
+   * Правит уже записанное: вес, приём пищи, день.
+   *
+   * Числа приходят пересчитанными снаружи — запись хранит их своими, и пересчитать её по
+   * текущему продукту значило бы переписать съеденное задним числом. Это ровно то, чего
+   * дневник делать не должен.
+   */
+  async updateFoodEntry(id: string, patch: Partial<Omit<FoodEntry, "id">>): Promise<FoodEntry | null> {
+    return withKeyLock(KEYS.balanceFoodLog, async () => {
+      const logs = await read<FoodEntry[]>(KEYS.balanceFoodLog, []);
+      const current = logs.find((e) => e.id === id);
+      if (!current) return null;
+      const clean = normalizeEntry({ ...current, ...patch, id });
+      if (!clean) return null;
+      await write(KEYS.balanceFoodLog, logs.map((e) => (e.id === id ? clean : e)));
+      return clean;
+    });
+  },
+
+  /**
+   * Дневник веса. Один вес на день: перевзвесился — запись за этот день заменяется, а не
+   * добавляется второй строкой.
+   */
+  async getWeightLog(): Promise<WeightEntry[]> {
+    const raw = await read<unknown[]>(KEYS.balanceWeight, []);
+    const clean = (Array.isArray(raw) ? raw : [])
+      .map(normalizeWeightEntry)
+      .filter((e): e is WeightEntry => e !== null);
+    // Один вес на день — это то, на чём стоит весь расчёт тренда. setWeight следит за этим
+    // сам, но восстановленный файл мог прийти откуда угодно: последняя запись за день
+    // побеждает, а не удваивает день в средних.
+    const byDate = new Map(clean.map((e) => [e.date, e] as const));
+    return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  },
+  async setWeight(date: string, kg: number): Promise<WeightEntry | null> {
+    const saved = await withKeyLock(KEYS.balanceWeight, async () => {
+      const log = await read<WeightEntry[]>(KEYS.balanceWeight, []);
+      const clean = normalizeWeightEntry({ date, kg });
+      if (!clean) return null;
+      const without = log.filter((e) => e.date !== clean.date);
+      await write(KEYS.balanceWeight, [...without, clean].sort((a, b) => a.date.localeCompare(b.date)));
+      // Последнее взвешивание — оно же текущий вес: если записали именно его, профиль
+      // должен согласиться. Иначе «Вес 78.4» в дневнике и «Вес 82» в профиле — два разных
+      // ответа на один вопрос, и нормы считаются по устаревшему.
+      const newest = without.every((e) => e.date <= clean.date);
+      return { clean, newest };
+    });
+    if (!saved) return null;
+    if (saved.newest) {
+      await withKeyLock(KEYS.balanceProfile, async () => {
+        const stored = normalizeProfile(await read<unknown>(KEYS.balanceProfile, null));
+        if (stored && stored.weightKg !== saved.clean.kg) {
+          await write(KEYS.balanceProfile, { ...stored, weightKg: saved.clean.kg });
+        }
+      });
+    }
+    return saved.clean;
+  },
+  async removeWeight(date: string): Promise<{ ok: true }> {
+    return withKeyLock(KEYS.balanceWeight, async () => {
+      const log = await read<WeightEntry[]>(KEYS.balanceWeight, []);
+      await write(KEYS.balanceWeight, log.filter((e) => e.date !== date));
+      return { ok: true as const };
+    });
+  },
 
   async getFreezes(): Promise<string[]> {
     const stored = await read<string[]>(KEYS.freezes, []);
@@ -975,6 +1042,8 @@ export interface BackupData {
   balanceProducts: FoodProduct[];
   balanceFoodLog: FoodEntry[];
   balanceDishes: Dish[];
+  /** Дневник веса. Отсутствует в файлах, записанных до него, — импортируется пустым. */
+  balanceWeight: WeightEntry[];
 }
 
 /** What an import actually changed, so the UI can report it honestly. */
@@ -986,6 +1055,8 @@ export interface ImportStats {
   rewards: number;
   reviews: number;
   tasks: number;
+  /** Записи «Баланса»: продукты, блюда, съеденное и взвешивания вместе. */
+  balance: number;
 }
 
 const EMPTY_STATS: ImportStats = {
@@ -996,6 +1067,7 @@ const EMPTY_STATS: ImportStats = {
   rewards: 0,
   reviews: 0,
   tasks: 0,
+  balance: 0,
 };
 
 // Every mutation goes through withKeyLock, so an import has to hold *all* the
@@ -1012,7 +1084,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -1035,6 +1107,7 @@ export async function exportData(): Promise<BackupData> {
       read<FoodProduct[]>(KEYS.balanceProducts, []),
       read<FoodEntry[]>(KEYS.balanceFoodLog, []),
       read<Dish[]>(KEYS.balanceDishes, []),
+      read<WeightEntry[]>(KEYS.balanceWeight, []),
     ]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -1058,6 +1131,7 @@ export async function exportData(): Promise<BackupData> {
     balanceProducts,
     balanceFoodLog,
     balanceDishes,
+    balanceWeight,
   };
 }
 
@@ -1086,6 +1160,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.balanceProducts, data.balanceProducts),
       write(KEYS.balanceFoodLog, data.balanceFoodLog),
       write(KEYS.balanceDishes, data.balanceDishes),
+      write(KEYS.balanceWeight, data.balanceWeight),
     ]);
     return {
       habits: data.habits.length,
@@ -1095,6 +1170,11 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       rewards: data.rewards.length,
       reviews: data.reviews.length,
       tasks: data.tasks.length,
+      balance:
+        data.balanceProducts.length +
+        data.balanceDishes.length +
+        data.balanceFoodLog.length +
+        data.balanceWeight.length,
     };
   });
 }
@@ -1246,6 +1326,90 @@ export async function mergeData(data: BackupData): Promise<ImportStats> {
       }
     }
     if (habitFreezesChanged) await write(KEYS.habitFreezes, habitFreezes);
+
+    // --- «Баланс» ---
+    //
+    // Раньше этого блока не было вовсе: файл содержал и продукты, и съеденное, и блюда, а
+    // «Объединить» их молча не читало. Экспорт обещал полную копию, импорт половину терял.
+
+    // Профиль — это про человека, а не про телефон, поэтому он переносится, но только если
+    // здесь его ещё нет: чужой файл не должен переписывать вес, который стоит на этом
+    // устройстве и по которому уже считаются нормы.
+    const localProfile = await read<unknown>(KEYS.balanceProfile, null);
+    if (normalizeProfile(localProfile) === null && data.balanceProfile !== null) {
+      await write(KEYS.balanceProfile, data.balanceProfile);
+    }
+
+    // Продукты — по id, а при несовпадении по названию: «Куриная грудка», заведённая на
+    // двух телефонах руками, имеет разные id и один и тот же смысл.
+    const products = await read<FoodProduct[]>(KEYS.balanceProducts, []);
+    const productIdMap = new Map<string, string>();
+    const productByName = new Map(products.map((p) => [p.name.toLowerCase(), p.id] as const));
+    const productIds = new Set(products.map((p) => p.id));
+    for (const p of data.balanceProducts) {
+      if (productIds.has(p.id)) {
+        productIdMap.set(p.id, p.id);
+      } else if (productByName.has(p.name.toLowerCase())) {
+        productIdMap.set(p.id, productByName.get(p.name.toLowerCase())!);
+      } else {
+        products.push(p);
+        productIds.add(p.id);
+        productByName.set(p.name.toLowerCase(), p.id);
+        productIdMap.set(p.id, p.id);
+        stats.balance++;
+      }
+    }
+    if (data.balanceProducts.length > 0) await write(KEYS.balanceProducts, products);
+
+    // Блюда — тем же правилом, и их состав перенаправляется на местные id продуктов.
+    const dishes = await read<Dish[]>(KEYS.balanceDishes, []);
+    const dishIdMap = new Map<string, string>();
+    const dishByName = new Map(dishes.map((d) => [d.name.toLowerCase(), d.id] as const));
+    const dishIds = new Set(dishes.map((d) => d.id));
+    for (const d of data.balanceDishes) {
+      if (dishIds.has(d.id)) {
+        dishIdMap.set(d.id, d.id);
+      } else if (dishByName.has(d.name.toLowerCase())) {
+        dishIdMap.set(d.id, dishByName.get(d.name.toLowerCase())!);
+      } else {
+        dishes.push({ ...d, items: d.items.map((i) => ({ ...i, productId: productIdMap.get(i.productId) ?? i.productId })) });
+        dishIds.add(d.id);
+        dishByName.set(d.name.toLowerCase(), d.id);
+        dishIdMap.set(d.id, d.id);
+        stats.balance++;
+      }
+    }
+    if (data.balanceDishes.length > 0) await write(KEYS.balanceDishes, dishes);
+
+    // Съеденное — только по id. У дня нет одного правильного обеда: одно и то же можно
+    // съесть дважды, и вторая порция это не дубль, а вторая порция.
+    const foodLog = await read<FoodEntry[]>(KEYS.balanceFoodLog, []);
+    const foodIds = new Set(foodLog.map((e) => e.id));
+    for (const e of data.balanceFoodLog) {
+      if (foodIds.has(e.id)) continue;
+      foodIds.add(e.id);
+      foodLog.push({
+        ...e,
+        productId: productIdMap.get(e.productId) ?? e.productId,
+        ...(e.dishId ? { dishId: dishIdMap.get(e.dishId) ?? e.dishId } : {}),
+      });
+      stats.balance++;
+    }
+    if (data.balanceFoodLog.length > 0) await write(KEYS.balanceFoodLog, foodLog);
+
+    // Вес — объединение по дням, и местное взвешивание важнее: человек стоял на этих весах
+    // здесь, а файл мог быть записан до того.
+    const weight = await read<WeightEntry[]>(KEYS.balanceWeight, []);
+    const weightDays = new Set(weight.map((w) => w.date));
+    for (const w of data.balanceWeight) {
+      if (weightDays.has(w.date)) continue;
+      weightDays.add(w.date);
+      weight.push(w);
+      stats.balance++;
+    }
+    if (data.balanceWeight.length > 0) {
+      await write(KEYS.balanceWeight, weight.sort((a, b) => a.date.localeCompare(b.date)));
+    }
 
     // The screen-time limit is a setting of *this* phone, not history — merging
     // deliberately leaves it alone.

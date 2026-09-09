@@ -21,6 +21,7 @@ import { normalizeTipPrefs } from "./tipLibrary";
 import { normalizeLateRule, normalizeSchedule } from "./habitSchedule";
 import { normalizeProfile } from "./balance/profile";
 import { normalizeDish, normalizeEntry, normalizeProduct } from "./balance/food";
+import { normalizeWeightEntry } from "./balance/weight";
 import type {
   Habit,
   HabitTarget,
@@ -245,6 +246,9 @@ function parseData(raw: unknown): BackupData {
     balanceDishes: list(d.balanceDishes)
       .map(normalizeDish)
       .filter((x): x is NonNullable<ReturnType<typeof normalizeDish>> => x !== null),
+    balanceWeight: list(d.balanceWeight)
+      .map(normalizeWeightEntry)
+      .filter((w): w is NonNullable<ReturnType<typeof normalizeWeightEntry>> => w !== null),
   };
 }
 

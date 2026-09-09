@@ -5,6 +5,9 @@
  * one-day streak read "1 дней подряд".
  */
 export function plural(n: number, [one, few, many]: [string, string, string]): string {
+  // Дробное число всегда идёт с родительным единственного: «1,5 порции», «0,5 порции»,
+  // а не «0,5 порций». Целочисленные правила ниже на дробях врут.
+  if (!Number.isInteger(n)) return few;
   const abs = Math.abs(n) % 100;
   const last = abs % 10;
   if (abs > 10 && abs < 20) return many;
