@@ -1,5 +1,6 @@
 import { Platform } from "react-native";
 import { requireOptionalNativeModule } from "expo-modules-core";
+import type { RawEvent } from "../../src/lib/screen/sessions";
 
 export interface CrekerUsageDay {
   date: string;
@@ -28,7 +29,20 @@ export interface CrekerAppDay {
   launchCount: number;
 }
 
+/** Название и иконка пакета, как их видит система прямо сейчас. */
+export interface AppInfo {
+  packageName: string;
+  label: string;
+  installed: boolean;
+  /** PNG как data-URI, либо null: приложение удалено или иконку не удалось нарисовать. */
+  icon: string | null;
+}
+
 interface CrekerUsageNativeModule {
+  hasUsageAccess(): boolean;
+  openUsageAccessSettings(): boolean;
+  queryRawEvents(startMs: number, endMs: number): Promise<RawEvent[]>;
+  getAppInfo(packages: string[]): Promise<AppInfo[]>;
   getScreenTime(fromDate: string, toDate: string): Promise<CrekerUsageDay[]>;
   getAppUsage(fromDate: string, toDate: string): Promise<CrekerAppDay[]>;
   getStatus(date: string): Promise<{
@@ -128,5 +142,56 @@ export async function getCrekerConnection(date: string): Promise<CrekerConnectio
     // An older native side without getStatus at all lands here, and "installed but not
     // answering" is exactly what that is from the outside.
     return { state: "silent" };
+  }
+}
+
+/**
+ * Есть ли у приложения доступ к статистике использования.
+ *
+ * Это не обычное разрешение, а особое: его нельзя запросить диалогом, только открыть
+ * системный экран и попросить человека включить переключатель. Вне Android — всегда нет, и
+ * это читается так же, как «не выдано».
+ */
+export function hasUsageAccess(): boolean {
+  if (!native || Platform.OS !== "android") return false;
+  try {
+    return native.hasUsageAccess();
+  } catch {
+    return false;
+  }
+}
+
+/** Открывает системный экран выдачи доступа. false — открыть не удалось. */
+export function openUsageAccessSettings(): boolean {
+  if (!native) return false;
+  try {
+    return native.openUsageAccessSettings();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Сырой поток системных событий за окно.
+ *
+ * Ничего не истолковано: смысл этим событиям придаёт `lib/screen/sessions`, и придаёт его
+ * там, где это проверяется тестами.
+ */
+export async function queryRawEvents(startMs: number, endMs: number): Promise<RawEvent[]> {
+  if (!native) return [];
+  try {
+    return await native.queryRawEvents(startMs, endMs);
+  } catch {
+    return [];
+  }
+}
+
+/** Названия и иконки пакетов. Пустой список — нативной части нет или система молчит. */
+export async function getAppInfo(packages: string[]): Promise<AppInfo[]> {
+  if (!native || packages.length === 0) return [];
+  try {
+    return await native.getAppInfo(packages);
+  } catch {
+    return [];
   }
 }

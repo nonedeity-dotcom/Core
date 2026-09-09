@@ -19,7 +19,12 @@
     "android": {
       "package": "com.yourcompany.noburnout",
       "versionCode": 1,
-      "permissions": ["NOTIFICATIONS", "SCHEDULE_EXACT_ALARM"],
+      "permissions": [
+        "NOTIFICATIONS",
+        "SCHEDULE_EXACT_ALARM",
+        "android.permission.PACKAGE_USAGE_STATS",
+        "android.permission.QUERY_ALL_PACKAGES"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#12151a"

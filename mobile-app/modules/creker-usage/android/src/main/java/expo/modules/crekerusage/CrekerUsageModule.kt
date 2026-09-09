@@ -1,9 +1,24 @@
 package expo.modules.crekerusage
 
+import android.app.AppOpsManager
+import android.app.usage.UsageEvents
+import android.app.usage.UsageStatsManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.database.Cursor
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.net.Uri
+import android.os.Build
+import android.os.Process
+import android.provider.Settings
+import android.util.Base64
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import java.io.ByteArrayOutputStream
 
 private const val AUTHORITY = "com.creker.screentime.provider"
 
@@ -102,6 +117,117 @@ class CrekerUsageModule : Module() {
       results
     }
 
+    // --- Measuring for ourselves ---
+    //
+    // Everything above reads creker. Everything below replaces it: the same system API creker
+    // uses, asked for directly. The split is deliberate — this side stays as thin as it can
+    // be, handing back the raw event stream, and every judgement about what those events mean
+    // is made in TypeScript where it can be tested without a phone. Interval arithmetic that
+    // only ever runs on a device is arithmetic nobody has checked.
+
+    /** Whether this app may read usage statistics. A special app-op, not a runtime permission. */
+    Function("hasUsageAccess") {
+      val context = appContext.reactContext ?: return@Function false
+      val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
+        ?: return@Function false
+      val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName)
+      } else {
+        @Suppress("DEPRECATION")
+        appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName)
+      }
+      when (mode) {
+        AppOpsManager.MODE_ALLOWED -> true
+        // MODE_DEFAULT means "fall back to the permission check".
+        AppOpsManager.MODE_DEFAULT ->
+          context.checkCallingOrSelfPermission(android.Manifest.permission.PACKAGE_USAGE_STATS) ==
+            PackageManager.PERMISSION_GRANTED
+        else -> false
+      }
+    }
+
+    /**
+     * Opens the system screen where the person grants usage access — it cannot be granted from
+     * a dialog. Some vendors ship without the per-app deep link, hence the fallback.
+     */
+    Function("openUsageAccessSettings") {
+      val context = appContext.reactContext ?: return@Function false
+      val intents = listOf(
+        Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+          .setData(Uri.fromParts("package", context.packageName, null)),
+        Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS),
+      )
+      var opened = false
+      for (intent in intents) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (runCatching { context.startActivity(intent) }.isSuccess) {
+          opened = true
+          break
+        }
+      }
+      opened
+    }
+
+    /**
+     * The raw event stream between two epoch-millis stamps.
+     *
+     * Nothing is interpreted here beyond mapping the platform's integer event types onto
+     * names. Screen and keyguard events describe the device rather than an app, and some
+     * builds report them with no package at all; those get a stand-in name instead of being
+     * dropped, which is what once left screen time permanently empty.
+     */
+    AsyncFunction("queryRawEvents") { startMs: Double, endMs: Double ->
+      val context = appContext.reactContext ?: return@AsyncFunction emptyList<Map<String, Any>>()
+      val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+        ?: return@AsyncFunction emptyList<Map<String, Any>>()
+      val stream = runCatching { manager.queryEvents(startMs.toLong(), endMs.toLong()) }.getOrNull()
+        ?: return@AsyncFunction emptyList<Map<String, Any>>()
+
+      val out = mutableListOf<Map<String, Any>>()
+      val event = UsageEvents.Event()
+      while (stream.hasNextEvent()) {
+        stream.getNextEvent(event)
+        val type = eventTypeName(event.eventType) ?: continue
+        val packageName = event.packageName ?: if (isDeviceWide(type)) DEVICE_PACKAGE else continue
+        out.add(
+          mapOf(
+            "packageName" to packageName,
+            // Doubles, because JS has no 64-bit integer: epoch millis fit exactly.
+            "timestampMs" to event.timeStamp.toDouble(),
+            "type" to type,
+          )
+        )
+      }
+      out
+    }
+
+    /**
+     * Readable names and icons for packages.
+     *
+     * Needs the package-visibility declaration in the manifest: since Android 11 an app sees
+     * only what it declared. A package uninstalled since it was recorded resolves to its own
+     * name and no icon — history should survive an uninstall, not disappear with it.
+     *
+     * Icons come back as base64 PNG rather than as files: they are small, there are tens of
+     * them, and a file per icon means a cache to keep and to invalidate.
+     */
+    AsyncFunction("getAppInfo") { packages: List<String> ->
+      val context = appContext.reactContext ?: return@AsyncFunction emptyList<Map<String, Any?>>()
+      val pm = context.packageManager
+      packages.map { packageName ->
+        val info = runCatching { pm.getApplicationInfo(packageName, 0) }.getOrNull()
+        val label = info?.let { runCatching { pm.getApplicationLabel(it).toString() }.getOrNull() }
+          ?.takeIf { it.isNotBlank() }
+        val icon = info?.let { runCatching { pm.getApplicationIcon(it) }.getOrNull() }
+        mapOf(
+          "packageName" to packageName,
+          "label" to (label ?: packageName),
+          "installed" to (info != null),
+          "icon" to icon?.let { encodeIcon(it) },
+        )
+      }
+    }
+
     // Why there is no data, when there is none. getScreenTime deliberately flattens every
     // failure into an empty list, which is right for the habit tick but useless when the
     // user is asking "so is this working or not". Resolves to
@@ -155,5 +281,59 @@ class CrekerUsageModule : Module() {
         "updatedAt" to updatedAt,
       )
     }
+  }
+
+  private fun eventTypeName(raw: Int): String? = when (raw) {
+    // ACTIVITY_RESUMED (API 29+) shares its value with the older MOVE_TO_FOREGROUND.
+    UsageEvents.Event.MOVE_TO_FOREGROUND -> "foreground"
+    // Same for ACTIVITY_PAUSED and MOVE_TO_BACKGROUND.
+    UsageEvents.Event.MOVE_TO_BACKGROUND -> "background"
+    SCREEN_INTERACTIVE -> "screenOn"
+    SCREEN_NON_INTERACTIVE -> "screenOff"
+    KEYGUARD_SHOWN -> "keyguardShown"
+    KEYGUARD_HIDDEN -> "keyguardHidden"
+    DEVICE_SHUTDOWN -> "shutdown"
+    else -> null
+  }
+
+  private fun isDeviceWide(type: String): Boolean =
+    type == "screenOn" || type == "screenOff" || type == "keyguardShown" ||
+      type == "keyguardHidden" || type == "shutdown"
+
+  /** Draws a launcher icon into a small PNG and returns it as a data URI. */
+  private fun encodeIcon(drawable: Drawable): String? = runCatching {
+    val size = ICON_PX
+    val bitmap = if (drawable is BitmapDrawable && drawable.bitmap != null) {
+      Bitmap.createScaledBitmap(drawable.bitmap, size, size, true)
+    } else {
+      Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also {
+        val canvas = Canvas(it)
+        drawable.setBounds(0, 0, size, size)
+        drawable.draw(canvas)
+      }
+    }
+    val bytes = ByteArrayOutputStream().use { stream ->
+      bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+      stream.toByteArray()
+    }
+    "data:image/png;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
+  }.getOrNull()
+
+  private companion object {
+    /** Stand-in package for events that belong to the device rather than an app. */
+    const val DEVICE_PACKAGE = "android"
+
+    /**
+     * Declared as literals because the matching constants arrived in later API levels than
+     * this app's minimum; the numeric values are part of the platform contract.
+     */
+    const val SCREEN_INTERACTIVE = 15
+    const val SCREEN_NON_INTERACTIVE = 16
+    const val KEYGUARD_SHOWN = 17
+    const val KEYGUARD_HIDDEN = 18
+    const val DEVICE_SHUTDOWN = 26
+
+    /** Icons are shown at 24–32dp; 96px covers the densest screen without bloating storage. */
+    const val ICON_PX = 96
   }
 }

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { AppState, Image, View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
@@ -8,6 +8,8 @@ import { plural } from "../../lib/plural";
 import { useTodayKey } from "../../lib/useTodayKey";
 import { datesBetween } from "../../lib/date";
 import { syncFromCreker } from "../../integrations/screenTime";
+import { syncUsage } from "../../integrations/usageSync";
+import { hasUsageAccess, openUsageAccessSettings } from "../../../modules/creker-usage";
 import { formatCompact } from "../../lib/screen/duration";
 import {
   PRESET_LABELS,
@@ -53,6 +55,43 @@ export default function UsageScreen({
     queryKey: ["screenImported"],
     queryFn: () => api.getScreenImportedThrough(),
   });
+  const { data: icons = {} } = useQuery<Record<string, { label: string; icon: string | null }>>({
+    queryKey: ["appInfo"],
+    queryFn: () => api.getAppInfoCache(),
+  });
+
+  // Доступ к статистике использования выдаётся не диалогом, а переключателем на системном
+  // экране, — значит вернуться оттуда можно с любым исходом, и спрашивать надо каждый раз,
+  // когда приложение снова оказывается на переднем плане.
+  const [access, setAccess] = useState<boolean>(() => hasUsageAccess());
+
+  const refresh = useCallback(() => {
+    const granted = hasUsageAccess();
+    setAccess(granted);
+    return granted;
+  }, []);
+
+  const measure = useMutation({
+    mutationFn: () => syncUsage(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["screenDays"] });
+      qc.invalidateQueries({ queryKey: ["screenApps"] });
+      qc.invalidateQueries({ queryKey: ["appInfo"] });
+    },
+  });
+
+  // Пересчёт при открытии и при каждом возвращении: система хранит подробные события
+  // считанные дни, и пропущенная неделя — это неделя, которой уже не будет.
+  useEffect(() => {
+    if (refresh()) measure.mutate();
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      if (refresh()) measure.mutate();
+    });
+    return () => sub.remove();
+    // measure пересоздаётся на каждый рендер: подписка должна встать один раз.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refresh]);
 
   const sync = useMutation({
     mutationFn: () => syncFromCreker(),
@@ -115,12 +154,37 @@ export default function UsageScreen({
         </Pressable>
       </View>
 
+      {!access && (
+        <View style={styles.accessCard}>
+          <Text style={styles.accessTitle}>Нет доступа к статистике</Text>
+          <Text style={styles.hint}>
+            Считать экранное время может только приложение, которому Android это разрешил.
+            Разрешение выдаётся переключателем на системном экране — диалогом его не
+            запросить. Ничего никуда не уходит: числа остаются на телефоне.
+          </Text>
+          <Pressable
+            onPress={() => openUsageAccessSettings()}
+            accessibilityRole="button"
+            accessibilityLabel="Открыть настройки доступа"
+            style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
+          >
+            <Text style={styles.primaryText}>Открыть настройки</Text>
+          </Pressable>
+          <Text style={styles.footnote}>
+            Найди «Стержень (тест)» в списке и включи переключатель. Вернувшись сюда,
+            приложение пересчитает само.
+          </Text>
+        </View>
+      )}
+
       {empty ? (
         <View style={styles.card}>
           <Text style={styles.hint}>
             {importedThrough === null
-              ? "История ещё не перенесена. Нажми «Обновить из creker» — приложение заберёт всё, что creker намерил, и дальше будет показывать это само."
-              : "За этот период данных нет. creker хранит только то, что успел намерить, — до его установки истории не существует."}
+              ? access
+                ? "Пока пусто: приложение только начало считать. Сегодняшний день появится в течение дня, а прошлое можно один раз забрать у creker кнопкой внизу."
+                : "Считать пока нечем — нужен доступ к статистике использования."
+              : "За этот период данных нет."}
           </Text>
         </View>
       ) : (
@@ -160,7 +224,15 @@ export default function UsageScreen({
               accessibilityLabel={`${total.label}, ${formatCompact(total.usageMillis)}`}
               style={({ pressed }) => [styles.row, pressed && styles.pressed]}
             >
-              <View style={[styles.dot, { backgroundColor: sliceColor(i) }]} />
+              {icons[total.packageName]?.icon ? (
+                <Image
+                  source={{ uri: icons[total.packageName].icon as string }}
+                  style={styles.icon}
+                  accessibilityIgnoresInvertColors
+                />
+              ) : (
+                <View style={[styles.dot, { backgroundColor: sliceColor(i) }]} />
+              )}
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowName} numberOfLines={1}>
                   {total.label}
@@ -178,17 +250,19 @@ export default function UsageScreen({
         </>
       )}
 
-      {/* Пока измеряет creker, обновление — ручное действие, и оно названо своим именем.
-          Когда измерение переедет сюда, эта кнопка исчезнет вместе с зависимостью. */}
+      {/* Разовое действие, а не способ жить: приложение считает само, а у creker остаётся
+          только то, что он намерил до этого. Забрал — и creker больше не нужен. */}
       <Pressable
         onPress={() => sync.mutate()}
         disabled={sync.isPending}
         accessibilityRole="button"
-        accessibilityLabel="Обновить из creker"
+        accessibilityLabel="Перенести историю из creker"
         style={({ pressed }) => [styles.addRow, pressed && styles.pressed]}
       >
-        <Feather name="refresh-cw" size={15} color={colors.textMuted} />
-        <Text style={styles.addText}>{sync.isPending ? "Забираю…" : "Обновить из creker"}</Text>
+        <Feather name="download" size={15} color={colors.textMuted} />
+        <Text style={styles.addText}>
+          {sync.isPending ? "Забираю…" : "Перенести историю из creker"}
+        </Text>
       </Pressable>
       {sync.isSuccess && (
         <Text style={styles.syncNote}>
@@ -202,8 +276,9 @@ export default function UsageScreen({
         </Text>
       )}
       <Text style={styles.footnote}>
-        Пока считает creker, а «Стержень» хранит копию у себя. Не удаляй creker, пока перенос
-        не сработал хотя бы раз: его история живёт внутри него, и вместе с ним она исчезнет.
+        {access
+          ? "Приложение считает само — creker для этого больше не нужен. Он пригодится один раз, чтобы забрать историю за дни до установки: система хранит подробные события всего несколько суток, и всё, что старше, есть только у него. Забрал — можно удалять."
+          : "Пока нет доступа, считать нечем. Историю из creker забрать всё равно можно — она уже сохранена внутри него."}
       </Text>
     </ScrollView>
   );
@@ -274,5 +349,24 @@ const styles = StyleSheet.create({
   },
   addText: { color: colors.textMuted, fontSize: 13 },
   syncNote: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 8 },
+  icon: { width: 22, height: 22, borderRadius: 5 },
+  accessCard: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    marginBottom: 12,
+  },
+  accessTitle: { color: colors.accent, fontSize: 14, fontWeight: "600", marginBottom: 6 },
+  primary: {
+    marginTop: 14,
+    alignItems: "center",
+    paddingVertical: 11,
+    borderRadius: 12,
+    backgroundColor: colors.accentGreenDark,
+  },
+  primaryText: { color: colors.bg, fontSize: 14, fontWeight: "600" },
   footnote: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 14 },
 });

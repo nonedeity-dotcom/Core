@@ -58,6 +58,8 @@ const KEYS = {
   screenDays: "screen-days-v1",
   screenApps: "screen-apps-v1",
   screenImportedThrough: "screen-imported-through-v1",
+  screenLastSync: "screen-last-sync-v1",
+  screenAppInfo: "screen-app-info-v1",
 };
 
 export interface CalendarPrefs {
@@ -879,6 +881,44 @@ export const api = {
   },
   async setScreenImportedThrough(date: string): Promise<void> {
     await write(KEYS.screenImportedThrough, date);
+  },
+
+  /** Когда приложение в последний раз само пересчитывало события. 0 — ни разу. */
+  async getUsageLastSync(): Promise<number> {
+    const value = await read<number>(KEYS.screenLastSync, 0);
+    return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  },
+  async setUsageLastSync(atMs: number): Promise<void> {
+    await write(KEYS.screenLastSync, atMs);
+  },
+
+  /**
+   * Названия и иконки приложений, снятые один раз.
+   *
+   * Кэш, а не запрос при каждом показе: иконку надо нарисовать и закодировать, а список
+   * перерисовывается на каждое переключение периода. Иконка удалённого приложения остаётся
+   * здесь — история не должна терять лицо оттого, что приложение снесли.
+   */
+  async getAppInfoCache(): Promise<Record<string, { label: string; icon: string | null }>> {
+    const raw = await read<Record<string, { label: string; icon: string | null }>>(KEYS.screenAppInfo, {});
+    return raw && typeof raw === "object" ? raw : {};
+  },
+  async saveAppInfo(entries: { packageName: string; label: string; icon: string | null }[]): Promise<void> {
+    if (entries.length === 0) return;
+    await withKeyLock(KEYS.screenAppInfo, async () => {
+      const cache = await read<Record<string, { label: string; icon: string | null }>>(KEYS.screenAppInfo, {});
+      const next = { ...(cache && typeof cache === "object" ? cache : {}) };
+      for (const entry of entries) {
+        const known = next[entry.packageName];
+        // Пустую иконку не записываем поверх настоящей: приложение могли удалить, а
+        // нарисованная раньше иконка — всё ещё верное лицо этой истории.
+        next[entry.packageName] = {
+          label: entry.label,
+          icon: entry.icon ?? known?.icon ?? null,
+        };
+      }
+      await write(KEYS.screenAppInfo, next);
+    });
   },
 
   async getFreezes(): Promise<string[]> {
