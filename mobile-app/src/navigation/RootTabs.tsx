@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { NavigationContainer, DarkTheme } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
@@ -20,6 +21,8 @@ import PhasesScreen from "../screens/PhasesScreen";
 import HabitReportScreen from "../screens/HabitReportScreen";
 import HabitsReportScreen from "../screens/HabitsReportScreen";
 import ReviewScreen from "../screens/ReviewScreen";
+import BalanceProfileScreen from "../screens/balance/ProfileScreen";
+import SectionMenu, { type Section } from "./SectionMenu";
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -68,10 +71,40 @@ function Tabs() {
   );
 }
 
+/**
+ * «Баланс» — второй раздел приложения, со своим набором вкладок.
+ *
+ * Пока в нём один экран: профиль и нормы, из которых считается всё остальное. Дневник и
+ * статистика встанут рядом теми же вкладками, когда будут готовы, — каркас для этого и
+ * делается первым.
+ */
+function BalanceTabs() {
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: colors.text,
+        tabBarInactiveTintColor: colors.textMuted,
+        tabBarStyle: { backgroundColor: colors.card, borderTopColor: colors.cardBorder },
+        tabBarLabelStyle: { fontSize: 10 },
+        tabBarItemStyle: { paddingHorizontal: 0 },
+      }}
+    >
+      <Tab.Screen name="Профиль" component={BalanceProfileScreen} options={{ tabBarIcon: icon("user") }} />
+    </Tab.Navigator>
+  );
+}
+
 // A stack around the tabs, so settings and the reference can be pushed on top
 // instead of competing for a seventh slot in the bottom bar — seven labels only
 // just fit at 320px, and an eighth does not fit at all.
 export default function RootTabs() {
+  // Раздел живёт здесь, а не в навигаторе: это не экран, на который переходят, а то, чем
+  // приложение сейчас является. Не запоминается между запусками — открывается всегда на
+  // «Стержне», потому что открывают приложение ради него.
+  const [section, setSection] = useState<Section>("sterzhen");
+  const [menuOpen, setMenuOpen] = useState(false);
+
   return (
     <NavigationContainer theme={navTheme}>
       <Stack.Navigator
@@ -85,16 +118,25 @@ export default function RootTabs() {
       >
         <Stack.Screen
           name="Tabs"
-          component={Tabs}
           options={({ navigation }) => ({
             // No title: every tab already says what it is, and a second title
             // row would just eat height on a 640px screen.
             headerTitle: "",
+            headerLeft: () => (
+              <Pressable
+                onPress={() => setMenuOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Разделы"
+                hitSlop={12}
+                style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, paddingRight: 4 })}
+              >
+                <Feather name="menu" size={20} color={colors.textMuted} />
+              </Pressable>
+            ),
             headerRight: () => (
               <View style={{ flexDirection: "row", alignItems: "center" }}>
-                {/* Only on the tabs, not on the pushed screens: nothing behind the gear
-                    reads anything that another app can change under it. */}
-                <HeaderRefresh />
+                {/* Кнопка обновления читает creker и относится только к «Стержню». */}
+                {section === "sterzhen" && <HeaderRefresh />}
                 <Pressable
                   onPress={() => navigation.navigate("Settings")}
                   accessibilityRole="button"
@@ -107,7 +149,9 @@ export default function RootTabs() {
               </View>
             ),
           })}
-        />
+        >
+          {() => (section === "sterzhen" ? <Tabs /> : <BalanceTabs />)}
+        </Stack.Screen>
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: "Настройки" }} />
         <Stack.Screen name="Library" component={LibraryScreen} options={{ title: "Подсказки" }} />
         <Stack.Screen name="Archive" component={ArchiveScreen} options={{ title: "Архив привычек" }} />
@@ -123,6 +167,24 @@ export default function RootTabs() {
         <Stack.Screen name="Reminder" component={ReminderScreen} options={{ title: "Уведомления" }} />
         <Stack.Screen name="Review" component={ReviewScreen} options={{ title: "Сверка за неделю" }} />
       </Stack.Navigator>
+
+      <SectionMenu
+        visible={menuOpen}
+        section={section}
+        onClose={() => setMenuOpen(false)}
+        onSelect={setSection}
+        extra={[
+          {
+            id: "creker",
+            title: "Creker",
+            hint: "Экранное время — отдельное приложение",
+            icon: "smartphone",
+            // Разделом стать не может: это отдельно установленный APK. Перенос его экранов
+            // внутрь — отдельная работа, и она впереди.
+            disabledNote: "Пока отдельное приложение — перенесём его сюда позже",
+          },
+        ]}
+      />
     </NavigationContainer>
   );
 }

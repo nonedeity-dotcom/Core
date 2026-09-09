@@ -18,6 +18,7 @@ import { DEFAULT_DAY_RULE, normalizeDayRule, type DayRule } from "../lib/dayRule
 import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skipRule";
 import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipLibrary";
 import { DEFAULT_LATE_RULE, normalizeLateRule, normalizeSchedule, type LateRule } from "../lib/habitSchedule";
+import { normalizeProfile, type Profile } from "../lib/balance/profile";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -45,6 +46,7 @@ const KEYS = {
   habitFreezes: "habit-freezes-v1",
   tipPrefs: "tip-prefs-v1",
   lateRule: "late-rule-v1",
+  balanceProfile: "balance-profile-v1",
 };
 
 export interface CalendarPrefs {
@@ -579,6 +581,20 @@ export const api = {
     return { ok: true as const };
   },
 
+  /**
+   * «Баланс»: рост, вес, возраст и цель, из которых считаются нормы.
+   *
+   * null, пока не заполнен — считать не по чему, и половина норм хуже, чем честная просьба
+   * дозаполнить.
+   */
+  async getBalanceProfile(): Promise<Profile | null> {
+    return normalizeProfile(await read<unknown>(KEYS.balanceProfile, null));
+  },
+  async setBalanceProfile(profile: Profile): Promise<{ ok: true }> {
+    await write(KEYS.balanceProfile, profile);
+    return { ok: true as const };
+  },
+
   async getFreezes(): Promise<string[]> {
     const stored = await read<string[]>(KEYS.freezes, []);
     return stored.filter((d) => typeof d === "string");
@@ -856,6 +872,8 @@ export interface BackupData {
   tipPrefs: TipPrefs;
   /** What a missed window costs. Absent from older files, which import as "ничего". */
   lateRule: LateRule;
+  /** «Баланс»: the profile the day's targets are worked out from. null until it is filled in. */
+  balanceProfile: Profile | null;
 }
 
 /** What an import actually changed, so the UI can report it honestly. */
@@ -893,7 +911,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -912,6 +930,7 @@ export async function exportData(): Promise<BackupData> {
       api.getHabitFreezes(),
       api.getTipPrefs(),
       api.getLateRule(),
+      api.getBalanceProfile(),
     ]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -931,6 +950,7 @@ export async function exportData(): Promise<BackupData> {
     habitFreezes,
     tipPrefs,
     lateRule,
+    balanceProfile,
   };
 }
 
@@ -955,6 +975,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.habitFreezes, data.habitFreezes),
       write(KEYS.tipPrefs, normalizeTipPrefs(data.tipPrefs)),
       write(KEYS.lateRule, normalizeLateRule(data.lateRule)),
+      write(KEYS.balanceProfile, data.balanceProfile),
     ]);
     return {
       habits: data.habits.length,

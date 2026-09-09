@@ -19,6 +19,7 @@ import { normalizeDayRule } from "./dayRule";
 import { normalizeSkipRule } from "./skipRule";
 import { normalizeTipPrefs } from "./tipLibrary";
 import { normalizeLateRule, normalizeSchedule } from "./habitSchedule";
+import { normalizeProfile } from "./balance/profile";
 import type {
   Habit,
   HabitTarget,
@@ -232,6 +233,8 @@ function parseData(raw: unknown): BackupData {
     // Missing from files written before the reference was editable.
     tipPrefs: normalizeTipPrefs(d.tipPrefs),
     lateRule: normalizeLateRule(d.lateRule),
+    // Отсутствует во всех файлах, записанных до «Баланса».
+    balanceProfile: normalizeProfile(d.balanceProfile),
   };
 }
 

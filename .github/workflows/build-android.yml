@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - claude/tracker-app-demo-8eowpg
+      # Work in progress, built as a *separate* app so the stable one stays installed —
+      # see the stamping step below.
+      - claude/balance
     paths:
       - "mobile-app/**"
       - ".github/workflows/build-android.yml"
@@ -51,7 +54,18 @@ jobs:
           const run = Number(process.env.GITHUB_RUN_NUMBER) || 0;
           j.expo.version = `1.0.${run}`;
           j.expo.android.versionCode = run;
+
+          // A build from anywhere but the stable branch installs as its own app: its own
+          // applicationId, its own name in the launcher, its own storage. Android keys
+          // everything off the applicationId, so without this the test build would replace
+          // the app being used every day — which is exactly what a test build must not do.
+          if (process.env.GITHUB_REF_NAME !== "claude/tracker-app-demo-8eowpg") {
+            j.expo.name = "Стержень (тест)";
+            j.expo.android.package = "com.yourcompany.noburnout.dev";
+          }
+
           fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
+          console.log("name", j.expo.name, "package", j.expo.android.package);
           console.log("version", j.expo.version, "versionCode", j.expo.android.versionCode);
           JS
           node stamp-version.js
@@ -77,10 +91,28 @@ jobs:
           name: sterzhen-apk
           path: mobile-app/${{ steps.apk.outputs.path }}
 
+      # Test builds get their own tag prefix, so the releases page never leaves you guessing
+      # which of two APKs is the one you actually use.
+      - name: Name this build
+        id: flavour
+        run: |
+          if [ "$GITHUB_REF_NAME" = "claude/tracker-app-demo-8eowpg" ]; then
+            echo "tag=android-build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "title=Стержень — сборка ${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "note=Обычная сборка «Стержня»." >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=test-build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "title=Стержень (тест) — сборка ${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "note=Отдельное приложение: ставится рядом с обычным «Стержнем» и не трогает его данные." >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish release with APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: android-build-${{ github.run_number }}
-          name: Стержень — сборка ${{ github.run_number }}
-          body: Automated debug-signed release APK built from ${{ github.sha }}.
+          tag_name: ${{ steps.flavour.outputs.tag }}
+          name: ${{ steps.flavour.outputs.title }}
+          body: |
+            ${{ steps.flavour.outputs.note }}
+
+            Ветка `${{ github.ref_name }}`, коммит ${{ github.sha }}.
           files: mobile-app/${{ steps.apk.outputs.path }}
