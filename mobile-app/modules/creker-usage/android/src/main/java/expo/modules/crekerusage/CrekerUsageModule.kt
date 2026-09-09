@@ -8,8 +8,8 @@ import expo.modules.kotlin.modules.ModuleDefinition
 private const val AUTHORITY = "com.creker.screentime.provider"
 
 /**
- * Reads device-wide screen-on time out of creker's (a separate, sibling app on the
- * same device) read-only ContentProvider — see creker's UsageProvider.kt for the
+ * Reads device-wide screen-on time and per-app foreground time out of creker's (a separate,
+ * sibling app on the same device) read-only ContentProvider — see creker's UsageProvider.kt for the
  * query contract this mirrors. Nothing here writes anything or requires network;
  * if creker isn't installed, hasn't granted the permission, or has no data for the
  * range, every call just resolves to an empty list rather than throwing — "no data"
@@ -53,6 +53,51 @@ class CrekerUsageModule : Module() {
         }
       } catch (e: Exception) {
         // creker missing / permission not granted / provider unreachable — same as no data.
+      }
+      results
+    }
+
+    // Per-app foreground time for a date range, mirroring creker's `app_usage` path — the
+    // same selectionArgs contract as above. Resolves to a list of
+    // { date, packageName, label, usageMillis, launchCount }, one entry per app per day it
+    // was used. `label` is the readable name, resolved by creker: since Android 11 this app
+    // sees only the packages it declared up front, so it cannot work the name out itself.
+    //
+    // Same silence on failure as getScreenTime: an older creker without this path returns no
+    // cursor, and that is an empty list, not an error. Callers must survive it, because every
+    // creker installed before this path existed will do exactly that.
+    AsyncFunction("getAppUsage") { fromDate: String, toDate: String ->
+      val resolver = appContext.reactContext?.contentResolver
+        ?: return@AsyncFunction emptyList<Map<String, Any>>()
+      val uri = Uri.parse("content://$AUTHORITY/app_usage")
+      val results = mutableListOf<Map<String, Any>>()
+      try {
+        val cursor: Cursor? = resolver.query(uri, null, null, arrayOf(fromDate, toDate), null)
+        cursor?.use {
+          val dateIdx = it.getColumnIndex("date")
+          val packageIdx = it.getColumnIndex("package_name")
+          val millisIdx = it.getColumnIndex("usage_millis")
+          val launchIdx = it.getColumnIndex("launch_count")
+          val labelIdx = it.getColumnIndex("app_label")
+          if (dateIdx >= 0 && packageIdx >= 0 && millisIdx >= 0) {
+            while (it.moveToNext()) {
+              val packageName = it.getString(packageIdx)
+              results.add(
+                mapOf(
+                  "date" to it.getString(dateIdx),
+                  "packageName" to packageName,
+                  // A creker old enough to lack the column still gives usable rows; the
+                  // package name is a worse name than a real one and better than nothing.
+                  "label" to if (labelIdx >= 0) it.getString(labelIdx) ?: packageName else packageName,
+                  "usageMillis" to it.getLong(millisIdx),
+                  "launchCount" to if (launchIdx >= 0) it.getInt(launchIdx) else 0,
+                )
+              )
+            }
+          }
+        }
+      } catch (e: Exception) {
+        // creker missing / too old for this path / not allowed — same as no data.
       }
       results
     }

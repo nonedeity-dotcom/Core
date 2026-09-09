@@ -25,6 +25,8 @@ import BalanceProfileScreen from "../screens/balance/ProfileScreen";
 import DiaryScreen from "../screens/balance/DiaryScreen";
 import AddFoodScreen from "../screens/balance/AddFoodScreen";
 import BalanceStatsScreen from "../screens/balance/StatsScreen";
+import UsageScreen from "../screens/screen/UsageScreen";
+import AppUsageScreen from "../screens/screen/AppUsageScreen";
 import SectionMenu, { type Section } from "./SectionMenu";
 
 const Tab = createBottomTabNavigator();
@@ -101,6 +103,26 @@ function BalanceTabs() {
   );
 }
 
+/**
+ * «Экран» — раздел о времени в телефоне.
+ *
+ * Одна вкладка, и вкладочной панели под ней не будет: навигатор здесь нужен только чтобы
+ * раздел вёл себя как остальные два, а второго экрана в нём нет — приложение открывается
+ * поверх, из списка.
+ */
+function ScreenTabs() {
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        headerShown: false,
+        tabBarStyle: { display: "none" },
+      }}
+    >
+      <Tab.Screen name="Экран" component={UsageScreen} />
+    </Tab.Navigator>
+  );
+}
+
 // A stack around the tabs, so settings and the reference can be pushed on top
 // instead of competing for a seventh slot in the bottom bar — seven labels only
 // just fit at 320px, and an eighth does not fit at all.
@@ -156,13 +178,20 @@ export default function RootTabs() {
             ),
           })}
         >
-          {() => (section === "sterzhen" ? <Tabs /> : <BalanceTabs />)}
+          {() =>
+            section === "sterzhen" ? <Tabs /> : section === "balance" ? <BalanceTabs /> : <ScreenTabs />
+          }
         </Stack.Screen>
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: "Настройки" }} />
         <Stack.Screen name="Library" component={LibraryScreen} options={{ title: "Подсказки" }} />
         <Stack.Screen name="Archive" component={ArchiveScreen} options={{ title: "Архив привычек" }} />
         <Stack.Screen name="Admin" component={AdminScreen} options={{ title: "Настройки админа" }} />
         <Stack.Screen name="AddFood" component={AddFoodScreen} options={{ title: "Добавить еду" }} />
+        <Stack.Screen
+          name="AppUsage"
+          component={AppUsageScreen}
+          options={({ route }) => ({ title: (route.params as { title?: string })?.title ?? "Приложение" })}
+        />
         <Stack.Screen name="Phases" component={PhasesScreen} options={{ title: "Этапы" }} />
         <Stack.Screen name="HabitsReport" component={HabitsReportScreen} options={{ title: "По привычкам" }} />
         {/* Titled from the habit's own name, so the header says which one you opened. */}
@@ -184,11 +213,12 @@ export default function RootTabs() {
           {
             id: "creker",
             title: "Creker",
-            hint: "Экранное время — отдельное приложение",
-            icon: "smartphone",
-            // Разделом стать не может: это отдельно установленный APK. Перенос его экранов
-            // внутрь — отдельная работа, и она впереди.
-            disabledNote: "Пока отдельное приложение — перенесём его сюда позже",
+            hint: "Пока он и меряет экранное время",
+            icon: "activity",
+            // Экраны creker уже переехали в раздел «Экран», а измерение — ещё нет: оно
+            // требует системного разрешения, которое выдаётся приложению отдельно. Пункт
+            // остаётся видимым именно поэтому: creker ещё нужен, и удалять его рано.
+            disabledNote: "Экраны уже здесь, в разделе «Экран». Измеряет пока creker — не удаляй его",
           },
         ]}
       />

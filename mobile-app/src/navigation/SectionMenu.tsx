@@ -2,7 +2,7 @@ import { View, Text, Pressable, Modal, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
 
-export type Section = "sterzhen" | "balance";
+export type Section = "sterzhen" | "balance" | "screen";
 
 /**
  * Меню разделов — то, что открывается кнопкой «три линии» слева в шапке.
@@ -39,6 +39,7 @@ export default function SectionMenu({
   const sections: { id: Section; title: string; hint: string; icon: MenuItem["icon"] }[] = [
     { id: "sterzhen", title: "Стержень", hint: "Привычки, фокус, энергия", icon: "check-square" },
     { id: "balance", title: "Баланс", hint: "Калории и белок за день", icon: "pie-chart" },
+    { id: "screen", title: "Экран", hint: "Сколько времени и в чём", icon: "smartphone" },
   ];
 
   return (

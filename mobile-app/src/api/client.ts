@@ -22,6 +22,7 @@ import { normalizeProfile, type Profile } from "../lib/balance/profile";
 import { normalizeDish, normalizeEntry, normalizeProduct, type Dish, type FoodEntry, type FoodProduct } from "../lib/balance/food";
 import { normalizeWeightEntry, type WeightEntry } from "../lib/balance/weight";
 import { CATALOG_DISHES, CATALOG_PRODUCTS } from "../lib/balance/catalog";
+import { normalizeAppDay, normalizeScreenDay, type AppDay, type ScreenDay } from "../lib/screen/usage";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -54,6 +55,9 @@ const KEYS = {
   balanceFoodLog: "balance-food-log-v1",
   balanceDishes: "balance-dishes-v1",
   balanceWeight: "balance-weight-v1",
+  screenDays: "screen-days-v1",
+  screenApps: "screen-apps-v1",
+  screenImportedThrough: "screen-imported-through-v1",
 };
 
 export interface CalendarPrefs {
@@ -813,6 +817,68 @@ export const api = {
       await write(KEYS.balanceWeight, log.filter((e) => e.date !== date));
       return { ok: true as const };
     });
+  },
+
+  /**
+   * Экранное время — своя копия того, что намерил creker.
+   *
+   * Копия, а не запрос к creker каждый раз, по одной причине: creker будет удалён. Всё, что
+   * останется только у него, исчезнет вместе с ним, поэтому история переезжает сюда целиком
+   * и живёт здесь, а creker до сборки со своим измерением — временный источник.
+   */
+  async getScreenDays(from: string, to: string): Promise<ScreenDay[]> {
+    const raw = await read<unknown[]>(KEYS.screenDays, []);
+    return (Array.isArray(raw) ? raw : [])
+      .map(normalizeScreenDay)
+      .filter((d): d is ScreenDay => d !== null && inRange(d.date, from, to))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  },
+  async getScreenApps(from: string, to: string): Promise<AppDay[]> {
+    const raw = await read<unknown[]>(KEYS.screenApps, []);
+    return (Array.isArray(raw) ? raw : [])
+      .map(normalizeAppDay)
+      .filter((r): r is AppDay => r !== null && inRange(r.date, from, to));
+  },
+
+  /**
+   * Записывает то, что пришло от creker, поверх своего.
+   *
+   * День из creker перезаписывает свой целиком, а не дополняет: creker пересчитывает сутки
+   * по мере того, как они идут, и его вчерашнее число вернее нашего позавчерашнего снимка
+   * того же дня. Дни, о которых creker молчит, остаются нетронутыми — молчание не значит
+   * «нуль», оно значит «не знаю», и стереть по нему прошлое было бы потерей.
+   */
+  async mergeScreenData(days: ScreenDay[], apps: AppDay[]): Promise<{ days: number; apps: number }> {
+    const wroteDays = await withKeyLock(KEYS.screenDays, async () => {
+      if (days.length === 0) return 0;
+      const stored = await read<ScreenDay[]>(KEYS.screenDays, []);
+      const byDate = new Map(stored.map((d) => [d.date, d] as const));
+      for (const day of days) byDate.set(day.date, day);
+      await write(KEYS.screenDays, [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)));
+      return days.length;
+    });
+
+    const wroteApps = await withKeyLock(KEYS.screenApps, async () => {
+      if (apps.length === 0) return 0;
+      const stored = await read<AppDay[]>(KEYS.screenApps, []);
+      // Пришедшие дни заменяются целиком, остальные остаются: иначе приложение, которым
+      // в этот день перестали пользоваться, висело бы в списке навсегда.
+      const replaced = new Set(apps.map((a) => a.date));
+      const kept = stored.filter((r) => !replaced.has(r.date));
+      await write(KEYS.screenApps, [...kept, ...apps]);
+      return apps.length;
+    });
+
+    return { days: wroteDays, apps: wroteApps };
+  },
+
+  /** Докуда история уже перенесена. Пусто — не переносили ни разу. */
+  async getScreenImportedThrough(): Promise<string | null> {
+    const value = await read<string | null>(KEYS.screenImportedThrough, null);
+    return typeof value === "string" && value !== "" ? value : null;
+  },
+  async setScreenImportedThrough(date: string): Promise<void> {
+    await write(KEYS.screenImportedThrough, date);
   },
 
   async getFreezes(): Promise<string[]> {

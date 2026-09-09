@@ -14,8 +14,23 @@ export interface CrekerUsageDay {
   updatedAt: number;
 }
 
+/** One app's foreground time on one day, as creker recorded it. */
+export interface CrekerAppDay {
+  date: string;
+  packageName: string;
+  /**
+   * Readable name, resolved by creker rather than here: since Android 11 an app sees only the
+   * packages it declared up front, so this app cannot turn `com.google.android.youtube` into
+   * «YouTube» itself. Falls back to the package name.
+   */
+  label: string;
+  usageMillis: number;
+  launchCount: number;
+}
+
 interface CrekerUsageNativeModule {
   getScreenTime(fromDate: string, toDate: string): Promise<CrekerUsageDay[]>;
+  getAppUsage(fromDate: string, toDate: string): Promise<CrekerAppDay[]>;
   getStatus(date: string): Promise<{
     installed: boolean;
     answered: boolean;
@@ -63,6 +78,30 @@ export async function getCrekerScreenTime(fromDate: string, toDate: string): Pro
     // Older native side / older creker may omit updatedAt entirely; normalise it
     // here so every caller can treat the field as present and 0 as "unknown".
     return rows.map((row) => ({ ...row, updatedAt: Number(row.updatedAt) || 0 }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Per-app foreground time for a range, from creker.
+ *
+ * Resolves to [] for every failure, exactly like getCrekerScreenTime — and here that
+ * includes a creker too old to have this path at all, which is what every already-installed
+ * creker is. So an empty list means "nothing to show", never "something is broken", and the
+ * caller must be able to tell the difference some other way if it needs to.
+ */
+export async function getCrekerAppUsage(fromDate: string, toDate: string): Promise<CrekerAppDay[]> {
+  if (!native) return [];
+  try {
+    const rows = await native.getAppUsage(fromDate, toDate);
+    return rows.map((row) => ({
+      date: String(row.date),
+      packageName: String(row.packageName),
+      label: String(row.label || row.packageName),
+      usageMillis: Number(row.usageMillis) || 0,
+      launchCount: Number(row.launchCount) || 0,
+    }));
   } catch {
     return [];
   }
