@@ -1,13 +1,17 @@
 import { useState } from "react";
-import { View, Text, ScrollView, StyleSheet } from "react-native";
+import { View, Text, Image, Pressable, ScrollView, StyleSheet } from "react-native";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../../api/client";
+import { api, type AppInfoEntry } from "../../api/client";
 import { colors } from "../../theme/colors";
 import { plural } from "../../lib/plural";
 import { useTodayKey } from "../../lib/useTodayKey";
-import { datesBetween, dateNDaysAgo, formatDateShort } from "../../lib/date";
+import { datesBetween, formatDateShort } from "../../lib/date";
 import { formatCompact, formatDuration, formatWithUnits } from "../../lib/screen/duration";
-import { MONTH_DAYS } from "../../lib/screen/period";
+import { dayCount, resolveSelection, shiftRange, type Selection } from "../../lib/screen/period";
+import { describeChange, usageChange } from "../../lib/screen/compare";
+import { hourlyFor, METRIC_LABELS, type Metric } from "../../integrations/usageSync";
+import PeriodBar from "../../components/screen/PeriodBar";
+import HourlyBars from "../../components/screen/HourlyBars";
 import {
   currentStreak,
   historyFor,
@@ -30,61 +34,130 @@ export default function AppUsageScreen({
 }) {
   const today = useTodayKey();
   const packageName = route.params?.packageName ?? "";
-  const from = dateNDaysAgo(MONTH_DAYS - 1);
+  const [selection, setSelection] = useState<Selection>({ kind: "preset", preset: "month" });
+  const [metric, setMetric] = useState<Metric>("usage");
   const [picked, setPicked] = useState<string | null>(null);
 
+  const range = resolveSelection(selection, today);
+  const span = dayCount(range);
+  const single = span === 1;
+  const prev = shiftRange(range, -span);
+
   const { data: rows = [] } = useQuery<AppDay[]>({
-    queryKey: ["screenApps", from, today],
-    queryFn: () => api.getScreenApps(from, today),
+    queryKey: ["screenApps", range.from, range.to],
+    queryFn: () => api.getScreenApps(range.from, range.to),
+  });
+  const { data: prevRows = [] } = useQuery<AppDay[]>({
+    queryKey: ["screenApps", prev.from, prev.to],
+    queryFn: () => api.getScreenApps(prev.from, prev.to),
+  });
+  const { data: icons = {} } = useQuery<Record<string, AppInfoEntry>>({
+    queryKey: ["appInfo"],
+    queryFn: () => api.getAppInfoCache(),
+  });
+  const { data: hourly } = useQuery({
+    queryKey: ["hourly", range.from, metric, packageName],
+    queryFn: () => hourlyFor(range.from, metric === "screen" ? "usage" : metric, packageName),
+    enabled: single,
   });
 
+  const info = icons[packageName];
   const history = historyFor(rows, packageName);
+  const prevHistory = historyFor(prevRows, packageName);
   const byDate = new Map(history.map((h) => [h.date, h] as const));
-  const bars = datesBetween(from, today).map((date) => ({
+  const bars = datesBetween(range.from, range.to).map((date) => ({
     date,
-    value: byDate.get(date)?.usageMillis ?? 0,
+    value: metric === "sessions" ? (byDate.get(date)?.launchCount ?? 0) : (byDate.get(date)?.usageMillis ?? 0),
   }));
 
   const total = history.reduce((sum, h) => sum + h.usageMillis, 0);
   const launches = history.reduce((sum, h) => sum + h.launchCount, 0);
+  const prevTotal = prevHistory.reduce((sum, h) => sum + h.usageMillis, 0);
+  const prevLaunches = prevHistory.reduce((sum, h) => sum + h.launchCount, 0);
+  const change = usageChange(
+    metric === "sessions" ? launches : total,
+    metric === "sessions" ? prevLaunches : prevTotal,
+    span,
+  );
   const daysUsed = history.filter((h) => h.usageMillis > 0).length;
   const streak = currentStreak(history, today);
   const longest = longestStreak(history);
   const peak = maxDayUsage(history);
   const pickedRow = picked ? byDate.get(picked) : undefined;
 
-  if (history.length === 0) {
-    return (
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <View style={styles.card}>
-          <Text style={styles.hint}>
-            За последний месяц этим приложением не пользовались — или история за эти дни ещё
-            не перенесена из creker.
-          </Text>
-        </View>
-      </ScrollView>
-    );
-  }
-
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <PeriodBar selection={selection} onChange={setSelection} today={today} />
+
+      <View style={styles.metrics}>
+        {(["usage", "sessions"] as Metric[]).map((m) => (
+          <Pressable
+            key={m}
+            onPress={() => setMetric(m)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: metric === m }}
+            accessibilityLabel={`Метрика: ${METRIC_LABELS[m]}`}
+            style={({ pressed }) => [styles.metric, metric === m && styles.metricOn, pressed && styles.pressed]}
+          >
+            <Text style={[styles.metricText, metric === m && styles.metricTextOn]}>{METRIC_LABELS[m]}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {history.length === 0 ? (
+        <View style={styles.card}>
+          <Text style={styles.hint}>
+            За этот период приложением не пользовались.
+          </Text>
+        </View>
+      ) : (
+        <>
       <View style={styles.card}>
-        <Text style={styles.big}>{formatDuration(total)}</Text>
-        <Text style={styles.caption}>{`за 30 дней · ${formatCompact(Math.round(total / MONTH_DAYS))} в день`}</Text>
+        {info?.icon && (
+          <Image source={{ uri: info.icon }} style={styles.bigIcon} accessibilityIgnoresInvertColors />
+        )}
+        <Text style={styles.big}>
+          {metric === "sessions" ? `${launches}` : formatDuration(total)}
+        </Text>
+        <Text style={styles.caption}>
+          {metric === "sessions"
+            ? `${plural(launches, ["запуск", "запуска", "запусков"])} за ${span} ${plural(span, ["день", "дня", "дней"])}`
+            : `за ${span} ${plural(span, ["день", "дня", "дней"])} · ${formatCompact(Math.round(total / span))} в день`}
+        </Text>
+        {change && <Text style={styles.change}>{describeChange(change)}</Text>}
+        {/* «Пользуюсь три года» и «поставил неделю назад» — разные факты об одном числе. */}
+        {info?.installedAtMs ? (
+          <Text style={styles.caption}>
+            {`Установлено ${formatDateShort(new Date(info.installedAtMs).toISOString())}`}
+          </Text>
+        ) : null}
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>По дням</Text>
-        <UsageBars bars={bars} selected={picked} onSelect={(d) => setPicked(d === picked ? null : d)} />
-        <Text style={styles.pickHint}>
-          {pickedRow
-            ? `${formatDateShort(pickedRow.date)}: ${formatWithUnits(pickedRow.usageMillis)} · ${
-                pickedRow.launchCount
-              } ${plural(pickedRow.launchCount, ["запуск", "запуска", "запусков"])}`
-            : picked
-              ? `${formatDateShort(picked)}: не открывали`
-              : "Нажми на столбик, чтобы увидеть день"}
-        </Text>
+        <Text style={styles.cardTitle}>{single ? "По часам" : "По дням"}</Text>
+        {single ? (
+          hourly ? (
+            <HourlyBars hours={hourly} counts={metric === "sessions"} />
+          ) : (
+            <Text style={styles.hint}>
+              Почасовая картина есть только у последних дней: подробные события система хранит
+              недолго, а итог за день сохраняется навсегда.
+            </Text>
+          )
+        ) : (
+          <>
+            <UsageBars bars={bars} selected={picked} onSelect={(d) => setPicked(d === picked ? null : d)} />
+            <Text style={styles.pickHint}>
+              {pickedRow
+                ? `${formatDateShort(pickedRow.date)}: ${formatWithUnits(pickedRow.usageMillis)} · ${
+                    pickedRow.launchCount
+                  } ${plural(pickedRow.launchCount, ["запуск", "запуска", "запусков"])}`
+                : picked
+                  ? `${formatDateShort(picked)}: не открывали`
+                  : "Нажми на столбик, чтобы увидеть день"}
+            </Text>
+          </>
+        )}
       </View>
 
       <View style={styles.figures}>
@@ -92,18 +165,23 @@ export default function AppUsageScreen({
         <Figure label="Самая долгая череда" value={`${longest}`} hint={plural(longest, ["день", "дня", "дней"])} />
       </View>
       <View style={styles.figures}>
-        <Figure label="Дней из 30" value={`${daysUsed}`} hint="когда открывали" />
+        <Figure label={`Дней из ${span}`} value={`${daysUsed}`} hint="когда открывали" />
         <Figure label="Пик за день" value={formatCompact(peak)} hint="больше всего за сутки" />
       </View>
 
       <View style={styles.card}>
         <Text style={styles.rowDetail}>
-          {`Всего ${launches} ${plural(launches, ["запуск", "запуска", "запусков"])} за 30 дней` +
+          {`Всего ${launches} ${plural(launches, ["запуск", "запуска", "запусков"])} за ${span} ${plural(
+            span,
+            ["день", "дня", "дней"],
+          )}` +
             (daysUsed > 0
               ? ` — примерно ${Math.round(launches / daysUsed)} в день, когда открывали вообще.`
               : ".")}
         </Text>
       </View>
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -130,6 +208,14 @@ const styles = StyleSheet.create({
     alignItems: "stretch",
   },
   cardTitle: { color: colors.text, fontSize: 13, fontWeight: "600", marginBottom: 12 },
+  metrics: { flexDirection: "row", gap: 6, marginBottom: 12 },
+  metric: { flex: 1, alignItems: "center", paddingVertical: 7, borderRadius: 10, backgroundColor: colors.card },
+  metricOn: { backgroundColor: "rgba(143,184,154,0.14)" },
+  metricText: { color: colors.textMuted, fontSize: 12 },
+  metricTextOn: { color: colors.accentGreen, fontWeight: "600" },
+  pressed: { opacity: 0.75 },
+  bigIcon: { width: 40, height: 40, borderRadius: 9, alignSelf: "center", marginBottom: 10 },
+  change: { color: colors.textMuted, fontSize: 12, textAlign: "center", marginTop: 8 },
   big: {
     color: colors.accentGreen,
     fontSize: 32,

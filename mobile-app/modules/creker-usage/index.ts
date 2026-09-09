@@ -36,6 +36,8 @@ export interface AppInfo {
   installed: boolean;
   /** PNG как data-URI, либо null: приложение удалено или иконку не удалось нарисовать. */
   icon: string | null;
+  /** Когда приложение впервые появилось на телефоне. null — узнать не удалось. */
+  installedAtMs: number | null;
 }
 
 interface CrekerUsageNativeModule {

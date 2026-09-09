@@ -240,3 +240,48 @@ export function measuredThroughMs(date: string, nowMs: number): number {
   const endOfDay = new Date(y, m - 1, d + 1).getTime();
   return Math.min(endOfDay, nowMs);
 }
+
+/** Одно значение на час суток. */
+export interface HourlyValue {
+  hour: number;
+  value: number;
+}
+
+/**
+ * Интервалы, разложенные по 24 часам суток, — для графика одного дня.
+ *
+ * Считается на лету из системных событий, а не хранится: система держит подробные события
+ * считанные дни, и почасовая разбивка существует ровно для них. Хранить её за всю историю
+ * значило бы хранить в двадцать четыре раза больше ради экрана, который открывают на
+ * сегодняшнем дне.
+ */
+export function toHourlyUsage(intervals: Interval[]): HourlyValue[] {
+  const totals = new Array<number>(24).fill(0);
+  for (const interval of intervals) {
+    let cursor = interval.startMs;
+    while (cursor < interval.endMs) {
+      const d = new Date(cursor);
+      const nextHour = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours() + 1).getTime();
+      const chunkEnd = Math.min(Math.max(nextHour, cursor + 1), interval.endMs);
+      totals[d.getHours()] += chunkEnd - cursor;
+      cursor = chunkEnd;
+    }
+  }
+  return totals.map((value, hour) => ({ hour, value }));
+}
+
+/** Запуски по часам суток — то же для метрики «сколько раз открывал». */
+export function toHourlyLaunches(events: RawEvent[], rangeStartMs: number, rangeEndMs: number): HourlyValue[] {
+  const counts = new Array<number>(24).fill(0);
+  for (const event of events) {
+    if (event.type !== "foreground") continue;
+    if (event.timestampMs < rangeStartMs || event.timestampMs >= rangeEndMs) continue;
+    counts[new Date(event.timestampMs).getHours()] += 1;
+  }
+  return counts.map((value, hour) => ({ hour, value }));
+}
+
+/** Только интервалы одного пакета — для почасового графика отдельного приложения. */
+export function onlyPackage(intervals: Interval[], packageName: string): Interval[] {
+  return intervals.filter((i) => i.packageName === packageName);
+}

@@ -37,7 +37,8 @@ function describeImport(stats: ImportStats, mode: ImportMode): string {
       stats.habitLog
     } ${plural(stats.habitLog, ["отметка", "отметки", "отметок"])}.`;
   }
-  const added = stats.habits + stats.habitLog + stats.sessions + stats.energy + stats.rewards + stats.balance;
+  const added =
+    stats.habits + stats.habitLog + stats.sessions + stats.energy + stats.rewards + stats.balance + stats.screen;
   if (added === 0) return "Всё из этого файла уже есть — ничего не изменилось.";
   const parts = [
     `${stats.habits} ${plural(stats.habits, ["привычка", "привычки", "привычек"])}`,
@@ -48,6 +49,9 @@ function describeImport(stats: ImportStats, mode: ImportMode): string {
   // строчка «0 записей Баланса» — это шум про раздел, которого для него нет.
   if (stats.balance > 0) {
     parts.push(`${stats.balance} ${plural(stats.balance, ["запись", "записи", "записей"])} «Баланса»`);
+  }
+  if (stats.screen > 0) {
+    parts.push(`${stats.screen} ${plural(stats.screen, ["запись", "записи", "записей"])} «Экрана»`);
   }
   return `Добавлено: ${parts.join(", ")}.`;
 }

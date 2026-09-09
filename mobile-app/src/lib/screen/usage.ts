@@ -35,6 +35,10 @@ export interface AppTotal {
   launchCount: number;
   /** Сколько дней из периода приложение вообще открывали. */
   daysUsed: number;
+  /** Доля от самого большого приложения — ширина полоски за строкой. */
+  shareOfTop: number;
+  /** Доля от всего времени за период — процент рядом со строкой. */
+  shareOfTotal: number;
 }
 
 const isStr = (v: unknown): v is string => typeof v === "string";
@@ -84,7 +88,8 @@ export function totalScreenMillis(days: ScreenDay[]): number {
  * позднее название ближе к тому, что человек увидит у себя на телефоне сейчас.
  */
 export function totalsByApp(rows: AppDay[]): AppTotal[] {
-  const acc = new Map<string, AppTotal & { lastDate: string }>();
+  type Acc = Omit<AppTotal, "shareOfTop" | "shareOfTotal"> & { lastDate: string };
+  const acc = new Map<string, Acc>();
   for (const row of rows) {
     if (row.usageMillis <= 0) continue;
     const current = acc.get(row.packageName);
@@ -107,9 +112,32 @@ export function totalsByApp(rows: AppDay[]): AppTotal[] {
       current.lastDate = row.date;
     }
   }
-  return [...acc.values()]
+  const list = [...acc.values()]
     .map(({ lastDate: _lastDate, ...rest }) => rest)
     .sort((a, b) => b.usageMillis - a.usageMillis || a.label.localeCompare(b.label, "ru"));
+
+  // Доли считаются от суммы именно приложений, а не от экранного времени: экран бывает
+  // включён и без единого приложения на переднем плане, и тогда проценты не сошлись бы в сто.
+  const sum = list.reduce((s, a) => s + a.usageMillis, 0);
+  const top = list[0]?.usageMillis ?? 0;
+  return list.map((app) => ({
+    ...app,
+    shareOfTop: top > 0 ? app.usageMillis / top : 0,
+    shareOfTotal: sum > 0 ? app.usageMillis / sum : 0,
+  }));
+}
+
+/**
+ * Первый день, о котором вообще что-то сохранено.
+ *
+ * Нужен, чтобы отличить «в этот период ничего не было» от «этот период глубже, чем мы
+ * помним». Второе — не ноль, а незнание, и показывать его нулём значит соврать.
+ */
+export function earliestStoredDay(days: ScreenDay[], apps: AppDay[]): string | null {
+  let earliest: string | null = null;
+  for (const d of days) if (!earliest || d.date < earliest) earliest = d.date;
+  for (const a of apps) if (!earliest || a.date < earliest) earliest = a.date;
+  return earliest;
 }
 
 /** История одного приложения по дням, в порядке дат. */

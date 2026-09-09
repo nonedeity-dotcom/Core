@@ -135,6 +135,13 @@ function clampMinutes(value: unknown, fallback: number): number {
   return Math.min(240, Math.max(1, Math.round(value)));
 }
 
+/** Запомненное про пакет: имя и иконка переживают удаление самого приложения. */
+export interface AppInfoEntry {
+  label: string;
+  icon: string | null;
+  installedAtMs: number | null;
+}
+
 function inRange(date: string, from: string, to: string) {
   return date >= from && date <= to;
 }
@@ -883,6 +890,8 @@ export const api = {
     await write(KEYS.screenImportedThrough, date);
   },
 
+  /** Что известно о приложении помимо его времени: имя, иконка, когда поставлено. */
+  // (тип объявлен ниже, рядом с остальными формами хранилища)
   /** Когда приложение в последний раз само пересчитывало события. 0 — ни разу. */
   async getUsageLastSync(): Promise<number> {
     const value = await read<number>(KEYS.screenLastSync, 0);
@@ -899,14 +908,14 @@ export const api = {
    * перерисовывается на каждое переключение периода. Иконка удалённого приложения остаётся
    * здесь — история не должна терять лицо оттого, что приложение снесли.
    */
-  async getAppInfoCache(): Promise<Record<string, { label: string; icon: string | null }>> {
-    const raw = await read<Record<string, { label: string; icon: string | null }>>(KEYS.screenAppInfo, {});
+  async getAppInfoCache(): Promise<Record<string, AppInfoEntry>> {
+    const raw = await read<Record<string, AppInfoEntry>>(KEYS.screenAppInfo, {});
     return raw && typeof raw === "object" ? raw : {};
   },
-  async saveAppInfo(entries: { packageName: string; label: string; icon: string | null }[]): Promise<void> {
+  async saveAppInfo(entries: ({ packageName: string } & AppInfoEntry)[]): Promise<void> {
     if (entries.length === 0) return;
     await withKeyLock(KEYS.screenAppInfo, async () => {
-      const cache = await read<Record<string, { label: string; icon: string | null }>>(KEYS.screenAppInfo, {});
+      const cache = await read<Record<string, AppInfoEntry>>(KEYS.screenAppInfo, {});
       const next = { ...(cache && typeof cache === "object" ? cache : {}) };
       for (const entry of entries) {
         const known = next[entry.packageName];
@@ -915,6 +924,7 @@ export const api = {
         next[entry.packageName] = {
           label: entry.label,
           icon: entry.icon ?? known?.icon ?? null,
+          installedAtMs: entry.installedAtMs ?? known?.installedAtMs ?? null,
         };
       }
       await write(KEYS.screenAppInfo, next);
@@ -1205,6 +1215,9 @@ export interface BackupData {
   balanceDishes: Dish[];
   /** Дневник веса. Отсутствует в файлах, записанных до него, — импортируется пустым. */
   balanceWeight: WeightEntry[];
+  /** Экранное время по дням и по приложениям. Без них копия теряет всю историю «Экрана». */
+  screenDays: ScreenDay[];
+  screenApps: AppDay[];
 }
 
 /** What an import actually changed, so the UI can report it honestly. */
@@ -1218,6 +1231,8 @@ export interface ImportStats {
   tasks: number;
   /** Записи «Баланса»: продукты, блюда, съеденное и взвешивания вместе. */
   balance: number;
+  /** Дни и строки «Экрана». */
+  screen: number;
 }
 
 const EMPTY_STATS: ImportStats = {
@@ -1229,6 +1244,7 @@ const EMPTY_STATS: ImportStats = {
   reviews: 0,
   tasks: 0,
   balance: 0,
+  screen: 0,
 };
 
 // Every mutation goes through withKeyLock, so an import has to hold *all* the
@@ -1245,7 +1261,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight, screenDays, screenApps] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -1269,6 +1285,8 @@ export async function exportData(): Promise<BackupData> {
       read<FoodEntry[]>(KEYS.balanceFoodLog, []),
       read<Dish[]>(KEYS.balanceDishes, []),
       read<WeightEntry[]>(KEYS.balanceWeight, []),
+      read<ScreenDay[]>(KEYS.screenDays, []),
+      read<AppDay[]>(KEYS.screenApps, []),
     ]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -1293,6 +1311,8 @@ export async function exportData(): Promise<BackupData> {
     balanceFoodLog,
     balanceDishes,
     balanceWeight,
+    screenDays,
+    screenApps,
   };
 }
 
@@ -1322,6 +1342,8 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.balanceFoodLog, data.balanceFoodLog),
       write(KEYS.balanceDishes, data.balanceDishes),
       write(KEYS.balanceWeight, data.balanceWeight),
+      write(KEYS.screenDays, data.screenDays),
+      write(KEYS.screenApps, data.screenApps),
     ]);
     return {
       habits: data.habits.length,
@@ -1336,6 +1358,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
         data.balanceDishes.length +
         data.balanceFoodLog.length +
         data.balanceWeight.length,
+      screen: data.screenDays.length + data.screenApps.length,
     };
   });
 }
@@ -1571,6 +1594,45 @@ export async function mergeData(data: BackupData): Promise<ImportStats> {
     if (data.balanceWeight.length > 0) {
       await write(KEYS.balanceWeight, weight.sort((a, b) => a.date.localeCompare(b.date)));
     }
+
+    // --- «Экран» ---
+    //
+    // День побеждает тот, который измерен дальше: `updatedAt` говорит, до какого момента
+    // день досчитан, и полный день из копии вернее обрывка, снятого здесь в обед. При равной
+    // досчитанности остаётся местный — он уже здесь, и переписывать его нечем.
+    const screenDays = await read<ScreenDay[]>(KEYS.screenDays, []);
+    const dayByDate = new Map(screenDays.map((d) => [d.date, d] as const));
+    let screenChanged = false;
+    for (const day of data.screenDays) {
+      const local = dayByDate.get(day.date);
+      if (!local) {
+        dayByDate.set(day.date, day);
+        screenChanged = true;
+        stats.screen++;
+      } else if (day.updatedAt > local.updatedAt) {
+        dayByDate.set(day.date, day);
+        screenChanged = true;
+        stats.screen++;
+      }
+    }
+    if (screenChanged) {
+      await write(KEYS.screenDays, [...dayByDate.values()].sort((a, b) => a.date.localeCompare(b.date)));
+    }
+
+    // Строки приложений — по паре «день + пакет»: за один день у одного приложения одна
+    // строка, и вторая была бы не второй порцией, а дублем.
+    const screenApps = await read<AppDay[]>(KEYS.screenApps, []);
+    const seenApp = new Set(screenApps.map((a) => `${a.date}|${a.packageName}`));
+    let appsChanged = false;
+    for (const row of data.screenApps) {
+      const key = `${row.date}|${row.packageName}`;
+      if (seenApp.has(key)) continue;
+      seenApp.add(key);
+      screenApps.push(row);
+      appsChanged = true;
+      stats.screen++;
+    }
+    if (appsChanged) await write(KEYS.screenApps, screenApps);
 
     // The screen-time limit is a setting of *this* phone, not history — merging
     // deliberately leaves it alone.

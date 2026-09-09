@@ -6,7 +6,11 @@ import {
   buildScreenOnIntervals,
   countLaunches,
   measuredThroughMs,
+  onlyPackage,
   toDailyUsage,
+  toHourlyLaunches,
+  toHourlyUsage,
+  type HourlyValue,
 } from "../lib/screen/sessions";
 import type { AppDay, ScreenDay } from "../lib/screen/usage";
 
@@ -80,8 +84,15 @@ export async function syncUsage(nowMs = Date.now()): Promise<UsageSyncResult> {
   const unknown = [...new Set(appRows.map((r) => r.packageName))].filter((p) => !cache[p]);
   if (unknown.length > 0) {
     const fresh = await getAppInfo(unknown);
-    await api.saveAppInfo(fresh.map((f) => ({ packageName: f.packageName, label: f.label, icon: f.icon })));
-    for (const f of fresh) cache[f.packageName] = { label: f.label, icon: f.icon };
+    await api.saveAppInfo(
+      fresh.map((f) => ({
+        packageName: f.packageName,
+        label: f.label,
+        icon: f.icon,
+        installedAtMs: f.installedAtMs,
+      })),
+    );
+    for (const f of fresh) cache[f.packageName] = { label: f.label, icon: f.icon, installedAtMs: f.installedAtMs };
   }
 
   const apps: AppDay[] = appRows.map((row) => ({
@@ -95,4 +106,47 @@ export async function syncUsage(nowMs = Date.now()): Promise<UsageSyncResult> {
   const written = await api.mergeScreenData(days, apps);
   await api.setUsageLastSync(nowMs);
   return { days: Math.max(written.days, days.length), events: events.length, denied: false };
+}
+
+/** Метрика, которую сейчас показывает график. */
+export type Metric = "usage" | "sessions" | "screen";
+
+export const METRIC_LABELS: Record<Metric, string> = {
+  usage: "В приложениях",
+  sessions: "Запуски",
+  screen: "Экран",
+};
+
+/**
+ * Почасовая разбивка одного дня.
+ *
+ * Считается на лету из системных событий, а не берётся из хранилища: подробные события
+ * система держит считанные дни, и почасовая картина существует ровно для них. Для дня, по
+ * которому событий уже нет, честный ответ — `null`, а не двадцать четыре нуля: разница между
+ * «в эти часы не пользовался» и «эти часы никто не помнит» здесь и есть весь смысл.
+ */
+export async function hourlyFor(
+  date: string,
+  metric: Metric,
+  packageName?: string,
+): Promise<HourlyValue[] | null> {
+  if (!hasUsageAccess()) return null;
+  const [y, m, d] = date.split("-").map(Number);
+  const startMs = new Date(y, m - 1, d).getTime();
+  const endMs = new Date(y, m - 1, d + 1).getTime();
+  const nowMs = Date.now();
+  if (startMs > nowMs) return null;
+
+  const events = await queryRawEvents(startMs - SESSION_LOOKBACK_MS, Math.min(endMs, nowMs));
+  if (events.length === 0) return null;
+
+  if (metric === "sessions") {
+    const filtered = packageName ? events.filter((e) => e.packageName === packageName) : events;
+    return toHourlyLaunches(filtered, startMs, endMs);
+  }
+  const intervals =
+    metric === "screen"
+      ? buildScreenOnIntervals(events, startMs, endMs, nowMs)
+      : buildIntervals(events, startMs, endMs, nowMs);
+  return toHourlyUsage(packageName ? onlyPackage(intervals, packageName) : intervals);
 }

@@ -219,11 +219,15 @@ class CrekerUsageModule : Module() {
         val label = info?.let { runCatching { pm.getApplicationLabel(it).toString() }.getOrNull() }
           ?.takeIf { it.isNotBlank() }
         val icon = info?.let { runCatching { pm.getApplicationIcon(it) }.getOrNull() }
+        // Когда приложение появилось на телефоне — «пользуюсь им три года» и «поставил
+        // неделю назад» это разные факты об одном и том же числе часов.
+        val installedAt = runCatching { pm.getPackageInfo(packageName, 0).firstInstallTime }.getOrNull()
         mapOf(
           "packageName" to packageName,
           "label" to (label ?: packageName),
           "installed" to (info != null),
           "icon" to icon?.let { encodeIcon(it) },
+          "installedAtMs" to installedAt?.toDouble(),
         )
       }
     }

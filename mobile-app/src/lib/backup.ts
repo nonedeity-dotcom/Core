@@ -22,6 +22,7 @@ import { normalizeLateRule, normalizeSchedule } from "./habitSchedule";
 import { normalizeProfile } from "./balance/profile";
 import { normalizeDish, normalizeEntry, normalizeProduct } from "./balance/food";
 import { normalizeWeightEntry } from "./balance/weight";
+import { normalizeAppDay, normalizeScreenDay } from "./screen/usage";
 import type {
   Habit,
   HabitTarget,
@@ -249,6 +250,13 @@ function parseData(raw: unknown): BackupData {
     balanceWeight: list(d.balanceWeight)
       .map(normalizeWeightEntry)
       .filter((w): w is NonNullable<ReturnType<typeof normalizeWeightEntry>> => w !== null),
+    // Отсутствуют во всех файлах, записанных до раздела «Экран».
+    screenDays: list(d.screenDays)
+      .map(normalizeScreenDay)
+      .filter((x): x is NonNullable<ReturnType<typeof normalizeScreenDay>> => x !== null),
+    screenApps: list(d.screenApps)
+      .map(normalizeAppDay)
+      .filter((x): x is NonNullable<ReturnType<typeof normalizeAppDay>> => x !== null),
   };
 }
 
