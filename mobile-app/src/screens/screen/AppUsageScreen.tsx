@@ -138,7 +138,6 @@ export default function AppUsageScreen({
 
       <View style={styles.card}>
         <View style={styles.chartHead}>
-          <Text style={styles.cardTitle}>{single ? "По часам, 0—23" : "По дням"}</Text>
           <ChartToggle kind={chart} onChange={setChart} />
         </View>
         {single ? (
@@ -220,7 +219,7 @@ const styles = StyleSheet.create({
     alignItems: "stretch",
   },
   cardTitle: { color: colors.text, fontSize: 13, fontWeight: "600" },
-  chartHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  chartHead: { flexDirection: "row", justifyContent: "flex-end", marginBottom: 10 },
   metrics: { flexDirection: "row", gap: 6, marginBottom: 12 },
   metric: { flex: 1, alignItems: "center", paddingVertical: 7, borderRadius: 10, backgroundColor: colors.card },
   metricOn: { backgroundColor: "rgba(143,184,154,0.14)" },

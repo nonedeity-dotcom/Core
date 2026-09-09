@@ -302,16 +302,13 @@ export default function UsageScreen({
                 )}`}
               </Text>
             )}
-            {metric === "usage" && screenMs > 0 && (
-              <Text style={styles.perDay}>
-                {`Экран был включён ${formatCompact(screenMs)} — остальное прошло не в приложениях`}
-              </Text>
-            )}
+
           </View>
 
           <View style={styles.card}>
+            {/* Заголовка нет: подписи под графиком уже говорят, часы это или дни, а
+                строка над ними только съедала высоту. */}
             <View style={styles.chartHead}>
-              <Text style={styles.cardTitle}>{single ? "По часам, 0—23" : "По дням"}</Text>
               <ChartToggle kind={chart} onChange={setChart} />
             </View>
             {single ? (
@@ -477,7 +474,7 @@ export function ChartToggle({ kind, onChange }: { kind: ChartKind; onChange: (ki
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  chartHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  chartHead: { flexDirection: "row", justifyContent: "flex-end", marginBottom: 10 },
   toggle: { flexDirection: "row", gap: 2, backgroundColor: colors.bg, borderRadius: 16, padding: 2 },
   toggleBtn: { width: 30, height: 26, alignItems: "center", justifyContent: "center", borderRadius: 14 },
   toggleOn: { backgroundColor: colors.accentGreen },
