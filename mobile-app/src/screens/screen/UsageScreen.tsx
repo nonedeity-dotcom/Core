@@ -176,20 +176,24 @@ export default function UsageScreen({
   }, [refresh]);
 
   /**
-   * Домашний экран — не приложение.
+   * Домашний экран — не приложение, но и не ничто.
    *
    * Он мелькает между всем остальным: каждый переход, каждая разблокировка. Отсюда и его
-   * числа — часы времени и тысячи «открытий», среди которых нет ни одного намеренного.
-   * В списке приложений он не участвует, доли и итог считаются без него, а само это время
-   * никуда не девается: оно по-прежнему внутри метрики «Экран».
+   * числа — часы времени и тысячи заходов, среди которых нет ни одного намеренного. В
+   * «приложениях» и «заходах» ему поэтому не место: он забивал бы список тем, что человек
+   * не выбирал.
+   *
+   * А в «экране» — место ровно его: это метрика про сам телефон, и оболочка телефона —
+   * его часть, а не чужая. Там он идёт обычной строкой, со своим временем и заходами.
    */
   const home = new Set(
     Object.entries(icons)
       .filter(([, info]) => info.isHome)
       .map(([packageName]) => packageName),
   );
-  const apps = allApps.filter((r) => !home.has(r.packageName));
-  const prevApps = allPrevApps.filter((r) => !home.has(r.packageName));
+  const showHome = metric === "screen";
+  const apps = showHome ? allApps : allApps.filter((r) => !home.has(r.packageName));
+  const prevApps = showHome ? allPrevApps : allPrevApps.filter((r) => !home.has(r.packageName));
   const homeMs = allApps
     .filter((r) => home.has(r.packageName))
     .reduce((sum, r) => sum + r.usageMillis, 0);
@@ -346,9 +350,9 @@ export default function UsageScreen({
 
           <Text style={styles.sectionLabel}>
             {`Приложения · ${totals.length} ${plural(totals.length, ["штука", "штуки", "штук"])}`}
-            {/* Про домашний экран сказано, только когда он и правда набрал время: иначе это
-                объяснение того, чего человек не видел. */}
-            {homeMs > 0 ? ` · домашний экран (${formatCompact(homeMs)}) не в счёт` : ""}
+            {/* Приписка — только там, где его нет, и только когда он правда набрал время:
+                иначе это объяснение того, чего человек не видел. */}
+            {!showHome && homeMs > 0 ? ` · домашний экран (${formatCompact(homeMs)}) — в «Экране»` : ""}
           </Text>
           {totals.map((total, i) => {
             const before = prevByPackage.get(total.packageName);
