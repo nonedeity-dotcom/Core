@@ -22,6 +22,8 @@ import HabitReportScreen from "../screens/HabitReportScreen";
 import HabitsReportScreen from "../screens/HabitsReportScreen";
 import ReviewScreen from "../screens/ReviewScreen";
 import BalanceProfileScreen from "../screens/balance/ProfileScreen";
+import DiaryScreen from "../screens/balance/DiaryScreen";
+import AddFoodScreen from "../screens/balance/AddFoodScreen";
 import SectionMenu, { type Section } from "./SectionMenu";
 
 const Tab = createBottomTabNavigator();
@@ -90,6 +92,8 @@ function BalanceTabs() {
         tabBarItemStyle: { paddingHorizontal: 0 },
       }}
     >
+      {/* Дневник первым: за ним открывают «Баланс» каждый день, а профиль настраивают раз. */}
+      <Tab.Screen name="Дневник" component={DiaryScreen} options={{ tabBarIcon: icon("book-open") }} />
       <Tab.Screen name="Профиль" component={BalanceProfileScreen} options={{ tabBarIcon: icon("user") }} />
     </Tab.Navigator>
   );
@@ -156,6 +160,7 @@ export default function RootTabs() {
         <Stack.Screen name="Library" component={LibraryScreen} options={{ title: "Подсказки" }} />
         <Stack.Screen name="Archive" component={ArchiveScreen} options={{ title: "Архив привычек" }} />
         <Stack.Screen name="Admin" component={AdminScreen} options={{ title: "Настройки админа" }} />
+        <Stack.Screen name="AddFood" component={AddFoodScreen} options={{ title: "Добавить еду" }} />
         <Stack.Screen name="Phases" component={PhasesScreen} options={{ title: "Этапы" }} />
         <Stack.Screen name="HabitsReport" component={HabitsReportScreen} options={{ title: "По привычкам" }} />
         {/* Titled from the habit's own name, so the header says which one you opened. */}

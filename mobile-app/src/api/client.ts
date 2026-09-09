@@ -19,6 +19,7 @@ import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skip
 import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipLibrary";
 import { DEFAULT_LATE_RULE, normalizeLateRule, normalizeSchedule, type LateRule } from "../lib/habitSchedule";
 import { normalizeProfile, type Profile } from "../lib/balance/profile";
+import { normalizeEntry, normalizeProduct, RECENT_LIMIT, type FoodEntry, type FoodProduct, type Meal } from "../lib/balance/food";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -47,6 +48,8 @@ const KEYS = {
   tipPrefs: "tip-prefs-v1",
   lateRule: "late-rule-v1",
   balanceProfile: "balance-profile-v1",
+  balanceProducts: "balance-products-v1",
+  balanceFoodLog: "balance-food-log-v1",
 };
 
 export interface CalendarPrefs {
@@ -595,6 +598,69 @@ export const api = {
     return { ok: true as const };
   },
 
+  /** Свои продукты — всё, что есть у «Баланса»: встроенной базы нет. */
+  async getFoodProducts(): Promise<FoodProduct[]> {
+    const raw = await read<unknown[]>(KEYS.balanceProducts, []);
+    return (Array.isArray(raw) ? raw : []).map(normalizeProduct).filter((p): p is FoodProduct => p !== null);
+  },
+  async saveFoodProduct(product: Omit<FoodProduct, "id"> & { id?: string }): Promise<FoodProduct> {
+    return withKeyLock(KEYS.balanceProducts, async () => {
+      const products = await read<FoodProduct[]>(KEYS.balanceProducts, []);
+      const clean = normalizeProduct({ ...product, id: product.id ?? uid() });
+      if (!clean) throw new Error("Пустое название");
+      const exists = products.some((p) => p.id === clean.id);
+      await write(
+        KEYS.balanceProducts,
+        exists ? products.map((p) => (p.id === clean.id ? { ...p, ...clean } : p)) : [...products, clean],
+      );
+      return clean;
+    });
+  },
+  async removeFoodProduct(id: string): Promise<{ ok: true }> {
+    return withKeyLock(KEYS.balanceProducts, async () => {
+      const products = await read<FoodProduct[]>(KEYS.balanceProducts, []);
+      await write(KEYS.balanceProducts, products.filter((p) => p.id !== id));
+      // Записи в дневнике не трогаем: они хранят свои числа, и съеденное на прошлой
+      // неделе не должно исчезать оттого, что продукт больше не нужен в списке.
+      return { ok: true as const };
+    });
+  },
+
+  async getFoodLog(from: string, to: string): Promise<FoodEntry[]> {
+    const raw = await read<unknown[]>(KEYS.balanceFoodLog, []);
+    return (Array.isArray(raw) ? raw : [])
+      .map(normalizeEntry)
+      .filter((e): e is FoodEntry => e !== null && inRange(e.date, from, to));
+  },
+  /**
+   * Кладёт съеденное в дневник и отмечает продукт как только что использованный — из этой
+   * отметки и строится «Часто ем».
+   */
+  async addFoodEntry(entry: Omit<FoodEntry, "id">): Promise<FoodEntry> {
+    const saved = await withKeyLock(KEYS.balanceFoodLog, async () => {
+      const logs = await read<FoodEntry[]>(KEYS.balanceFoodLog, []);
+      const clean = normalizeEntry({ ...entry, id: uid() });
+      if (!clean) throw new Error("Некорректная запись");
+      await write(KEYS.balanceFoodLog, [...logs, clean]);
+      return clean;
+    });
+    if (saved.productId) {
+      await withKeyLock(KEYS.balanceProducts, async () => {
+        const products = await read<FoodProduct[]>(KEYS.balanceProducts, []);
+        const at = new Date().toISOString();
+        await write(KEYS.balanceProducts, products.map((p) => (p.id === saved.productId ? { ...p, lastUsedAt: at } : p)));
+      });
+    }
+    return saved;
+  },
+  async removeFoodEntry(id: string): Promise<{ ok: true }> {
+    return withKeyLock(KEYS.balanceFoodLog, async () => {
+      const logs = await read<FoodEntry[]>(KEYS.balanceFoodLog, []);
+      await write(KEYS.balanceFoodLog, logs.filter((e) => e.id !== id));
+      return { ok: true as const };
+    });
+  },
+
   async getFreezes(): Promise<string[]> {
     const stored = await read<string[]>(KEYS.freezes, []);
     return stored.filter((d) => typeof d === "string");
@@ -874,6 +940,8 @@ export interface BackupData {
   lateRule: LateRule;
   /** «Баланс»: the profile the day's targets are worked out from. null until it is filled in. */
   balanceProfile: Profile | null;
+  balanceProducts: FoodProduct[];
+  balanceFoodLog: FoodEntry[];
 }
 
 /** What an import actually changed, so the UI can report it honestly. */
@@ -911,7 +979,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -931,6 +999,8 @@ export async function exportData(): Promise<BackupData> {
       api.getTipPrefs(),
       api.getLateRule(),
       api.getBalanceProfile(),
+      read<FoodProduct[]>(KEYS.balanceProducts, []),
+      read<FoodEntry[]>(KEYS.balanceFoodLog, []),
     ]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -951,6 +1021,8 @@ export async function exportData(): Promise<BackupData> {
     tipPrefs,
     lateRule,
     balanceProfile,
+    balanceProducts,
+    balanceFoodLog,
   };
 }
 
@@ -976,6 +1048,8 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.tipPrefs, normalizeTipPrefs(data.tipPrefs)),
       write(KEYS.lateRule, normalizeLateRule(data.lateRule)),
       write(KEYS.balanceProfile, data.balanceProfile),
+      write(KEYS.balanceProducts, data.balanceProducts),
+      write(KEYS.balanceFoodLog, data.balanceFoodLog),
     ]);
     return {
       habits: data.habits.length,
