@@ -12,14 +12,25 @@ import {
   dishTotals,
   nutritionFor,
   portionsFromGrams,
+  UNIT_FORMS,
+  UNIT_IN_ONE,
+  UNIT_LABELS,
+  UNIT_SHORT,
+  formatAmount,
+  gramsFromPortions,
   recentDishes,
   recentProducts,
   searchDishes,
   searchProducts,
+  stepGrams,
+  unitOf,
   type Dish,
+  type DishItem,
   type FoodProduct,
   type Meal,
+  type Unit,
 } from "../../lib/balance/food";
+import { parseFoodLine } from "../../lib/balance/parse";
 
 /**
  * Добавить еду: найти продукт, сказать сколько, положить в дневник.
@@ -102,6 +113,39 @@ export default function AddFoodScreen({
     onSuccess: () => qc.invalidateQueries({ queryKey: ["dishes"] }),
   });
 
+  /**
+   * Набор ложится в дневник по записи на продукт.
+   *
+   * В отличие от блюда: блюдо — это одна съеденная вещь под своим названием, а набор —
+   * просто несколько вещей за один заход, и убирать их надо порознь.
+   */
+  const addMany = useMutation({
+    mutationFn: async (items: DishItem[]) => {
+      for (const item of items) {
+        const product = products.find((p) => p.id === item.productId);
+        if (!product) continue;
+        const own = unitOf(product);
+        await api.addFoodEntry({
+          date,
+          meal,
+          productId: product.id,
+          name: product.name,
+          grams: item.grams,
+          ...(own !== "g" && product.portionG && product.unit
+            ? { units: Math.round((item.grams / product.portionG) * 100) / 100, unit: product.unit }
+            : {}),
+          ...nutritionFor(product, item.grams),
+        });
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["foodLog"] });
+      qc.invalidateQueries({ queryKey: ["foodProducts"] });
+      setBuildingDish(false);
+      navigation.goBack();
+    },
+  });
+
   /** Блюдо ложится в дневник одной записью: добавляли его целиком, значит и убирать целиком. */
   const addDish = (dish: Dish) => {
     const totals = dishTotals(dish, products);
@@ -143,7 +187,10 @@ export default function AddFoodScreen({
       <DishForm
         dish={editingDish}
         products={products}
-        onSave={(name, items) => saveDish.mutate(editingDish ? { id: editingDish.id, name, items } : { name, items })}
+        onSaveDish={(name, items) =>
+          saveDish.mutate(editingDish ? { id: editingDish.id, name, items } : { name, items })
+        }
+        onAddToDiary={(items) => addMany.mutate(items)}
         onCancel={() => {
           setBuildingDish(false);
           setEditingDish(null);
@@ -158,8 +205,16 @@ export default function AddFoodScreen({
         product={picked}
         meal={meal}
         onBack={() => setPicked(null)}
-        onAdd={(grams, nutrition) =>
-          add.mutate({ date, meal, productId: picked.id, name: picked.name, grams, ...nutrition })
+        onAdd={(grams, units, nutrition) =>
+          add.mutate({
+            date,
+            meal,
+            productId: picked.id,
+            name: picked.name,
+            grams,
+            ...(units !== null && picked.unit ? { units, unit: picked.unit } : {}),
+            ...nutrition,
+          })
         }
       />
     );
@@ -279,12 +334,14 @@ export default function AddFoodScreen({
         onPress={() => setBuildingDish(true)}
         disabled={products.length === 0}
         accessibilityRole="button"
-        accessibilityLabel="Собрать блюдо"
+        accessibilityLabel="Несколько продуктов"
         style={({ pressed }) => [styles.addRow, products.length === 0 && styles.rowOff, pressed && styles.pressed]}
       >
         <Feather name="layers" size={16} color={colors.textMuted} />
         <Text style={styles.addText}>
-          {products.length === 0 ? "Блюдо — сначала заведи продукты" : "Собрать блюдо из продуктов"}
+          {products.length === 0
+            ? "Несколько сразу — сначала заведи продукты"
+            : "Несколько продуктов или строкой"}
         </Text>
       </Pressable>
     </ScrollView>
@@ -365,12 +422,24 @@ function AmountForm({
   product: FoodProduct;
   meal: Meal;
   onBack: () => void;
-  onAdd: (grams: number, nutrition: ReturnType<typeof nutritionFor>) => void;
+  onAdd: (grams: number, units: number | null, nutrition: ReturnType<typeof nutritionFor>) => void;
 }) {
-  const [grams, setGrams] = useState(String(product.portionG ?? 100));
-  const value = Math.max(0, Math.round(Number(grams.replace(",", ".")) || 0));
+  const own = unitOf(product);
+  // Считается всё в граммах, но вводится в том, в чём человек думает. Поле держит то, что
+  // он набрал; в граммы это переводится тут же и показывается рядом, а не вместо.
+  const [inUnits, setInUnits] = useState(own !== "g");
+  const [text, setText] = useState(own === "g" ? "100" : "1");
+  const typed = Math.max(0, Number(text.replace(",", ".")) || 0);
+  const value = inUnits && own !== "g" ? gramsFromPortions(product, typed) : Math.round(typed);
   const nutrition = nutritionFor(product, value);
   const portions = portionsFromGrams(product, value);
+
+  /** Переключение единицы переносит уже набранное количество, а не сбрасывает поле. */
+  const switchTo = (units: boolean) => {
+    if (units === inUnits) return;
+    setText(String(units ? portionsFromGrams(product, value) : value));
+    setInUnits(units);
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
@@ -383,32 +452,61 @@ function AmountForm({
       <Text style={styles.caption}>{`В ${MEAL_LABELS[meal].toLowerCase()}`}</Text>
 
       <View style={styles.amountCard}>
-        <Text style={styles.rowLabel}>Сколько</Text>
-        <View style={styles.amountRow}>
-          <TextInput
-            value={grams}
-            onChangeText={setGrams}
-            keyboardType="numeric"
-            style={styles.amountInput}
-            accessibilityLabel="Граммы"
-          />
-          <Text style={styles.amountUnit}>г</Text>
+        <View style={styles.amountHead}>
+          <Text style={styles.rowLabel}>Сколько</Text>
+          {own !== "g" && (
+            <View style={styles.chipRow}>
+              <Pressable
+                onPress={() => switchTo(true)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: inUnits }}
+                accessibilityLabel={`Считать в ${UNIT_SHORT[own]}`}
+                style={({ pressed }) => [styles.chip, inUnits && styles.chipOn, pressed && styles.pressed]}
+              >
+                <Text style={[styles.chipText, inUnits && styles.chipTextOn]}>{UNIT_SHORT[own]}</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => switchTo(false)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: !inUnits }}
+                accessibilityLabel="Считать в граммах"
+                style={({ pressed }) => [styles.chip, !inUnits && styles.chipOn, pressed && styles.pressed]}
+              >
+                <Text style={[styles.chipText, !inUnits && styles.chipTextOn]}>г</Text>
+              </Pressable>
+            </View>
+          )}
         </View>
 
-        {product.portionG ? (
+        <View style={styles.amountRow}>
+          <TextInput
+            value={text}
+            onChangeText={setText}
+            keyboardType="numeric"
+            style={styles.amountInput}
+            accessibilityLabel={inUnits && own !== "g" ? UNIT_LABELS[own] : "Граммы"}
+          />
+          <Text style={styles.amountUnit}>{inUnits && own !== "g" ? UNIT_SHORT[own] : "г"}</Text>
+        </View>
+
+        {own !== "g" && product.portionG ? (
           <>
             <Text style={styles.rowHint}>
-              {`Это ${portions} ${plural(portions, ["порция", "порции", "порций"])} по ${product.portionG} г`}
+              {inUnits
+                ? `Это ${value} г — по ${product.portionG} г в ${UNIT_IN_ONE[own]}`
+                : `Это ${portions} ${plural(portions, UNIT_FORMS[own])} по ${product.portionG} г`}
             </Text>
             <View style={styles.chipRow}>
-              {[0.5, 1, 1.5, 2].map((p) => (
+              {(inUnits ? [1, 2, 3] : [50, 100, 150, 200]).map((n) => (
                 <Pressable
-                  key={p}
-                  onPress={() => setGrams(String(Math.round(p * (product.portionG ?? 0))))}
+                  key={n}
+                  onPress={() => setText(String(n))}
                   accessibilityRole="button"
                   style={({ pressed }) => [styles.chip, pressed && styles.pressed]}
                 >
-                  <Text style={styles.chipText}>{`${p} порц.`}</Text>
+                  <Text style={styles.chipText}>
+                    {inUnits ? `${n} ${UNIT_SHORT[own]}` : `${n} г`}
+                  </Text>
                 </Pressable>
               ))}
             </View>
@@ -418,7 +516,7 @@ function AmountForm({
             {[50, 100, 150, 200].map((g) => (
               <Pressable
                 key={g}
-                onPress={() => setGrams(String(g))}
+                onPress={() => setText(String(g))}
                 accessibilityRole="button"
                 style={({ pressed }) => [styles.chip, pressed && styles.pressed]}
               >
@@ -436,7 +534,7 @@ function AmountForm({
       </View>
 
       <Pressable
-        onPress={() => value > 0 && onAdd(value, nutrition)}
+        onPress={() => value > 0 && onAdd(value, own === "g" ? null : portions, nutrition)}
         disabled={value <= 0}
         accessibilityRole="button"
         accessibilityLabel="Добавить в дневник"
@@ -449,71 +547,127 @@ function AmountForm({
 }
 
 /**
- * Блюдо: название и продукты с весами.
+ * Набор: несколько продуктов за один заход.
  *
- * Собирается из того, что уже заведено, — своего рода рецепт. Числа не копируются: поправишь
- * калорийность творога, и запеканка пересчитается сама. Уже съеденное при этом не меняется,
- * потому что записи дневника свои числа скопировали.
+ * Отсюда два выхода. «Добавить в дневник» кладёт каждый продукт отдельной записью — рис и
+ * яйца это две съеденные вещи, и убирать их надо порознь. «Сохранить как блюдо» превращает
+ * набор в рецепт, который потом добавляется одной кнопкой и одной записью.
+ *
+ * Сверху — строка. Она не понимает еду вообще: встроенной базы нет, и узнаётся только то,
+ * что уже заведено. Разобранное падает сюда же, в набор, где видно построчно, что понято, и
+ * всё правится обычными стрелками. Записывать сразу из строки было бы быстрее ровно до
+ * первого промаха, а дневник, который тихо записал не то, хуже дневника, который переспросил.
  */
 function DishForm({
   dish,
   products,
-  onSave,
+  onSaveDish,
+  onAddToDiary,
   onCancel,
 }: {
   dish: Dish | null;
   products: FoodProduct[];
-  onSave: (name: string, items: { productId: string; grams: number }[]) => void;
+  onSaveDish: (name: string, items: DishItem[]) => void;
+  onAddToDiary: (items: DishItem[]) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(dish?.name ?? "");
-  const [items, setItems] = useState<{ productId: string; grams: number }[]>(
-    dish ? dish.items.map((i) => ({ ...i })) : [],
-  );
+  const [items, setItems] = useState<DishItem[]>(dish ? dish.items.map((i) => ({ ...i })) : []);
   const [query, setQuery] = useState("");
+  const [line, setLine] = useState("");
+  const [misses, setMisses] = useState<string[]>([]);
 
   const byId = new Map(products.map((p) => [p.id, p]));
   const totals = dishTotals({ id: "draft", name, items }, products);
-  const canSave = name.trim() !== "" && items.length > 0;
+  const canAdd = items.length > 0;
+  const canSave = canAdd && name.trim() !== "";
+
+  const parse = () => {
+    const parsed = parseFoodLine(line, products);
+    const found = parsed.filter((i) => i.productId !== null && i.grams !== null);
+    setItems([...items, ...found.map((i) => ({ productId: i.productId as string, grams: i.grams as number }))]);
+    // Непонятое остаётся на экране как есть, а не исчезает: человек должен видеть, что из
+    // сказанного не дошло, и дописать это руками.
+    setMisses(parsed.filter((i) => i.productId === null || i.grams === null).map((i) => i.raw));
+    if (found.length > 0) setLine("");
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-      <Text style={styles.pickedName}>{dish ? dish.name : "Своё блюдо"}</Text>
+      <Text style={styles.pickedName}>{dish ? dish.name : "Несколько продуктов"}</Text>
       <Text style={styles.caption}>
         {dish
           ? "Уже записанное в дневник не изменится — там свои числа"
-          : "Набор продуктов, который добавляется одной кнопкой"}
+          : "Собери набор и положи его в дневник — или сохрани как блюдо"}
       </Text>
 
+      <Text style={styles.sectionLabel}>Строкой</Text>
       <TextInput
-        value={name}
-        onChangeText={setName}
-        placeholder="Название блюда"
+        value={line}
+        onChangeText={setLine}
+        onSubmitEditing={parse}
+        placeholder="400 г риса и 2 яйца"
         placeholderTextColor={colors.textMuted}
         style={styles.search}
-        accessibilityLabel="Название блюда"
+        accessibilityLabel="Записать строкой"
       />
+      <Pressable
+        onPress={parse}
+        disabled={line.trim() === ""}
+        accessibilityRole="button"
+        accessibilityLabel="Разобрать строку"
+        style={({ pressed }) => [styles.addRow, line.trim() === "" && styles.rowOff, pressed && styles.pressed]}
+      >
+        <Feather name="corner-down-left" size={15} color={colors.textMuted} />
+        <Text style={styles.addText}>Разобрать</Text>
+      </Pressable>
+      <Text style={styles.rowHint}>
+        Узнаёт только свои продукты — те, что уже заведены. Единицу можно не называть: «2
+        яйца» это две штуки, «400 риса» — четыреста граммов.
+      </Text>
+
+      {misses.length > 0 && (
+        <View style={styles.missCard}>
+          <Text style={styles.missTitle}>Не понял</Text>
+          {misses.map((m, i) => (
+            <Text key={`${m}-${i}`} style={styles.missLine}>
+              {`«${m}»`}
+            </Text>
+          ))}
+          <Text style={styles.rowHint}>
+            Либо такого продукта ещё нет в списке, либо не назван вес. Добавь это ниже руками.
+          </Text>
+        </View>
+      )}
 
       {items.length > 0 && (
         <>
-          <Text style={styles.sectionLabel}>В блюде</Text>
+          <Text style={styles.sectionLabel}>В наборе</Text>
           {items.map((item, i) => {
             const product = byId.get(item.productId);
+            const step = product ? stepGrams(product) : 25;
+            const unit = product ? unitOf(product) : "g";
+            const amount =
+              unit === "g" || !product?.portionG
+                ? `${item.grams} г`
+                : `${formatAmount(item.grams / product.portionG, unit)} · ${item.grams} г`;
             return (
               <View key={`${item.productId}-${i}`} style={styles.row}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.rowName}>{product?.name ?? "Продукт удалён"}</Text>
-                  <Text style={styles.rowDetail}>{`${item.grams} г`}</Text>
+                  <Text style={styles.rowDetail}>{amount}</Text>
                 </View>
                 <Pressable
-                  onPress={() => setItems(items.map((x, j) => (j === i ? { ...x, grams: Math.max(5, x.grams - 25) } : x)))}
+                  onPress={() =>
+                    setItems(items.map((x, j) => (j === i ? { ...x, grams: Math.max(1, x.grams - step) } : x)))
+                  }
                   accessibilityLabel={`Меньше: ${product?.name ?? ""}`}
                   style={({ pressed }) => [styles.miniBtn, pressed && styles.pressed]}
                 >
                   <Text style={styles.miniBtnText}>−</Text>
                 </Pressable>
                 <Pressable
-                  onPress={() => setItems(items.map((x, j) => (j === i ? { ...x, grams: x.grams + 25 } : x)))}
+                  onPress={() => setItems(items.map((x, j) => (j === i ? { ...x, grams: x.grams + step } : x)))}
                   accessibilityLabel={`Больше: ${product?.name ?? ""}`}
                   style={({ pressed }) => [styles.miniBtn, pressed && styles.pressed]}
                 >
@@ -553,7 +707,7 @@ function DishForm({
             key={p.id}
             onPress={() => setItems([...items, { productId: p.id, grams: p.portionG ?? 100 }])}
             accessibilityRole="button"
-            accessibilityLabel={`В блюдо: ${p.name}`}
+            accessibilityLabel={`В набор: ${p.name}`}
             style={({ pressed }) => [styles.row, pressed && styles.pressed]}
           >
             <View style={{ flex: 1 }}>
@@ -564,21 +718,52 @@ function DishForm({
           </Pressable>
         ))}
 
+      {/* Дневник первым: набирают чаще ради одного раза, чем ради рецепта. */}
+      {!dish && (
+        <Pressable
+          onPress={() => canAdd && onAddToDiary(items)}
+          disabled={!canAdd}
+          accessibilityRole="button"
+          accessibilityLabel="Добавить набор в дневник"
+          style={({ pressed }) => [styles.primary, !canAdd && styles.primaryOff, pressed && styles.pressed]}
+        >
+          <Text style={styles.primaryText}>
+            {canAdd ? `Добавить в дневник · ${totals.kcal} ккал` : "Добавить в дневник"}
+          </Text>
+        </Pressable>
+      )}
+
+      <Text style={styles.sectionLabel}>Название — только чтобы сохранить как блюдо</Text>
+      <TextInput
+        value={name}
+        onChangeText={setName}
+        placeholder="Например, «Курица с рисом»"
+        placeholderTextColor={colors.textMuted}
+        style={styles.search}
+        accessibilityLabel="Название блюда"
+      />
       <Pressable
-        onPress={() => canSave && onSave(name.trim(), items)}
+        onPress={() => canSave && onSaveDish(name.trim(), items)}
         disabled={!canSave}
         accessibilityRole="button"
         accessibilityLabel="Сохранить блюдо"
-        style={({ pressed }) => [styles.primary, !canSave && styles.primaryOff, pressed && styles.pressed]}
+        style={({ pressed }) => [
+          styles.addRow,
+          !canSave && styles.rowOff,
+          pressed && styles.pressed,
+        ]}
       >
-        <Text style={styles.primaryText}>{dish ? "Сохранить изменения" : "Сохранить блюдо"}</Text>
+        <Feather name="layers" size={15} color={colors.textMuted} />
+        <Text style={styles.addText}>{dish ? "Сохранить изменения" : "Сохранить как блюдо"}</Text>
       </Pressable>
+
       <Pressable onPress={onCancel} accessibilityRole="button" style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
         <Text style={styles.backText}>Отмена</Text>
       </Pressable>
     </ScrollView>
   );
 }
+
 
 /** Новый продукт: название и четыре числа на 100 г, плюс необязательный вес порции. */
 function ProductForm({
@@ -597,6 +782,7 @@ function ProductForm({
   const [fat, setFat] = useState(show(product?.fat));
   const [carb, setCarb] = useState(show(product?.carb));
   const [portion, setPortion] = useState(show(product?.portionG));
+  const [unit, setUnit] = useState<Unit>(product ? unitOf(product) : "g");
 
   const num = (v: string) => Math.max(0, Number(v.replace(",", ".")) || 0);
   const canSave = name.trim() !== "";
@@ -624,11 +810,46 @@ function ProductForm({
         <Field label="Белки" value={protein} onChange={setProtein} unit="г" />
         <Field label="Жиры" value={fat} onChange={setFat} unit="г" />
         <Field label="Углеводы" value={carb} onChange={setCarb} unit="г" />
-        <Field label="Вес порции" value={portion} onChange={setPortion} unit="г" optional />
-        <Text style={styles.rowHint}>
-          Вес порции необязателен. Если задать — можно будет вводить «1.5 порции» вместо
-          граммов.
-        </Text>
+      </View>
+
+      {/* Рис считают граммами, яйца — штуками, масло — ложками. Переводить «2 яйца» в «110 г»
+          должно приложение, а не человек: он знает, сколько съел, а не сколько это весит. */}
+      <Text style={styles.sectionLabel}>Чем считать</Text>
+      <View style={styles.formCard}>
+        <View style={styles.chipRow}>
+          {(["g", "piece", "spoon", "portion"] as Unit[]).map((u) => (
+            <Pressable
+              key={u}
+              onPress={() => setUnit(u)}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: unit === u }}
+              accessibilityLabel={`Единица: ${UNIT_LABELS[u]}`}
+              style={({ pressed }) => [styles.chip, unit === u && styles.chipOn, pressed && styles.pressed]}
+            >
+              <Text style={[styles.chipText, unit === u && styles.chipTextOn]}>{UNIT_LABELS[u]}</Text>
+            </Pressable>
+          ))}
+        </View>
+        {unit === "g" ? (
+          <Text style={styles.rowHint}>
+            Количество вводится только в граммах. Так считают крупы, мясо, овощи — всё, что
+            взвешивают.
+          </Text>
+        ) : (
+          <>
+            <Field
+              label={`Граммов в одной ${UNIT_IN_ONE[unit]}`}
+              value={portion}
+              onChange={setPortion}
+              unit="г"
+            />
+            <Text style={styles.rowHint}>
+              {`Без этого числа «${
+                UNIT_SHORT[unit]
+              }» не во что перевести, и останутся одни граммы. Яйцо — около 55 г, столовая ложка масла — около 17 г.`}
+            </Text>
+          </>
+        )}
       </View>
 
       <Pressable
@@ -640,7 +861,9 @@ function ProductForm({
             protein: num(protein),
             fat: num(fat),
             carb: num(carb),
-            ...(num(portion) > 0 ? { portionG: num(portion) } : {}),
+            ...(unit !== "g" && num(portion) > 0
+              ? { portionG: num(portion), unit: unit as Exclude<Unit, "g"> }
+              : {}),
           })
         }
         disabled={!canSave}
@@ -771,6 +994,19 @@ const styles = StyleSheet.create({
   },
   amountUnit: { color: colors.textMuted, fontSize: 14, paddingBottom: 8 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  missCard: {
+    backgroundColor: colors.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 10,
+    gap: 3,
+  },
+  missTitle: { color: colors.accent, fontSize: 12, fontWeight: "600" },
+  missLine: { color: colors.text, fontSize: 13 },
+  amountHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
   chip: {
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -780,6 +1016,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   chipText: { color: colors.textMuted, fontSize: 12 },
+  // Тот же выбранный вид, что у чипов в профиле: одинаковые элементы должны выглядеть
+  // одинаково в обоих разделах.
+  chipOn: { backgroundColor: "rgba(143,184,154,0.12)", borderColor: colors.accentGreen },
+  chipTextOn: { color: colors.accentGreen, fontWeight: "600" },
   previewCard: {
     backgroundColor: colors.card,
     borderRadius: 16,

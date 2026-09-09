@@ -13,6 +13,8 @@ import { latestWeight, WEIGHT_LIMITS, type WeightEntry } from "../../lib/balance
 import {
   MEALS,
   MEAL_LABELS,
+  UNIT_SHORT,
+  describeEntryAmount,
   entriesForDay,
   entriesForMeal,
   remaining,
@@ -67,8 +69,12 @@ export default function DiaryScreen({
     onSuccess: invalidate,
   });
   const update = useMutation({
-    mutationFn: (v: { id: string; grams: number; nutrition: ReturnType<typeof rescaleEntry> }) =>
-      api.updateFoodEntry(v.id, { grams: v.grams, ...v.nutrition }),
+    mutationFn: (v: { id: string; grams: number; units: number | null; nutrition: ReturnType<typeof rescaleEntry> }) =>
+      api.updateFoodEntry(v.id, {
+        grams: v.grams,
+        ...(v.units !== null ? { units: v.units } : {}),
+        ...v.nutrition,
+      }),
     onSuccess: () => {
       setEditing(null);
       invalidate();
@@ -170,13 +176,13 @@ export default function DiaryScreen({
           repeatLabel={back === 0 ? "Как вчера" : "Как накануне"}
           editing={editing}
           onEdit={setEditing}
-          onSave={(id, grams, nutrition) => update.mutate({ id, grams, nutrition })}
+          onSave={(id, grams, units, nutrition) => update.mutate({ id, grams, units, nutrition })}
           onAdd={() => navigation.navigate("AddFood", { date: shown, meal })}
           onRepeat={(from) => copyDay.mutate(from)}
           onRemove={(entry) =>
             confirmDestructive(
               "Убрать из дневника?",
-              `«${entry.name}», ${entry.grams} г.`,
+              `«${entry.name}», ${describeEntryAmount(entry)}.`,
               () => remove.mutate(entry.id),
               "Убрать",
             )
@@ -336,7 +342,7 @@ function MealSection({
   repeatLabel: string;
   editing: string | null;
   onEdit: (id: string | null) => void;
-  onSave: (id: string, grams: number, nutrition: ReturnType<typeof rescaleEntry>) => void;
+  onSave: (id: string, grams: number, units: number | null, nutrition: ReturnType<typeof rescaleEntry>) => void;
   onAdd: () => void;
   onRepeat: (entries: FoodEntry[]) => void;
   onRemove: (entry: FoodEntry) => void;
@@ -358,7 +364,7 @@ function MealSection({
             onPress={() => onEdit(e.id)}
             onLongPress={() => onRemove(e)}
             accessibilityRole="button"
-            accessibilityLabel={`${e.name}, ${e.grams} г, ${e.kcal} ккал. Нажми, чтобы поправить вес; удерживай, чтобы убрать`}
+            accessibilityLabel={`${e.name}, ${describeEntryAmount(e)}, ${e.kcal} ккал. Нажми, чтобы поправить количество; удерживай, чтобы убрать`}
             style={({ pressed }) => [styles.entry, pressed && styles.pressed]}
           >
             <View style={{ flex: 1 }}>
@@ -366,7 +372,7 @@ function MealSection({
                 {e.name}
               </Text>
               <Text style={styles.entryDetail}>
-                {`${e.grams} г · Б ${e.protein} · Ж ${e.fat} · У ${e.carb}`}
+                {`${describeEntryAmount(e)} · Б ${e.protein} · Ж ${e.fat} · У ${e.carb}`}
               </Text>
             </View>
             <Text style={styles.entryKcal}>{e.kcal}</Text>
@@ -419,11 +425,16 @@ function AmountEdit({
 }: {
   entry: FoodEntry;
   onCancel: () => void;
-  onSave: (id: string, grams: number, nutrition: ReturnType<typeof rescaleEntry>) => void;
+  onSave: (id: string, grams: number, units: number | null, nutrition: ReturnType<typeof rescaleEntry>) => void;
 }) {
   const [grams, setGrams] = useState(entry.grams);
   const nutrition = rescaleEntry(entry, grams);
-  const step = (d: number) => setGrams((g) => Math.max(5, g + d));
+  // Сколько граммов в одной единице — из самой записи: она помнит и граммы, и штуки.
+  const perUnit = entry.units && entry.units > 0 ? entry.grams / entry.units : 0;
+  const stepBy = perUnit > 0 ? perUnit : 10;
+  const units = perUnit > 0 ? Math.round((grams / perUnit) * 100) / 100 : null;
+  // Шаг в родных единицах: у яиц стрелка должна двигать на яйцо, а не на десять граммов.
+  const step = (d: number) => setGrams((g) => Math.max(1, Math.round(g + d * stepBy)));
 
   return (
     <View style={styles.editCard}>
@@ -432,23 +443,26 @@ function AmountEdit({
       </Text>
       <View style={styles.editRow}>
         <Pressable
-          onPress={() => step(-10)}
+          onPress={() => step(-1)}
           accessibilityRole="button"
-          accessibilityLabel="Меньше на 10 граммов"
+          accessibilityLabel="Меньше"
           style={({ pressed }) => [styles.miniBtn, pressed && styles.pressed]}
         >
           <Text style={styles.miniBtnText}>−</Text>
         </Pressable>
         <View style={styles.editValue}>
-          <Text style={styles.editGrams}>{`${grams} г`}</Text>
+          <Text style={styles.editGrams}>
+            {units !== null && entry.unit ? `${units} ${UNIT_SHORT[entry.unit]}` : `${grams} г`}
+          </Text>
           <Text style={styles.entryDetail}>
+            {units !== null ? `${grams} г · ` : ""}
             {`${nutrition.kcal} ккал · Б ${nutrition.protein} · Ж ${nutrition.fat} · У ${nutrition.carb}`}
           </Text>
         </View>
         <Pressable
-          onPress={() => step(10)}
+          onPress={() => step(1)}
           accessibilityRole="button"
-          accessibilityLabel="Больше на 10 граммов"
+          accessibilityLabel="Больше"
           style={({ pressed }) => [styles.miniBtn, pressed && styles.pressed]}
         >
           <Text style={styles.miniBtnText}>+</Text>
@@ -463,9 +477,9 @@ function AmountEdit({
           <Text style={styles.addText}>Отмена</Text>
         </Pressable>
         <Pressable
-          onPress={() => onSave(entry.id, grams, nutrition)}
+          onPress={() => onSave(entry.id, grams, units, nutrition)}
           accessibilityRole="button"
-          accessibilityLabel="Сохранить вес"
+          accessibilityLabel="Сохранить количество"
           style={({ pressed }) => [styles.editSave, pressed && styles.pressed]}
         >
           <Text style={styles.editSaveText}>Сохранить</Text>

@@ -28,16 +28,79 @@ export interface Nutrition {
 
 export const ZERO: Nutrition = { kcal: 0, protein: 0, fat: 0, carb: 0 };
 
+/**
+ * Чем считается продукт.
+ *
+ * Рис считают граммами, яйца — штуками, масло — ложками. Заставлять человека переводить
+ * «2 яйца» в «110 г» — значит требовать от него того, что должно делать приложение: он
+ * знает, сколько съел, а не сколько это весит.
+ *
+ * "g" — особый случай: он означает, что у продукта нет своей единицы и остаются одни
+ * граммы. Поэтому он не хранится, а выводится из отсутствия `portionG`.
+ */
+export type Unit = "g" | "portion" | "piece" | "spoon";
+
+/** Короткая подпись рядом с числом. */
+export const UNIT_SHORT: Record<Unit, string> = {
+  g: "г",
+  portion: "порц.",
+  piece: "шт",
+  spoon: "лож.",
+};
+
+/** Формы для склонения по числу. */
+export const UNIT_FORMS: Record<Unit, [string, string, string]> = {
+  g: ["грамм", "грамма", "граммов"],
+  portion: ["порция", "порции", "порций"],
+  piece: ["штука", "штуки", "штук"],
+  spoon: ["ложка", "ложки", "ложек"],
+};
+
+/**
+ * Форма «в одной ...»: «в одной штуке», «по 17 г в ложке».
+ *
+ * Отдельной таблицей, потому что именительный падеж в этих фразах читается сломанным: «по
+ * 55 г за штука» — это не по-русски, а строку человек видит каждый раз, когда что-то
+ * добавляет.
+ */
+export const UNIT_IN_ONE: Record<Unit, string> = {
+  g: "грамме",
+  portion: "порции",
+  piece: "штуке",
+  spoon: "ложке",
+};
+
+/** Как единица называется в настройках продукта. */
+export const UNIT_LABELS: Record<Unit, string> = {
+  g: "Только граммы",
+  portion: "Порция",
+  piece: "Штука",
+  spoon: "Ложка",
+};
+
 export interface FoodProduct extends Nutrition {
   id: string;
   name: string;
   /**
-   * Сколько граммов в одной порции. Без него доступны только граммы: «2 порции» без
-   * веса порции — это не количество, а надежда.
+   * Сколько граммов в одной единице. Без него остаются одни граммы: «2 порции» без веса
+   * порции — это не количество, а надежда.
    */
   portionG?: number;
+  /** Чем считается. Осмысленно только вместе с `portionG`; старые продукты — порции. */
+  unit?: Exclude<Unit, "g">;
   /** Когда его последний раз добавляли — по этому строится «Часто ем». */
   lastUsedAt?: string;
+}
+
+/**
+ * Чем на самом деле считается продукт.
+ *
+ * Единица без веса единицы бессмысленна — сколько граммов в «штуке», знает только продукт,
+ * — поэтому она и выводится из `portionG`, а не берётся из поля напрямую.
+ */
+export function unitOf(product: Pick<FoodProduct, "portionG" | "unit">): Unit {
+  if (!product.portionG || product.portionG <= 0) return "g";
+  return product.unit ?? "portion";
 }
 
 export interface FoodEntry extends Nutrition {
@@ -50,6 +113,15 @@ export interface FoodEntry extends Nutrition {
   dishId?: string;
   name: string;
   grams: number;
+  /**
+   * В чём это записали и сколько единиц вышло — снимок на момент записи, как и макросы.
+   *
+   * «Яйцо, 110 г» — это перевод, который человек не делал и в котором себя не узнаёт. Он
+   * съел два яйца, и строка дневника должна говорить это. Хранится рядом с граммами, а не
+   * вместо них: считается всё по-прежнему в граммах.
+   */
+  units?: number;
+  unit?: Exclude<Unit, "g">;
 }
 
 /** Один продукт внутри блюда и его вес в этом блюде. */
@@ -107,6 +179,10 @@ export function normalizeProduct(value: unknown): FoodProduct | null {
     fat: round(num(v.fat), 1),
     carb: round(num(v.carb), 1),
     ...(portion > 0 ? { portionG: Math.round(portion) } : {}),
+    // Единица без веса единицы ничего не значит, поэтому и не хранится без него.
+    ...(portion > 0 && (v.unit === "piece" || v.unit === "spoon" || v.unit === "portion")
+      ? { unit: v.unit }
+      : {}),
     ...(isStr(v.lastUsedAt) ? { lastUsedAt: v.lastUsedAt } : {}),
   };
 }
@@ -130,6 +206,10 @@ export function normalizeEntry(value: unknown): FoodEntry | null {
     protein: round(num(v.protein), 1),
     fat: round(num(v.fat), 1),
     carb: round(num(v.carb), 1),
+    ...(typeof v.units === "number" && Number.isFinite(v.units) && v.units > 0
+      ? { units: round(v.units, 2) }
+      : {}),
+    ...(v.unit === "piece" || v.unit === "spoon" || v.unit === "portion" ? { unit: v.unit } : {}),
   };
 }
 
@@ -224,6 +304,33 @@ export function searchProducts(products: FoodProduct[], query: string): FoodProd
       const bi = b.name.toLowerCase().indexOf(q);
       return ai !== bi ? ai - bi : a.name.localeCompare(b.name, "ru");
     });
+}
+
+/**
+ * Как назвать количество: «2 шт», «400 г», «1.5 порции».
+ *
+ * Дробное число единиц пишется как есть: полторы ложки — это полторы ложки, а «22 г» вместо
+ * них человек не проверит.
+ */
+export function formatAmount(amount: number, unit: Unit): string {
+  const rounded = Math.round(amount * 100) / 100;
+  return `${rounded} ${UNIT_SHORT[unit]}`;
+}
+
+/**
+ * Что писать в строке дневника: «2 шт · 110 г» или просто «400 г».
+ *
+ * Граммы остаются рядом даже там, где считали штуками: по ним сходится день, и когда сумма
+ * не сойдётся, искать причину будут именно в них.
+ */
+export function describeEntryAmount(entry: FoodEntry): string {
+  if (!entry.units || !entry.unit) return `${entry.grams} г`;
+  return `${formatAmount(entry.units, entry.unit)} · ${entry.grams} г`;
+}
+
+/** Шаг стрелки для этого продукта: одна единица там, где она есть, иначе 25 граммов. */
+export function stepGrams(product: Pick<FoodProduct, "portionG" | "unit">): number {
+  return unitOf(product) === "g" ? 25 : (product.portionG ?? 25);
 }
 
 /**
