@@ -140,6 +140,8 @@ export interface AppInfoEntry {
   label: string;
   icon: string | null;
   installedAtMs: number | null;
+  /** Оболочка телефона, а не приложение: домашний экран между всем остальным. */
+  isHome?: boolean;
 }
 
 function inRange(date: string, from: string, to: string) {
@@ -925,6 +927,7 @@ export const api = {
           label: entry.label,
           icon: entry.icon ?? known?.icon ?? null,
           installedAtMs: entry.installedAtMs ?? known?.installedAtMs ?? null,
+          isHome: entry.isHome ?? known?.isHome ?? false,
         };
       }
       await write(KEYS.screenAppInfo, next);

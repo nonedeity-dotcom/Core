@@ -65,7 +65,7 @@ export default function UsageScreen({
     queryKey: ["screenDays", range.from, range.to],
     queryFn: () => api.getScreenDays(range.from, range.to),
   });
-  const { data: apps = [] } = useQuery<AppDay[]>({
+  const { data: allApps = [] } = useQuery<AppDay[]>({
     queryKey: ["screenApps", range.from, range.to],
     queryFn: () => api.getScreenApps(range.from, range.to),
   });
@@ -73,15 +73,15 @@ export default function UsageScreen({
     queryKey: ["screenDays", prev.from, prev.to],
     queryFn: () => api.getScreenDays(prev.from, prev.to),
   });
-  const { data: prevApps = [] } = useQuery<AppDay[]>({
+  const { data: allPrevApps = [] } = useQuery<AppDay[]>({
     queryKey: ["screenApps", prev.from, prev.to],
     queryFn: () => api.getScreenApps(prev.from, prev.to),
   });
-  const { data: allDays = [] } = useQuery<ScreenDay[]>({
+  const { data: everDays = [] } = useQuery<ScreenDay[]>({
     queryKey: ["screenDays", "all"],
     queryFn: () => api.getScreenDays("0000-01-01", "9999-12-31"),
   });
-  const { data: allApps = [] } = useQuery<AppDay[]>({
+  const { data: everApps = [] } = useQuery<AppDay[]>({
     queryKey: ["screenApps", "all"],
     queryFn: () => api.getScreenApps("0000-01-01", "9999-12-31"),
   });
@@ -175,6 +175,25 @@ export default function UsageScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh]);
 
+  /**
+   * Домашний экран — не приложение.
+   *
+   * Он мелькает между всем остальным: каждый переход, каждая разблокировка. Отсюда и его
+   * числа — часы времени и тысячи «открытий», среди которых нет ни одного намеренного.
+   * В списке приложений он не участвует, доли и итог считаются без него, а само это время
+   * никуда не девается: оно по-прежнему внутри метрики «Экран».
+   */
+  const home = new Set(
+    Object.entries(icons)
+      .filter(([, info]) => info.isHome)
+      .map(([packageName]) => packageName),
+  );
+  const apps = allApps.filter((r) => !home.has(r.packageName));
+  const prevApps = allPrevApps.filter((r) => !home.has(r.packageName));
+  const homeMs = allApps
+    .filter((r) => home.has(r.packageName))
+    .reduce((sum, r) => sum + r.usageMillis, 0);
+
   const screenMs = totalScreenMillis(days);
   const totals = totalsByApp(apps);
   const prevTotals = totalsByApp(prevApps);
@@ -215,7 +234,7 @@ export default function UsageScreen({
     value: h.value,
   }));
 
-  const earliest = earliestStoredDay(allDays, allApps);
+  const earliest = earliestStoredDay(everDays, everApps);
   // Период уходит глубже, чем мы помним: это не ноль, а незнание, и сказать надо прямо.
   const incomplete = earliest !== null && earliest > range.from;
   const empty = screenMs === 0 && totals.length === 0;
@@ -327,6 +346,9 @@ export default function UsageScreen({
 
           <Text style={styles.sectionLabel}>
             {`Приложения · ${totals.length} ${plural(totals.length, ["штука", "штуки", "штук"])}`}
+            {/* Про домашний экран сказано, только когда он и правда набрал время: иначе это
+                объяснение того, чего человек не видел. */}
+            {homeMs > 0 ? ` · домашний экран (${formatCompact(homeMs)}) не в счёт` : ""}
           </Text>
           {totals.map((total, i) => {
             const before = prevByPackage.get(total.packageName);

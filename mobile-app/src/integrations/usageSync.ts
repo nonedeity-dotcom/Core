@@ -81,7 +81,12 @@ export async function syncUsage(nowMs = Date.now()): Promise<UsageSyncResult> {
   // Названия берутся из кэша, а недостающие — у системы. Иконка рисуется один раз на
   // приложение, а не на каждый показ списка.
   const cache = await api.getAppInfoCache();
-  const unknown = [...new Set(appRows.map((r) => r.packageName))].filter((p) => !cache[p]);
+  // Пере-спрашиваются и те, о ком уже что-то знаем, но не знаем главного: запись,
+  // сделанная до появления признака домашнего экрана, иначе осталась бы без него навсегда —
+  // имя и иконка у неё есть, и за новыми она бы никогда не пошла.
+  const unknown = [...new Set(appRows.map((r) => r.packageName))].filter(
+    (p) => !cache[p] || cache[p].isHome === undefined,
+  );
   if (unknown.length > 0) {
     const fresh = await getAppInfo(unknown);
     await api.saveAppInfo(
@@ -90,9 +95,17 @@ export async function syncUsage(nowMs = Date.now()): Promise<UsageSyncResult> {
         label: f.label,
         icon: f.icon,
         installedAtMs: f.installedAtMs,
+        isHome: f.isHome,
       })),
     );
-    for (const f of fresh) cache[f.packageName] = { label: f.label, icon: f.icon, installedAtMs: f.installedAtMs };
+    for (const f of fresh) {
+      cache[f.packageName] = {
+        label: f.label,
+        icon: f.icon,
+        installedAtMs: f.installedAtMs,
+        isHome: f.isHome,
+      };
+    }
   }
 
   const apps: AppDay[] = appRows.map((row) => ({

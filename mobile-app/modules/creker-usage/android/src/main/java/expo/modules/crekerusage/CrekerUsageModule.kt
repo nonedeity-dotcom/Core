@@ -214,6 +214,14 @@ class CrekerUsageModule : Module() {
     AsyncFunction("getAppInfo") { packages: List<String> ->
       val context = appContext.reactContext ?: return@AsyncFunction emptyList<Map<String, Any?>>()
       val pm = context.packageManager
+      // Кто обрабатывает кнопку «домой» — это и есть оболочка телефона, а не приложение.
+      // Определяется намерением, а не списком названий: лаунчеров десятки, у каждого
+      // производителя свой, и угадывать их по имени — заведомо проигранная игра.
+      val homePackages = runCatching {
+        pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)
+          .mapNotNull { it.activityInfo?.packageName }
+          .toSet()
+      }.getOrDefault(emptySet())
       packages.map { packageName ->
         val info = runCatching { pm.getApplicationInfo(packageName, 0) }.getOrNull()
         val label = info?.let { runCatching { pm.getApplicationLabel(it).toString() }.getOrNull() }
@@ -228,6 +236,7 @@ class CrekerUsageModule : Module() {
           "installed" to (info != null),
           "icon" to icon?.let { encodeIcon(it) },
           "installedAtMs" to installedAt?.toDouble(),
+          "isHome" to homePackages.contains(packageName),
         )
       }
     }

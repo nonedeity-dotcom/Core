@@ -215,11 +215,32 @@ export function toDailyUsage(
     .sort((a, b) => a.date.localeCompare(b.date) || a.packageName.localeCompare(b.packageName));
 }
 
-/** Сколько раз каждое приложение выходило на передний план, по дням. */
+/**
+ * Сколько раз каждое приложение открывали, по дням.
+ *
+ * Считается смена приложения на переднем плане, а не каждое событие «вышел на передний
+ * план». Система шлёт последнее при переходе между экранами внутри самого приложения:
+ * открыл переписку, вернулся в список — два события, одно приложение, ноль новых открытий.
+ * Из-за этого счётчик разбухал в разы и переставал значить хоть что-нибудь.
+ *
+ * Погасший экран и замок сбрасывают текущее: вернуться в то же приложение после блокировки
+ * — это открыть его снова, а не продолжить, и человек это переживает именно так.
+ */
 export function countLaunches(events: RawEvent[], rangeStartMs: number, rangeEndMs: number): Map<string, number> {
   const launches = new Map<string, number>();
-  for (const event of events) {
+  let current: string | null = null;
+
+  for (const event of [...events].sort((a, b) => a.timestampMs - b.timestampMs)) {
+    if (event.type === "screenOff" || event.type === "keyguardShown" || event.type === "shutdown") {
+      current = null;
+      continue;
+    }
     if (event.type !== "foreground") continue;
+    const wasSame = current === event.packageName;
+    current = event.packageName;
+    if (wasSame) continue;
+    // Окно проверяется после смены: событие до его начала всё равно задаёт, что было
+    // открыто, иначе первое утреннее приложение считалось бы открытым дважды.
     if (event.timestampMs < rangeStartMs || event.timestampMs >= rangeEndMs) continue;
     const k = `${toDateKey(new Date(event.timestampMs))}|${event.packageName}`;
     launches.set(k, (launches.get(k) ?? 0) + 1);
