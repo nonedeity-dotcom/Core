@@ -5,13 +5,14 @@ import { api, type AppInfoEntry } from "../../api/client";
 import { colors } from "../../theme/colors";
 import { plural } from "../../lib/plural";
 import { useTodayKey } from "../../lib/useTodayKey";
-import { datesBetween, formatDateShort } from "../../lib/date";
+import { datesBetween, formatDateShort, weekdayLabel } from "../../lib/date";
 import { formatCompact, formatDuration, formatWithUnits } from "../../lib/screen/duration";
 import { dayCount, resolveSelection, shiftRange, type Selection } from "../../lib/screen/period";
 import { describeChange, usageChange } from "../../lib/screen/compare";
 import { hourlyFor, METRIC_LABELS, type Metric } from "../../integrations/usageSync";
 import PeriodBar from "../../components/screen/PeriodBar";
-import HourlyBars from "../../components/screen/HourlyBars";
+import ValueChart, { type ChartKind } from "../../components/screen/ValueChart";
+import { ChartToggle } from "./UsageScreen";
 import {
   currentStreak,
   historyFor,
@@ -19,7 +20,6 @@ import {
   maxDayUsage,
   type AppDay,
 } from "../../lib/screen/usage";
-import UsageBars from "../../components/screen/UsageBars";
 
 /**
  * Одно приложение: сколько в нём за месяц, по каким дням и сколько дней подряд.
@@ -36,6 +36,7 @@ export default function AppUsageScreen({
   const packageName = route.params?.packageName ?? "";
   const [selection, setSelection] = useState<Selection>({ kind: "preset", preset: "month" });
   const [metric, setMetric] = useState<Metric>("usage");
+  const [chart, setChart] = useState<ChartKind>("bars");
   const [picked, setPicked] = useState<string | null>(null);
 
   const range = resolveSelection(selection, today);
@@ -65,10 +66,12 @@ export default function AppUsageScreen({
   const history = historyFor(rows, packageName);
   const prevHistory = historyFor(prevRows, packageName);
   const byDate = new Map(history.map((h) => [h.date, h] as const));
-  const bars = datesBetween(range.from, range.to).map((date) => ({
-    date,
+  const dayPoints = datesBetween(range.from, range.to).map((date) => ({
+    key: date,
+    label: weekdayLabel(date),
     value: metric === "sessions" ? (byDate.get(date)?.launchCount ?? 0) : (byDate.get(date)?.usageMillis ?? 0),
   }));
+  const hourPoints = (hourly ?? []).map((h) => ({ key: `${h.hour}`, label: `${h.hour}`, value: h.value }));
 
   const total = history.reduce((sum, h) => sum + h.usageMillis, 0);
   const launches = history.reduce((sum, h) => sum + h.launchCount, 0);
@@ -134,10 +137,13 @@ export default function AppUsageScreen({
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>{single ? "По часам" : "По дням"}</Text>
+        <View style={styles.chartHead}>
+          <Text style={styles.cardTitle}>{single ? "По часам, 0—23" : "По дням"}</Text>
+          <ChartToggle kind={chart} onChange={setChart} />
+        </View>
         {single ? (
           hourly ? (
-            <HourlyBars hours={hourly} counts={metric === "sessions"} />
+            <ValueChart points={hourPoints} kind={chart} counts={metric === "sessions"} />
           ) : (
             <Text style={styles.hint}>
               Почасовая картина есть только у последних дней: подробные события система хранит
@@ -146,7 +152,13 @@ export default function AppUsageScreen({
           )
         ) : (
           <>
-            <UsageBars bars={bars} selected={picked} onSelect={(d) => setPicked(d === picked ? null : d)} />
+            <ValueChart
+              points={dayPoints}
+              kind={chart}
+              counts={metric === "sessions"}
+              selected={picked}
+              onSelect={(d) => setPicked(d === picked ? null : d)}
+            />
             <Text style={styles.pickHint}>
               {pickedRow
                 ? `${formatDateShort(pickedRow.date)}: ${formatWithUnits(pickedRow.usageMillis)} · ${
@@ -154,7 +166,7 @@ export default function AppUsageScreen({
                   } ${plural(pickedRow.launchCount, ["запуск", "запуска", "запусков"])}`
                 : picked
                   ? `${formatDateShort(picked)}: не открывали`
-                  : "Нажми на столбик, чтобы увидеть день"}
+                  : "Нажми на день, чтобы увидеть подробности"}
             </Text>
           </>
         )}
@@ -207,7 +219,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     alignItems: "stretch",
   },
-  cardTitle: { color: colors.text, fontSize: 13, fontWeight: "600", marginBottom: 12 },
+  cardTitle: { color: colors.text, fontSize: 13, fontWeight: "600" },
+  chartHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
   metrics: { flexDirection: "row", gap: 6, marginBottom: 12 },
   metric: { flex: 1, alignItems: "center", paddingVertical: 7, borderRadius: 10, backgroundColor: colors.card },
   metricOn: { backgroundColor: "rgba(143,184,154,0.14)" },

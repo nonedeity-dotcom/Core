@@ -6,7 +6,7 @@ import { api, type AppInfoEntry } from "../../api/client";
 import { colors } from "../../theme/colors";
 import { plural } from "../../lib/plural";
 import { useTodayKey } from "../../lib/useTodayKey";
-import { datesBetween } from "../../lib/date";
+import { datesBetween, weekdayLabel } from "../../lib/date";
 import { syncFromCreker } from "../../integrations/screenTime";
 import { syncUsage, hourlyFor, METRIC_LABELS, type Metric } from "../../integrations/usageSync";
 import { hasUsageAccess, openUsageAccessSettings } from "../../../modules/creker-usage";
@@ -24,8 +24,7 @@ import {
   type ScreenDay,
 } from "../../lib/screen/usage";
 import UsageRing, { sliceColor } from "../../components/screen/UsageRing";
-import UsageBars from "../../components/screen/UsageBars";
-import HourlyBars from "../../components/screen/HourlyBars";
+import ValueChart, { type ChartKind } from "../../components/screen/ValueChart";
 import PeriodBar from "../../components/screen/PeriodBar";
 
 const METRICS: Metric[] = ["usage", "sessions", "screen"];
@@ -45,6 +44,7 @@ export default function UsageScreen({
   const today = useTodayKey();
   const [selection, setSelection] = useState<Selection>({ kind: "preset", preset: "day" });
   const [metric, setMetric] = useState<Metric>("usage");
+  const [chart, setChart] = useState<ChartKind>("bars");
 
   // Доступ выдаётся переключателем на системном экране, а не диалогом, — значит вернуться
   // оттуда можно с любым исходом, и спрашивать надо каждый раз при возвращении.
@@ -203,7 +203,17 @@ export default function UsageScreen({
       byDate.set(row.date, (byDate.get(row.date) ?? 0) + add);
     }
   }
-  const bars = datesBetween(range.from, range.to).map((date) => ({ date, value: byDate.get(date) ?? 0 }));
+  const dayPoints = datesBetween(range.from, range.to).map((date) => ({
+    key: date,
+    label: weekdayLabel(date),
+    value: byDate.get(date) ?? 0,
+  }));
+  // Часы подписаны все двадцать четыре — график прокручивается, места хватает.
+  const hourPoints = (hourly ?? []).map((h) => ({
+    key: `${h.hour}`,
+    label: `${h.hour}`,
+    value: h.value,
+  }));
 
   const earliest = earliestStoredDay(allDays, allApps);
   // Период уходит глубже, чем мы помним: это не ноль, а незнание, и сказать надо прямо.
@@ -300,10 +310,13 @@ export default function UsageScreen({
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>{single ? "По часам" : "По дням"}</Text>
+            <View style={styles.chartHead}>
+              <Text style={styles.cardTitle}>{single ? "По часам, 0—23" : "По дням"}</Text>
+              <ChartToggle kind={chart} onChange={setChart} />
+            </View>
             {single ? (
               hourly ? (
-                <HourlyBars hours={hourly} counts={metric === "sessions"} />
+                <ValueChart points={hourPoints} kind={chart} counts={metric === "sessions"} />
               ) : (
                 <Text style={styles.hint}>
                   Почасовая картина есть только у последних дней: подробные события система
@@ -311,7 +324,7 @@ export default function UsageScreen({
                 </Text>
               )
             ) : (
-              <UsageBars bars={bars} />
+              <ValueChart points={dayPoints} kind={chart} counts={metric === "sessions"} />
             )}
           </View>
 
@@ -433,8 +446,41 @@ export default function UsageScreen({
   );
 }
 
+/**
+ * Столбики или линия.
+ *
+ * Пара иконок, а не слова: подпись «столбчатая диаграмма» занимает больше места, чем сама
+ * кнопка, и объясняет то, что видно по значку.
+ */
+export function ChartToggle({ kind, onChange }: { kind: ChartKind; onChange: (kind: ChartKind) => void }) {
+  return (
+    <View style={styles.toggle}>
+      {(["bars", "line"] as ChartKind[]).map((k) => (
+        <Pressable
+          key={k}
+          onPress={() => onChange(k)}
+          accessibilityRole="radio"
+          accessibilityState={{ selected: kind === k }}
+          accessibilityLabel={k === "bars" ? "График столбиками" : "График линией"}
+          style={({ pressed }) => [styles.toggleBtn, kind === k && styles.toggleOn, pressed && styles.pressed]}
+        >
+          <Feather
+            name={k === "bars" ? "bar-chart-2" : "trending-up"}
+            size={14}
+            color={kind === k ? colors.bg : colors.textMuted}
+          />
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  chartHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  toggle: { flexDirection: "row", gap: 2, backgroundColor: colors.bg, borderRadius: 16, padding: 2 },
+  toggleBtn: { width: 30, height: 26, alignItems: "center", justifyContent: "center", borderRadius: 14 },
+  toggleOn: { backgroundColor: colors.accentGreen },
   metrics: { flexDirection: "row", gap: 6, marginBottom: 12 },
   metric: {
     flex: 1,
@@ -453,7 +499,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     marginBottom: 12,
   },
-  cardTitle: { color: colors.text, fontSize: 13, fontWeight: "600", marginBottom: 12 },
+  cardTitle: { color: colors.text, fontSize: 13, fontWeight: "600" },
   big: {
     color: colors.accentGreen,
     fontSize: 40,

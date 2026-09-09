@@ -57,7 +57,10 @@ export function formatCompact(durationMs: number, units: DurationUnits = RU_UNIT
 export function formatAxisTick(valueMs: number, axisMaxMs: number, units: DurationUnits = RU_UNITS): string {
   const seconds = Math.floor(Math.max(0, valueMs) / 1000);
   const maxSeconds = Math.floor(Math.max(0, axisMaxMs) / 1000);
-  if (maxSeconds >= 3600) return `${Math.floor(seconds / 3600)}${units.hours}`;
-  if (maxSeconds >= 60) return `${Math.floor(seconds / 60)}${units.minutes}`;
+  // Порог — две единицы, а не одна. При потолке в час сорок часы давали «1ч / 0ч / 0ч»:
+  // два деления из трёх читались одинаково, и ось переставала быть осью. Минуты на том же
+  // потолке дают «100м / 50м / 0м» — длиннее, но это три разных числа.
+  if (maxSeconds >= 2 * 3600) return `${Math.floor(seconds / 3600)}${units.hours}`;
+  if (maxSeconds >= 2 * 60) return `${Math.floor(seconds / 60)}${units.minutes}`;
   return `${seconds}${units.seconds}`;
 }
