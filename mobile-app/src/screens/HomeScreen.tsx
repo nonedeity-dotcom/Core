@@ -13,6 +13,7 @@ import { dayProgress, habitsThatDecideTheDay } from "../lib/habits";
 import { phaseStepFor } from "../lib/phase";
 import { sumNutrition, type FoodEntry } from "../lib/balance/food";
 import { targets, type Profile } from "../lib/balance/profile";
+import { formatWater, waterFor, waterTarget, type WaterDay } from "../lib/balance/water";
 import { totalScreenMillis, totalUnlocks, type ScreenDay } from "../lib/screen/usage";
 import { formatCompact } from "../lib/screen/duration";
 import { hasUsageAccess } from "../../modules/creker-usage";
@@ -54,8 +55,14 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
     queryKey: ["foodLog", today, today],
     queryFn: () => api.getFoodLog(today, today),
   });
+  const { data: waterLog = [] } = useQuery<WaterDay[]>({
+    queryKey: ["waterLog"],
+    queryFn: () => api.getWaterLog(),
+  });
   const eaten = sumNutrition(entries);
   const target = profile ? targets(profile) : null;
+  const drunk = waterFor(waterLog, today);
+  const waterGoal = profile ? waterTarget(profile) : 0;
 
   // --- Creker ---
   const { data: days = [] } = useQuery<ScreenDay[]>({
@@ -149,6 +156,15 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
                   target.calories - eaten.kcal,
                 )} ккал`
         }
+        // Вода отдельной строкой, а не в конце первой: это другой счёт, у него своя норма,
+        // и он должен читаться даже когда про еду сказать ещё нечего.
+        extra={
+          waterGoal > 0
+            ? `Вода ${formatWater(drunk)} из ${formatWater(waterGoal)}`
+            : drunk > 0
+              ? `Вода ${formatWater(drunk)}`
+              : null
+        }
       />
 
       <Card
@@ -207,6 +223,7 @@ function Card({
   icon,
   value,
   hint,
+  extra = null,
   big,
   tone,
   fraction,
@@ -216,6 +233,8 @@ function Card({
   icon: React.ComponentProps<typeof Feather>["name"];
   value: string;
   hint: string;
+  /** Вторая строка пояснения — для того, что считается отдельно от главного числа. */
+  extra?: string | null;
   big: boolean;
   tone: "plain" | "done" | "over";
   /** Доля дня, закрытая этим разделом. Больше единицы кольцо не рисует. */
@@ -229,7 +248,7 @@ function Card({
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`${name}: ${value}. ${hint}`}
+      accessibilityLabel={`${name}: ${value}. ${hint}${extra ? `. ${extra}` : ""}`}
       style={({ pressed }) => [
         styles.card,
         tone === "over" && { borderColor: withAlpha(colors.accent, 0.35) },
@@ -277,6 +296,7 @@ function Card({
           {value}
         </Text>
         <Text style={styles.hint}>{hint}</Text>
+        {extra && <Text style={styles.hint}>{extra}</Text>}
       </View>
 
       <Feather name="chevron-right" size={16} color={colors.textMuted} />

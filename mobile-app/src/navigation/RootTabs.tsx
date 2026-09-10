@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavigationContainer, DarkTheme, createNavigationContainerRef } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { Pressable, View } from "react-native";
+import { BackHandler, Pressable, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
 
@@ -34,6 +34,9 @@ import { CHANNEL_LABELS, type ReminderChannel } from "../notifications/reminders
 // Меню разделов живёт рядом с навигатором, а не внутри экрана, поэтому своего `navigation`
 // у него нет: переход в настройки идёт через ссылку на контейнер.
 const navRef = createNavigationContainerRef();
+
+/** Насколько глубоко помнится путь по разделам. Дальше — уже не «назад», а история. */
+const SECTION_HISTORY = 10;
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -133,13 +136,48 @@ function ScreenTabs() {
 // instead of competing for a seventh slot in the bottom bar — seven labels only
 // just fit at 320px, and an eighth does not fit at all.
 export default function RootTabs() {
-  // Раздел живёт здесь, а не в навигаторе: это не экран, на который переходят, а то, чем
-  // приложение сейчас является. Он живёт ровно столько, сколько живёт процесс: ушёл в фон и
-  // вернулся — остаёшься там, где был; закрыл приложение совсем — открывается Главная. Это
-  // не настройка, а следствие того, что раздел нигде не сохраняется, и поведение ровно то,
-  // которого от приложения ждут.
-  const [section, setSection] = useState<Section>("home");
+  /**
+   * Разделы, через которые прошли, а не один текущий.
+   *
+   * Раздел живёт здесь, а не в навигаторе: это не экран, на который переходят, а то, чем
+   * приложение сейчас является. Но кнопка «назад» на телефоне про это не знала и закрывала
+   * приложение из любого раздела — хотя человек шёл сюда через Главную и ждёт вернуться
+   * ровно туда. Поэтому переходы между разделами складываются в стопку, и «назад» снимает
+   * с неё по одному.
+   *
+   * Стопка живёт ровно столько, сколько живёт процесс: ушёл в фон и вернулся — остаёшься
+   * там, где был; закрыл приложение совсем — открывается Главная.
+   */
+  const [history, setHistory] = useState<Section[]>(["home"]);
+  const section = history[history.length - 1];
   const [menuOpen, setMenuOpen] = useState(false);
+
+  /** Открыть раздел. Повторный выбор того же самого стопку не растит. */
+  const openSection = (next: Section) =>
+    setHistory((h) => (h[h.length - 1] === next ? h : [...h, next].slice(-SECTION_HISTORY)));
+
+  /**
+   * Кнопка «назад» на телефоне.
+   *
+   * Сначала слово навигатору: пока сверху лежит открытый экран — настройки, справочник,
+   * приложение из «Экрана» — «назад» закрывает его, и это его работа. Дальше очередь
+   * разделов: снимаем верхний и возвращаемся в предыдущий. Пустая стопка — единственный
+   * случай, когда приложение действительно закрывается.
+   *
+   * Обработчик ставится позже навигационного, а система спрашивает их с конца — поэтому
+   * наш отвечает первым и обязан честно сказать «не моё», вернув false.
+   */
+  useEffect(() => {
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (navRef.isReady() && navRef.canGoBack()) return false;
+      if (history.length > 1) {
+        setHistory((h) => h.slice(0, -1));
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, [history.length]);
 
   return (
     <NavigationContainer theme={navTheme} ref={navRef}>
@@ -181,7 +219,7 @@ export default function RootTabs() {
         >
           {() =>
             section === "home" ? (
-              <HomeScreen onOpen={setSection} />
+              <HomeScreen onOpen={openSection} />
             ) : section === "sterzhen" ? (
               <Tabs />
             ) : section === "balance" ? (
@@ -226,7 +264,7 @@ export default function RootTabs() {
         visible={menuOpen}
         section={section}
         onClose={() => setMenuOpen(false)}
-        onSelect={setSection}
+        onSelect={openSection}
         onSettings={() => navRef.current?.navigate("Settings" as never)}
       />
     </NavigationContainer>
