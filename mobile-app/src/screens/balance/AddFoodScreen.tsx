@@ -289,6 +289,37 @@ export default function AddFoodScreen({
         accessibilityLabel="Поиск продукта"
       />
 
+      {/* Три способа завести то, чего в списке нет, — сразу под поиском.
+          Раньше они лежали под всеми продуктами, а их больше сотни: чтобы отсканировать
+          пачку, надо было пролистать весь свой холодильник. Иконками в одну строку, а не
+          тремя строками с подписями: место наверху экрана дорогое, а подпись под иконкой
+          говорит то же самое. «Базовый набор» остался внизу — его нажимают один раз. */}
+      <View style={styles.tools}>
+        <Tool
+          icon="maximize"
+          label="штрихкод"
+          onPress={() => setScanning(true)}
+          hint="Сканировать штрихкод"
+        />
+        <Tool
+          icon="plus"
+          label="свой"
+          onPress={() => setCreating(true)}
+          hint="Завести свой продукт"
+        />
+        <Tool
+          icon="layers"
+          label="блюдо"
+          onPress={() => setBuildingDish(true)}
+          disabled={products.length === 0}
+          hint={
+            products.length === 0
+              ? "Собрать блюдо — сначала заведи продукты"
+              : "Собрать блюдо или записать строкой"
+          }
+        />
+      </View>
+
       {foundDishes.length > 0 && (
         <>
           <Text style={styles.sectionLabel}>Блюда</Text>
@@ -371,26 +402,6 @@ export default function AddFoodScreen({
         />
       ))}
 
-      <Pressable
-        onPress={() => setCreating(true)}
-        accessibilityRole="button"
-        style={({ pressed }) => [styles.addRow, pressed && styles.pressed]}
-      >
-        <Feather name="plus" size={16} color={colors.textMuted} />
-        <Text style={styles.addText}>Свой продукт</Text>
-      </Pressable>
-
-      {/* Пачка в руке — самый быстрый способ завести продукт: цифры под полосками знают и
-          название, и состав, и вес упаковки. */}
-      <Pressable
-        onPress={() => setScanning(true)}
-        accessibilityRole="button"
-        accessibilityLabel="Сканировать штрихкод"
-        style={({ pressed }) => [styles.addRow, pressed && styles.pressed]}
-      >
-        <Feather name="maximize" size={16} color={colors.textMuted} />
-        <Text style={styles.addText}>Штрихкод с упаковки</Text>
-      </Pressable>
 
       {/* Числа справочные, и об этом сказано до нажатия, а не после: жирность творога и
           состав хлеба гуляют на десятки процентов, и набор — точка отсчёта, а не истина. */}
@@ -414,20 +425,6 @@ export default function AddFoodScreen({
         <Text style={styles.addText}>Базовый набор продуктов и блюд</Text>
       </Pressable>
 
-      <Pressable
-        onPress={() => setBuildingDish(true)}
-        disabled={products.length === 0}
-        accessibilityRole="button"
-        accessibilityLabel="Собрать блюдо"
-        style={({ pressed }) => [styles.addRow, products.length === 0 && styles.rowOff, pressed && styles.pressed]}
-      >
-        <Feather name="layers" size={16} color={colors.textMuted} />
-        <Text style={styles.addText}>
-          {products.length === 0
-            ? "Собрать блюдо — сначала заведи продукты"
-            : "Собрать блюдо или записать строкой"}
-        </Text>
-      </Pressable>
     </ScrollView>
   );
 
@@ -852,6 +849,42 @@ function DishForm({
 
 /** Новый продукт: название и четыре числа на 100 г, плюс необязательный вес порции. */
 /**
+ * Одна из трёх кнопок под поиском.
+ *
+ * Иконка с подписью в два-три символа: подпись нужна, потому что «прямоугольник со
+ * скобками» сам по себе не читается как штрихкод, а полное «Штрихкод с упаковки» в ряд из
+ * трёх не влезает. Недоступная кнопка не исчезает, а гаснет и говорит почему — исчезнувшая
+ * кнопка выглядит как поломка, а не как условие.
+ */
+function Tool({
+  icon,
+  label,
+  hint,
+  onPress,
+  disabled,
+}: {
+  icon: keyof typeof Feather.glyphMap;
+  label: string;
+  hint: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={hint}
+      accessibilityState={{ disabled: !!disabled }}
+      style={({ pressed }) => [styles.tool, disabled && styles.rowOff, pressed && styles.pressed]}
+    >
+      <Feather name={icon} size={17} color={colors.textMuted} />
+      <Text style={styles.toolText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/**
  * Форма продукта: и для своего, и для правки, и для подставленного со штрихкода.
  *
  * `draft` — это найденное в открытой базе, но ещё не сохранённое. Отдельно от `product`,
@@ -1053,6 +1086,16 @@ const styles = StyleSheet.create({
   rowDetail: { color: colors.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
   rowLabel: { color: colors.text, fontSize: 14, fontWeight: "500" },
   rowHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16 },
+  tools: { flexDirection: "row", gap: 8, marginBottom: 16 },
+  tool: {
+    flex: 1,
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    paddingVertical: 10,
+    alignItems: "center",
+    gap: 4,
+  },
+  toolText: { color: colors.textMuted, fontSize: 11 },
   addRow: {
     flexDirection: "row",
     alignItems: "center",

@@ -440,10 +440,20 @@ function MealSection({
   const total = sumNutrition(entries);
   return (
     <View style={styles.meal}>
-      <View style={styles.mealHead}>
+      {/* Само название и есть кнопка «добавить».
+          Отдельная строка «+ Добавить» под каждым приёмом занимала четыре строки экрана и
+          повторяла то, на что человек и так нажимает: в приём еду и добавляют, других
+          действий у него нет. Нажимается вся шапка целиком, вместе с числом калорий, —
+          так цель шире и попасть в неё проще, чем в одно слово. */}
+      <Pressable
+        onPress={onAdd}
+        accessibilityRole="button"
+        accessibilityLabel={`Добавить в ${MEAL_LABELS[meal].toLowerCase()}`}
+        style={({ pressed }) => [styles.mealHead, pressed && styles.pressed]}
+      >
         <Text style={styles.mealTitle}>{MEAL_LABELS[meal]}</Text>
         {entries.length > 0 && <Text style={styles.mealTotal}>{total.kcal} ккал</Text>}
-      </View>
+      </Pressable>
 
       {entries.map((e) =>
         editing === e.id ? (
@@ -469,16 +479,6 @@ function MealSection({
           </Pressable>
         ),
       )}
-
-      <Pressable
-        onPress={onAdd}
-        accessibilityRole="button"
-        accessibilityLabel={`Добавить в ${MEAL_LABELS[meal].toLowerCase()}`}
-        style={({ pressed }) => [styles.addRow, pressed && styles.pressed]}
-      >
-        <Feather name="plus" size={15} color={colors.textMuted} />
-        <Text style={styles.addText}>Добавить</Text>
-      </Pressable>
 
       {/* Завтрак у большинства людей один и тот же. Появляется, только когда вчера в этом
           приёме что-то было и сегодня в нём ещё пусто: иначе это кнопка «удвоить обед». */}
@@ -697,7 +697,9 @@ const styles = StyleSheet.create({
   weightLabel: { color: colors.textMuted, fontSize: 11 },
   weightValue: { color: colors.text, fontSize: 15, fontWeight: "600", fontVariant: ["tabular-nums"] },
   meal: { marginBottom: 16 },
-  mealHead: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
+  // Шапка приёма — теперь кнопка, и у неё должна быть высота, в которую попадает палец.
+  // Одна строка текста в четырнадцать пунктов такой высотой не является.
+  mealHead: { flexDirection: "row", alignItems: "center", paddingVertical: 8, marginBottom: 2 },
   mealTitle: { color: colors.text, fontSize: 14, fontWeight: "600", flex: 1 },
   mealTotal: { color: colors.textMuted, fontSize: 12, fontVariant: ["tabular-nums"] },
   entry: {
