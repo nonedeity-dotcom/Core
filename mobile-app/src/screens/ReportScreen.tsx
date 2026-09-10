@@ -14,7 +14,6 @@ import { useTodayKey } from "../lib/useTodayKey";
 import { useNowMinutes } from "../lib/useNowMinutes";
 import { DEFAULT_LATE_RULE, type LateRule } from "../lib/habitSchedule";
 import { weekKey, dayOfWeek, weekDatesThrough } from "../lib/week";
-import RotatingTip from "../components/RotatingTip";
 import StreakRing from "../components/StreakRing";
 import PhaseBar from "../components/PhaseBar";
 import HistoryCalendar from "../components/HistoryCalendar";
@@ -128,10 +127,6 @@ export default function ReportScreen({
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-      {/* One line, and the reasoning behind it if you tap. Steps to the next
-          one each time the app is opened. */}
-      <RotatingTip />
-
       {justCelebrated && (
         <View style={styles.celebration}>
           <Text style={styles.celebrationEmoji}>🔥</Text>

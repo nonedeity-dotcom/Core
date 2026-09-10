@@ -6,7 +6,11 @@ import { colors } from "../theme/colors";
 import TipCard from "./TipCard";
 
 /**
- * The tip at the top of the first screen you land on.
+ * Подсказка на «Главной» — единственное на том экране, что не является числом про тебя.
+ *
+ * Жила на «Отчёте», пока он и был первым экраном. С появлением «Главной» переехала туда
+ * целиком, а не разошлась по обоим: одна и та же подсказка в двух местах — это не два
+ * напоминания, а одно, показанное дважды.
  *
  * It steps forward every time you open the app and starts over at the end, so
  * the number beside it is what tells you where you are — without it the
