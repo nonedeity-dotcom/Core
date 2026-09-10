@@ -1,3 +1,4 @@
+import { goalShift, targetRate } from "../../lib/balance/calibrate";
 import { useEffect, useState } from "react";
 import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -11,7 +12,6 @@ import {
   ACTIVITY_LABELS,
   DEFAULT_PROFILE,
   GOAL_LABELS,
-  GOAL_SHIFT,
   LIMITS,
   bmr,
   normalizeProfile,
@@ -50,6 +50,24 @@ export default function BalanceProfileScreen() {
     if (stored) setDraft(stored);
     setReady(true);
   }, [isSuccess, stored, ready]);
+
+  /**
+   * Поправку по весам принимают на «Статистике», а черновик снимается один раз при открытии.
+   *
+   * Экраны вкладок не размонтируются, поэтому принятая поправка не доезжала сюда до
+   * перезапуска приложения: на «Статистике» норма уже изменилась, а профиль показывал
+   * прежнюю. Подтягивается ровно это поле — остальные правятся здесь же, и трогать их
+   * снаружи нечему.
+   */
+  useEffect(() => {
+    if (!ready || !stored) return;
+    const outside = stored.adjustKcal ?? 0;
+    setDraft((d) =>
+      (d.adjustKcal ?? 0) === outside && d.adjustedAt === stored.adjustedAt
+        ? d
+        : { ...d, adjustKcal: outside, adjustedAt: stored.adjustedAt },
+    );
+  }, [ready, stored?.adjustKcal, stored?.adjustedAt]);
 
   const save = useMutation({
     mutationFn: (p: Profile) => api.setBalanceProfile(p),
@@ -114,17 +132,29 @@ export default function BalanceProfileScreen() {
         </Text>
         <Text style={styles.formula}>
           {`Цель «${GOAL_LABELS[draft.goal].toLowerCase()}»: ${
-            GOAL_SHIFT[draft.goal] === 0
+            goalShift(draft) === 0
               ? "норма равна расходу"
-              : `${GOAL_SHIFT[draft.goal] > 0 ? "+" : "−"}${Math.abs(GOAL_SHIFT[draft.goal])} ккал`
+              : `${goalShift(draft) > 0 ? "+" : "−"}${Math.abs(goalShift(draft))} ккал — это ${
+                  Math.round(targetRate(draft).from * 100) / 100
+                }…${Math.round(targetRate(draft).to * 100) / 100} кг в неделю`
           }`}
         </Text>
+        {/* Поправка не прячется в итоговом числе: человек должен видеть, что часть нормы
+            пришла не из формулы, а с его весов. */}
+        {(draft.adjustKcal ?? 0) !== 0 && (
+          <Text style={styles.formula}>
+            {`Поправка по весам: ${(draft.adjustKcal ?? 0) > 0 ? "+" : "−"}${Math.abs(
+              draft.adjustKcal ?? 0,
+            )} ккал`}
+          </Text>
+        )}
         {/* Формула выведена на выборке, а не на вас: приложение не притворяется, что знает
             ваш обмен веществ с точностью до килокалории. */}
         <Text style={styles.caveat}>
-          Это оценка по формуле Миффлина — Сан Жеора. Попадание ±10 % считается хорошим
-          результатом, так что число — точка отсчёта, а не приговор: если вес не двигается
-          две недели, двигать надо его, а не веру в формулу.
+          Это оценка по формуле Миффлина — Сан Жеора, и разные приложения дают на одной
+          анкете числа, отличающиеся на сотни килокалорий: неизвестен не коэффициент, а
+          ваш расход. Проверяется он весами — через две недели дневника «Статистика» сравнит
+          съеденное с тем, что сделал вес, и предложит поправку.
         </Text>
       </View>
 

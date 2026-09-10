@@ -6,15 +6,18 @@
  * это оценки, и приложение говорит об этом там, где их показывает.
  */
 
+import { goalShift } from "./calibrate";
+
 export type Sex = "male" | "female";
 
-export type Goal =
-  /** TDEE + 400 */
-  | "gain"
-  /** TDEE */
-  | "keep"
-  /** TDEE − 400 */
-  | "lose";
+/**
+ * Куда цель двигает норму.
+ *
+ * Насколько именно — считает `goalShift` из веса тела и целевого темпа, а не ровная
+ * прибавка для всех: четыреста килокалорий сверху для человека в пятьдесят килограммов и
+ * для человека в сто — это две очень разные скорости.
+ */
+export type Goal = "gain" | "keep" | "lose";
 
 /** Множители к базовому обмену — пять привычных ступеней. */
 export type Activity = "sedentary" | "light" | "moderate" | "high" | "veryHigh";
@@ -49,8 +52,6 @@ export const GOAL_LABELS: Record<Goal, string> = {
   lose: "Похудение",
 };
 
-/** Сколько калорий цель прибавляет к расходу или отнимает от него. */
-export const GOAL_SHIFT: Record<Goal, number> = { gain: 400, keep: 0, lose: -400 };
 
 export interface Profile {
   sex: Sex;
@@ -62,6 +63,23 @@ export interface Profile {
   weightKg: number;
   activity: Activity;
   goal: Goal;
+  /**
+   * Поправка к норме, снятая с весов.
+   *
+   * Формула — это оценка по выборке, а не по этому человеку, и ошибается она на сотни
+   * килокалорий. Здесь лежит то, на сколько реальность разошлась с формулой: считается из
+   * съеденного и того, что за это время сделал вес, и добавляется поверх. Ноль — значит
+   * либо ещё не мерили, либо формула угадала.
+   */
+  adjustKcal?: number;
+  /**
+   * Когда поправку приняли в последний раз, "yyyy-MM-dd".
+   *
+   * Без этой даты поправку можно принять дважды подряд и уехать на четыреста килокалорий за
+   * минуту — при том, что весы с тех пор ничего нового не сказали. Новый вывод имеет смысл
+   * только на новых данных, а они копятся неделями.
+   */
+  adjustedAt?: string;
 }
 
 /** С чего начинается пустой профиль — не «правда о вас», а просто нейтральная точка. */
@@ -100,6 +118,14 @@ export function normalizeProfile(value: unknown): Profile | null {
     weightKg: Math.round(clamp(weightKg, LIMITS.weightKg.min, LIMITS.weightKg.max) * 10) / 10,
     activity: typeof v.activity === "string" && v.activity in ACTIVITY_FACTORS ? (v.activity as Activity) : "moderate",
     goal: v.goal === "gain" || v.goal === "lose" ? v.goal : "keep",
+    // Границы шире одной поправки: их может накопиться несколько, но не до бесконечности —
+    // норма, уехавшая на полторы тысячи, это уже не поправка, а сломанный профиль.
+    ...(typeof v.adjustKcal === "number" && Number.isFinite(v.adjustKcal) && Math.round(v.adjustKcal) !== 0
+      ? { adjustKcal: Math.round(clamp(v.adjustKcal, -1500, 1500)) }
+      : {}),
+    ...(typeof v.adjustedAt === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.adjustedAt)
+      ? { adjustedAt: v.adjustedAt }
+      : {}),
   };
 }
 
@@ -143,7 +169,7 @@ export const FAT_PER_KG = 1;
  * честно говорит, что цифры не сходятся и надо менять цель или коэффициент.
  */
 export function targets(p: Profile): Targets {
-  const calories = Math.max(0, tdee(p) + GOAL_SHIFT[p.goal]);
+  const calories = Math.max(0, tdee(p) + goalShift(p) + (p.adjustKcal ?? 0));
   const proteinG = Math.round(p.weightKg * PROTEIN_PER_KG);
   const fatG = Math.round(p.weightKg * FAT_PER_KG);
   const left = calories - proteinG * KCAL_PER_G.protein - fatG * KCAL_PER_G.fat;

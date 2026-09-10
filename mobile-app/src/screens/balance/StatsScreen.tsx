@@ -1,15 +1,16 @@
-import { View, Text, ScrollView, StyleSheet } from "react-native";
-import { useQuery } from "@tanstack/react-query";
+import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { colors } from "../../theme/colors";
 import { plural } from "../../lib/plural";
 import { useTodayKey } from "../../lib/useTodayKey";
-import { dateNDaysAgo, formatDateShort } from "../../lib/date";
+import { dateNDaysAgo, daysBetween, formatDateShort } from "../../lib/date";
 import { targets, type Profile } from "../../lib/balance/profile";
 import type { FoodEntry } from "../../lib/balance/food";
 import { periodStats, diaryStreak, DIARY_WINDOW_DAYS, type PeriodStats } from "../../lib/balance/stats";
 import { averageWater, formatWater, waterTarget, type WaterDay } from "../../lib/balance/water";
 import { weightTrend, latestWeight, type WeightEntry, type WeightTrend } from "../../lib/balance/weight";
+import { calibrate, MIN_DAYS, type CalibrationState } from "../../lib/balance/calibrate";
 
 /**
  * Статистика: не «сколько я съел», а «сколько я ем обычно».
@@ -36,6 +37,24 @@ export default function StatsScreen() {
     queryKey: ["weightLog"],
     queryFn: () => api.getWeightLog(),
   });
+  const qc = useQueryClient();
+  /**
+   * Принять поправку.
+   *
+   * Складывается с прежней, а не заменяет её: поправок за полгода может накопиться
+   * несколько, и каждая следующая — это уточнение к уже уточнённому, а не новая догадка с
+   * нуля.
+   */
+  const applyShift = useMutation({
+    mutationFn: (shift: number) =>
+      api.setBalanceProfile({
+        ...(profile as Profile),
+        adjustKcal: ((profile as Profile).adjustKcal ?? 0) + shift,
+        adjustedAt: today,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["balanceProfile"] }),
+  });
+
   const { data: waterLog = [] } = useQuery<WaterDay[]>({
     queryKey: ["waterLog"],
     queryFn: () => api.getWaterLog(),
@@ -52,6 +71,29 @@ export default function StatsScreen() {
   const waterGoal = profile ? waterTarget(profile) : 0;
   const weekWeight = weightTrend(weightLog, 7, today);
   const monthWeight = weightTrend(weightLog, 30, today);
+
+  /**
+   * Поверка нормы весами — за три недели, а не за семь дней.
+   *
+   * Неделя ничего не доказывает: вес за сутки гуляет на килограмм от воды и соли, и на таком
+   * окне шум перевешивает любую настоящую прибавку. Три недели — то, на чём тренд уже
+   * различим, и то, чего не жалко подождать один раз.
+   */
+  const CAL_DAYS = 21;
+  const calWindow = periodStats(entries, CAL_DAYS);
+  const calTrend = weightTrend(weightLog, CAL_DAYS, today);
+  const spanDays = entries.length > 0 ? CAL_DAYS : 0;
+  const calibration: CalibrationState | null = profile
+    ? calibrate({
+        profile,
+        days: spanDays,
+        daysLogged: calWindow.daysLogged,
+        eatenAvg: calWindow.average.kcal,
+        ratePerWeek: calTrend ? calTrend.perWeek : null,
+        weighIns: calTrend ? calTrend.points : 0,
+        daysSinceAdjust: profile.adjustedAt ? daysBetween(profile.adjustedAt, today) : null,
+      })
+    : null;
 
   // Вода тоже считается «есть что усреднять»: человек мог неделю отмечать стаканы и ни
   // разу не записать еду — показать ему пустой экран значило бы потерять то, что он вёл.
@@ -79,6 +121,10 @@ export default function StatsScreen() {
           </Text>
         )}
       </View>
+
+      {calibration && (
+        <Calibration state={calibration} onApply={(shift) => applyShift.mutate(shift)} busy={applyShift.isPending} />
+      )}
 
       <Period title="За 7 дней" stats={week} target={target} trend={weekWeight} />
       <Period title="За 30 дней" stats={month} target={target} trend={monthWeight} />
@@ -135,6 +181,113 @@ export default function StatsScreen() {
         </Text>
       )}
     </ScrollView>
+  );
+}
+
+/**
+ * Норма против весов.
+ *
+ * Единственное место в приложении, где число берётся не из формулы. Формула говорит, сколько
+ * человек предположительно тратит; здесь написано, сколько он тратит на самом деле — по
+ * тому, что он ел, и по тому, что от этого сделал вес.
+ *
+ * Пока данных мало, карточка не исчезает и не показывает пустоту: она говорит, чего именно
+ * не хватает и сколько ещё ждать. «Недостаточно данных» без числа выглядит поломкой.
+ */
+function Calibration({
+  state,
+  onApply,
+  busy,
+}: {
+  state: CalibrationState;
+  onApply: (shift: number) => void;
+  busy: boolean;
+}) {
+  if (state.status === "waiting") {
+    const parts: string[] = [];
+    if (state.needDays > 0) {
+      parts.push(`ещё ${state.needDays} ${plural(state.needDays, ["день", "дня", "дней"])}`);
+    }
+    if (state.needLogged > 0) {
+      parts.push(`${state.needLogged} ${plural(state.needLogged, ["день", "дня", "дней"])} с дневником`);
+    }
+    if (state.needWeights > 0) {
+      parts.push(`${state.needWeights} ${plural(state.needWeights, ["взвешивание", "взвешивания", "взвешиваний"])}`);
+    }
+    return (
+      <View style={styles.card}>
+        <Text style={styles.title}>Проверка нормы</Text>
+        <Text style={styles.rest}>
+          {`Норма из формулы — это оценка, и у разных приложений она разная. Проверить её можно только весами: ` +
+            `${MIN_DAYS} дней дневника рядом с регулярными взвешиваниями, и станет видно, угадала формула или нет.`}
+        </Text>
+        {parts.length > 0 && (
+          <Text style={styles.rest}>{`Не хватает: ${parts.join(", ")}.`}</Text>
+        )}
+      </View>
+    );
+  }
+
+  if (state.status === "settling") {
+    return (
+      <View style={styles.card}>
+        <Text style={styles.title}>Поправка принята</Text>
+        <Text style={styles.rest}>
+          {`Норма сдвинута на ${state.adjustKcal > 0 ? "+" : ""}${state.adjustKcal} ккал. Следующий вывод — через ` +
+            `${state.daysLeft} ${plural(state.daysLeft, ["день", "дня", "дней"])}: весы должны сперва ответить на эту поправку, ` +
+            `а на старых данных вторая поправка исправила бы ту же ошибку дважды.`}
+        </Text>
+      </View>
+    );
+  }
+
+  const d = state.data;
+  const sign = (v: number) => (v > 0 ? `+${v}` : `${v}`);
+  const kg = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(2).replace(".", ",")}`;
+  const HEAD: Record<typeof d.verdict, string> = {
+    "on-track": "Норма попадает",
+    "too-slow": "Идёт медленнее цели",
+    "too-fast": "Идёт быстрее цели",
+    "wrong-way": "Вес идёт не туда",
+  };
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.head}>
+        <Text style={styles.title}>{HEAD[d.verdict]}</Text>
+        <Text style={styles.coverage}>{`${d.daysLogged} ${plural(d.daysLogged, ["день", "дня", "дней"])} из ${d.days}`}</Text>
+      </View>
+
+      <Text style={styles.rest}>
+        {`Съедал в среднем ${d.eatenAvg} ккал, вес шёл ${kg(d.actualRate)} кг в неделю. ` +
+          `Для этой цели нужно ${kg(d.wantFrom)}…${kg(d.wantTo)}.`}
+      </Text>
+
+      {/* Главное число карточки: расход, посчитанный по факту, а не по анкете. */}
+      <Text style={styles.rest}>
+        {`Значит, тратишь около ${d.measuredTdee} ккал в день — это измерено по тебе, а не взято из формулы.`}
+      </Text>
+
+      {d.shiftKcal === 0 ? (
+        <Text style={styles.rest}>Менять нечего: ешь как ел.</Text>
+      ) : (
+        <>
+          <Pressable
+            onPress={() => onApply(d.shiftKcal)}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel={`Изменить норму на ${d.shiftKcal} ккал`}
+            style={({ pressed }) => [styles.apply, (pressed || busy) && styles.pressed]}
+          >
+            <Text style={styles.applyText}>{`Поправить норму на ${sign(d.shiftKcal)} ккал`}</Text>
+          </Pressable>
+          <Text style={styles.applyHint}>
+            Поправка ляжет поверх формулы, и её видно в профиле. Через пару недель проверь
+            снова — так норма подгоняется под тебя, а не под среднего человека из выборки.
+          </Text>
+        </>
+      )}
+    </View>
   );
 }
 
@@ -298,4 +451,14 @@ const styles = StyleSheet.create({
   trendHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 4 },
   hint: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
   footnote: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 4 },
+  apply: {
+    backgroundColor: colors.accentGreen,
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: "center",
+    marginTop: 12,
+  },
+  applyText: { color: colors.bg, fontSize: 14, fontWeight: "700" },
+  applyHint: { color: colors.textMuted, fontSize: 12, lineHeight: 17, marginTop: 8 },
+  pressed: { opacity: 0.75 },
 });
