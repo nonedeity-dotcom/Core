@@ -9,20 +9,20 @@ import { requestNotificationPermission } from "./reminders";
 import { PHASE_LABELS } from "../lib/focusPhases";
 
 /**
- * Making the phone ring when a focus phase runs out.
+ * Как телефон звонит, когда отрезок фокуса кончился.
  *
- * Two mechanisms, because one cannot cover both cases:
+ * Механизма два, потому что один оба случая не закрывает:
  *
- * - **App open.** JS is running, so the chosen file is played through expo-av and the
- *   phone vibrates. This is where a custom sound actually happens.
- * - **App backgrounded or screen off.** JS is suspended — the whole point of this timer is
- *   that the phone is face-down in another room — so nothing of ours can run at the
- *   deadline. A local notification is scheduled the moment the phase starts and cancelled
- *   if it is paused or reset. That one rings with its Android channel's sound, which the OS
- *   fixes at install time from a bundled resource: a file picked at runtime cannot be it.
+ * - **Приложение открыто.** Играет expo-av — либо выбранный файл, либо встроенный
+ *   сигнал, — и телефон вибрирует.
+ * - **Приложение в фоне или экран погашен.** Уведомление, поставленное в момент старта фазы,
+ *   звонит само: звук ему даёт канал Android, а канал берёт его из ресурса, вшитого в
+ *   сборку. Файл, выбранный на телефоне, каналом стать не может — поэтому вне приложения
+ *   звучит встроенный сигнал, и это единственное, на что можно положиться, когда телефон
+ *   лежит в другой комнате.
  *
- * So a chosen sound is what you hear with the app in front of you, and the notification is
- * what reaches you when it isn't. Both vibrate.
+ * Канал звонит через **поток будильника**, а не уведомлений: у телефона на вибрации
+ * уведомления беззвучны, а будильник — нет. Ради того же стоит `enforceAudibility`.
  */
 
 const SOUNDS_KEY = "focus-sounds-v1";
@@ -41,7 +41,17 @@ const SCHEDULED_KEY = "focus-chime-ids-v1";
  * заведённый прошлой сборкой тихим, останется тихим, сколько его ни переписывай. Единственный
  * способ починить звук — завести новый канал, поэтому у имени есть номер.
  */
-export const CHANNEL_ID = "focus-timer-v2";
+export const CHANNEL_ID = "focus-timer-v3";
+
+/**
+ * Встроенный сигнал — тот же и в уведомлении, и в приложении.
+ *
+ * У канала он лежит в `res/raw` (кладёт туда плагин `expo-notifications`, см. `app.json`),
+ * и обращаются к нему по имени файла. Здесь — тот же файл как ресурс Metro, чтобы звук с
+ * открытым приложением и звук из кармана не разъезжались.
+ */
+const ALARM_RESOURCE = "focus_alarm.wav";
+const ALARM_ASSET = require("../../assets/focus_alarm.wav");
 
 /** Where a picked file is copied to, so it survives the picker's temp cache being cleared. */
 const SOUND_DIR = FileSystem.documentDirectory ? `${FileSystem.documentDirectory}focus-sounds/` : null;
@@ -176,7 +186,9 @@ export async function playPhaseChime(phase: FocusPhase): Promise<"played" | "vib
 
   const sounds = await getFocusSounds();
   const chosen = sounds[phase];
-  if (!chosen) return "vibrated";
+  // Ничего не выбрано — звучит встроенный сигнал, а не тишина. Раньше здесь был выход
+  // с одной вибрацией, и «звука нет» начиналось ровно отсюда.
+  const source = chosen ? { uri: chosen.uri } : ALARM_ASSET;
 
   try {
     await Audio.setAudioModeAsync({
@@ -186,7 +198,7 @@ export async function playPhaseChime(phase: FocusPhase): Promise<"played" | "vib
       shouldDuckAndroid: false,
     });
     await stopCurrent();
-    const { sound } = await Audio.Sound.createAsync({ uri: chosen.uri }, { shouldPlay: true, volume: 1 });
+    const { sound } = await Audio.Sound.createAsync(source, { shouldPlay: true, volume: 1 });
     current = sound;
     sound.setOnPlaybackStatusUpdate((status) => {
       if ("didJustFinish" in status && status.didJustFinish) void stopCurrent();
@@ -215,9 +227,20 @@ export async function ensureChimeChannel(): Promise<void> {
   try {
     await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
       name: "Таймер фокуса",
-      importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 400, 200, 400],
-      sound: "default",
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 500, 250, 500, 250, 700],
+      sound: ALARM_RESOURCE,
+      audioAttributes: {
+        // Поток будильника, а не уведомлений. У телефона, переведённого на вибрацию,
+        // уведомления молчат — а будильник звучит, и громкость у него своя.
+        usage: Notifications.AndroidAudioUsage.ALARM,
+        contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+        flags: {
+          // «Прозвучать, даже если звук выключен» — то, ради чего таймер и заводят.
+          enforceAudibility: true,
+          requestHardwareAudioVideoSynchronization: false,
+        },
+      },
       enableVibrate: true,
     });
   } catch {

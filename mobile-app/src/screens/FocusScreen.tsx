@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { View, Text, Pressable, TextInput, Modal, ScrollView, StyleSheet } from "react-native";
+import { AppState, View, Text, Pressable, TextInput, Modal, ScrollView, StyleSheet } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { Feather } from "@expo/vector-icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -182,11 +182,30 @@ export default function FocusScreen() {
     setShowReward(true); // offline-progress step, now alongside a break already running
   };
 
-  const beginRing = (source: FocusPhase) => {
-    // We got here with the app open, so the notification armed for this deadline would only
-    // duplicate the chime about to play.
-    void cancelChime(source);
-    void playPhaseChime(source);
+  /**
+   * Кто звонит — приложение или уведомление — решается здесь, и решается по двум признакам:
+   * смотрит ли человек на экран и стоит ли на эту фазу будильник.
+   *
+   * Раньше здесь безусловно стояла отмена уведомления с объяснением «мы всё равно тут, с
+   * открытым приложением». Объяснение было неверным. На Android JS продолжает тикать и с
+   * приложением в фоне: таймер честно досчитывал до нуля в кармане, попадал сюда — и снимал
+   * будильник, который как раз и должен был прозвенеть. Играть после этого было некому:
+   * фоновому expo-av система звук не даёт. Отсюда «звука нет, когда я вне приложения».
+   *
+   * Теперь уведомление отменяется только тогда, когда приложение впереди и звук точно
+   * прозвучит. В фоне и с погашенным экраном оно остаётся — это единственное, что доходит
+   * до телефона в другой комнате.
+   *
+   * `armed` здесь обязателен. Без разрешения на уведомления отменять нечего и ждать нечего:
+   * тогда играем сами, даже из фона, — вибрация и, если повезёт, звук лучше, чем тишина в
+   * расчёте на будильник, которого нет.
+   */
+  const beginRing = (source: FocusPhase, armed: boolean) => {
+    const systemWillRing = armed && AppState.currentState !== "active";
+    if (!systemWillRing) {
+      void cancelChime(source);
+      void playPhaseChime(source);
+    }
     clearRingTimers();
     setRinging(source);
     setRingLeft(Math.round(RING_TIMEOUT_MS / 1000));
@@ -199,14 +218,18 @@ export default function FocusScreen() {
   useEffect(() => {
     cycleEndRef.current = () => {
       const finished = phase;
+      // Снимок до сброса: дальше на экране будильника уже нет, а решать, кто звонит, надо
+      // по тому, стоял ли он на только что закончившейся фазе.
+      const wasArmed = alarmArmed === true;
       setAlarmArmed(null);
       if (countsAsSession(finished)) logSession.mutate(phaseMinutes(intervals, finished));
       setPhase(nextCyclePhase(finished));
-      beginRing(finished);
+      beginRing(finished, wasArmed);
     };
     boredomEndRef.current = () => {
+      const wasArmed = boredomArmed === true;
       setBoredomArmed(null);
-      beginRing("boredom");
+      beginRing("boredom", wasArmed);
     };
   });
 
@@ -567,7 +590,7 @@ export default function FocusScreen() {
                     {PHASE_LABELS[p].slice(1)}
                   </Text>
                   <Text style={styles.soundName} numberOfLines={1}>
-                    {picking === p ? "выбираешь…" : chosen ? chosen.name : "только вибрация"}
+                    {picking === p ? "выбираешь…" : chosen ? chosen.name : "встроенный сигнал"}
                   </Text>
                 </View>
                 {chosen && (
@@ -609,8 +632,9 @@ export default function FocusScreen() {
               app, and only this app can play it. */}
           <Text style={styles.editorNote}>
             Свой файл звучит, пока приложение открыто. Если телефон заблокирован или ты вышел
-            из приложения, звонит уведомление — у него системный звук, его файлом не заменить.
-            Вибрация работает в обоих случаях.
+            из приложения, звонит уведомление — у него встроенный сигнал, и заменить его
+            своим файлом Android не даёт. Звонит он через будильник, а не через уведомления:
+            телефон на вибрации его не заглушит.
           </Text>
         </View>
       )}
