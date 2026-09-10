@@ -4,6 +4,7 @@ import { getAppInfo, hasUsageAccess, queryRawEvents } from "../../modules/creker
 import {
   buildIntervals,
   buildScreenOnIntervals,
+  clipIntervals,
   countLaunches,
   countUnlocks,
   launchEvents,
@@ -17,6 +18,7 @@ import {
   type HourlyValue,
 } from "../lib/screen/sessions";
 import type { AppDay, ScreenDay } from "../lib/screen/usage";
+import { isEmptyHourlyDay, seriesFor, type HourlyDay } from "../lib/screen/hours";
 
 /**
  * Приложение считает экранное время само.
@@ -99,6 +101,9 @@ export async function resolveAppInfo(packages: string[]): Promise<Record<string,
  * происходило, и когда доступ отобрали, а разница между «нулевой день» и «день, который
  * никто не мерил» — это ровно то, ради чего хранится отметка досчитанности.
  */
+/** Ряд из двадцати четырёх чисел — то, что хранится, вместо пар «час — значение». */
+const values = (row: HourlyValue[]): number[] => row.map((h) => h.value);
+
 export async function syncUsage(nowMs = Date.now()): Promise<UsageSyncResult> {
   if (!hasUsageAccess()) return { days: 0, events: 0, denied: true };
 
@@ -128,6 +133,33 @@ export async function syncUsage(nowMs = Date.now()): Promise<UsageSyncResult> {
   // Названия берутся из кэша, а недостающие — у системы. Иконка рисуется один раз на
   // приложение, а не на каждый показ списка.
   const cache = await resolveAppInfo(appRows.map((r) => r.packageName));
+
+  // Почасовая картина считается здесь же, пока события ещё живы, и сохраняется рядом с
+  // итогом дня: система держит подробные события считанные дни, а посмотреть на прошлый
+  // месяц по часам хочется и позже. Домашний экран отделяется тем же справочником, что и
+  // в дневных числах, — иначе график и список разошлись бы.
+  const home = new Set(
+    Object.entries(cache)
+      .filter(([, info]) => info.isHome)
+      .map(([packageName]) => packageName),
+  );
+  const opened = launchEvents(events).filter((e) => !home.has(e.packageName));
+  const hours: HourlyDay[] = [];
+  for (let back = REBUILD_DAYS - 1; back >= 0; back--) {
+    const date = dateNDaysAgo(back);
+    const [dy, dm, dd] = date.split("-").map(Number);
+    const dayStart = new Date(dy, dm - 1, dd).getTime();
+    const dayEnd = new Date(dy, dm - 1, dd + 1).getTime();
+    const day: HourlyDay = {
+      date,
+      screen: values(toHourlyUsage(clipIntervals(screenIntervals, dayStart, dayEnd))),
+      apps: values(toHourlyUsage(clipIntervals(intervals.filter((i) => !home.has(i.packageName)), dayStart, dayEnd))),
+      launches: values(toHourlyLaunches(opened, dayStart, dayEnd)),
+      unlocks: values(toHourlyUnlocks(events, dayStart, dayEnd)),
+    };
+    if (!isEmptyHourlyDay(day)) hours.push(day);
+  }
+  await api.mergeHourlyDays(hours);
 
   const apps: AppDay[] = appRows.map((row) => ({
     date: row.date,
@@ -168,10 +200,13 @@ export const METRIC_LABELS: Record<Metric, string> = {
 /**
  * Почасовая разбивка одного дня.
  *
- * Считается на лету из системных событий, а не берётся из хранилища: подробные события
- * система держит считанные дни, и почасовая картина существует ровно для них. Для дня, по
- * которому событий уже нет, честный ответ — `null`, а не двадцать четыре нуля: разница между
- * «в эти часы не пользовался» и «эти часы никто не помнит» здесь и есть весь смысл.
+ * Сначала спрашивается хранилище: разбивка посчитана в тот день, когда события были живы, и
+ * с тех пор лежит рядом с итогом. Дальше — живые события, для дня, который ещё не успели
+ * посчитать, и для отдельного приложения: по приложениям почасовая история не хранится.
+ *
+ * Для дня, о котором не знает ни хранилище, ни система, честный ответ — `null`, а не
+ * двадцать четыре нуля: разница между «в эти часы не пользовался» и «эти часы никто не
+ * помнит» здесь и есть весь смысл.
  *
  * «Телефон» считается вычитанием: всё экранное время минус то, что забрали приложения. Это
  * то же определение, что и в дневных числах, — иначе график и список говорили бы разное.
@@ -183,6 +218,10 @@ export async function hourlyFor(
   homePackages: string[] = [],
   packageName?: string,
 ): Promise<HourlyValue[] | null> {
+  if (!packageName) {
+    const stored = await api.getHourlyDay(date);
+    if (stored) return seriesFor(stored, scope, metric);
+  }
   if (!hasUsageAccess()) return null;
   const [y, m, d] = date.split("-").map(Number);
   const startMs = new Date(y, m - 1, d).getTime();
@@ -198,12 +237,15 @@ export async function hourlyFor(
     // У «телефона» заходы — это разблокировки, и по часам тоже: иначе график и крупное
     // число под ним считали бы разные вещи.
     if (scope === "phone" && !packageName) return toHourlyUnlocks(events, startMs, endMs);
-    const opened = launchEvents(events).filter((e) => {
-      if (packageName) return e.packageName === packageName;
-      return scope !== "apps" || !home.has(e.packageName);
-    });
+    const opened = launchEvents(events).filter((e) =>
+      packageName ? e.packageName === packageName : !home.has(e.packageName),
+    );
     // Отбор уже сделан, дедупликация внутри повторно ничего не изменит.
-    return toHourlyLaunches(opened, startMs, endMs);
+    const launches = toHourlyLaunches(opened, startMs, endMs);
+    if (scope !== "all" || packageName) return launches;
+    // «Общий» — это заходы в приложения плюс разблокировки, ровно как в крупном числе.
+    const unlocks = toHourlyUnlocks(events, startMs, endMs);
+    return launches.map((h, i) => ({ hour: h.hour, value: h.value + (unlocks[i]?.value ?? 0) }));
   }
 
   const foreground = buildIntervals(events, startMs, endMs, nowMs);

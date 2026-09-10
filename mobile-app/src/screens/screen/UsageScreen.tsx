@@ -453,17 +453,23 @@ export default function UsageScreen({
               </View>
               <ChartToggle kind={chart} onChange={setChart} />
             </View>
-            {single ? (
-              hourly ? (
-                <ValueChart points={hourPoints} kind={chart} counts={metric === "launches"} />
-              ) : (
+            {/* У дня без почасовой картины рисуется он сам одним столбиком: пустое место
+                на месте графика читается как «данных нет», хотя итог за день известен. */}
+            {single && !hourly ? (
+              <>
+                <ValueChart points={dayPoints} kind={chart} counts={metric === "launches"} />
                 <Text style={styles.hint}>
-                  Почасовая картина есть только у последних дней: подробные события система
-                  хранит недолго, а итог за день сохраняется навсегда.
+                  По часам этот день не сохранился: подробные события система хранит
+                  несколько суток, и всё, что старше начала измерений, осталось только
+                  итогом за сутки.
                 </Text>
-              )
+              </>
             ) : (
-              <ValueChart points={dayPoints} kind={chart} counts={metric === "launches"} />
+              <ValueChart
+                points={single ? hourPoints : dayPoints}
+                kind={chart}
+                counts={metric === "launches"}
+              />
             )}
           </View>
 

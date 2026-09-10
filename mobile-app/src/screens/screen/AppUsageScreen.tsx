@@ -144,15 +144,16 @@ export default function AppUsageScreen({
         <View style={styles.chartHead}>
           <ChartToggle kind={chart} onChange={setChart} />
         </View>
-        {single ? (
-          hourly ? (
-            <ValueChart points={hourPoints} kind={chart} counts={metric === "launches"} />
-          ) : (
+        {single && !hourly ? (
+          <>
+            <ValueChart points={dayPoints} kind={chart} counts={metric === "launches"} />
             <Text style={styles.hint}>
-              Почасовая картина есть только у последних дней: подробные события система хранит
-              недолго, а итог за день сохраняется навсегда.
+              По часам этот день не сохранился: подробные события система хранит несколько
+              суток, а по отдельному приложению разбивка и вовсе живёт только эти дни.
             </Text>
-          )
+          </>
+        ) : single ? (
+          <ValueChart points={hourPoints} kind={chart} counts={metric === "launches"} />
         ) : (
           <>
             <ValueChart

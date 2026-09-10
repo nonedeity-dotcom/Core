@@ -274,6 +274,22 @@ export function measuredThroughMs(date: string, nowMs: number): number {
 }
 
 /** Одно значение на час суток. */
+/**
+ * Куски интервалов, попавшие в окно, обрезанные по его краям.
+ *
+ * Нужно, чтобы разложить по часам один день из пачки, посчитанной сразу за несколько:
+ * сессия, начавшаяся вчера в 23:50, принадлежит обоим дням, и каждому — своей частью.
+ */
+export function clipIntervals(intervals: Interval[], startMs: number, endMs: number): Interval[] {
+  const out: Interval[] = [];
+  for (const interval of intervals) {
+    const from = Math.max(interval.startMs, startMs);
+    const to = Math.min(interval.endMs, endMs);
+    if (to > from) out.push({ packageName: interval.packageName, startMs: from, endMs: to });
+  }
+  return out;
+}
+
 export interface HourlyValue {
   hour: number;
   value: number;
@@ -282,10 +298,9 @@ export interface HourlyValue {
 /**
  * Интервалы, разложенные по 24 часам суток, — для графика одного дня.
  *
- * Считается на лету из системных событий, а не хранится: система держит подробные события
- * считанные дни, и почасовая разбивка существует ровно для них. Хранить её за всю историю
- * значило бы хранить в двадцать четыре раза больше ради экрана, который открывают на
- * сегодняшнем дне.
+ * Считается из системных событий, пока они ещё живы; результат сохраняется рядом с итогом
+ * дня (см. `hours.ts`), потому что события система держит считанные дни, а посмотреть на
+ * прошлый месяц по часам хочется и позже.
  */
 export function toHourlyUsage(intervals: Interval[]): HourlyValue[] {
   const totals = new Array<number>(24).fill(0);

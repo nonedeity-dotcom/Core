@@ -22,6 +22,7 @@ import { normalizeLateRule, normalizeSchedule } from "./habitSchedule";
 import { normalizeProfile } from "./balance/profile";
 import { normalizeDish, normalizeEntry, normalizeProduct } from "./balance/food";
 import { normalizeWeightEntry } from "./balance/weight";
+import { normalizeHourlyDay } from "./screen/hours";
 import { normalizeAppDay, normalizeScreenDay } from "./screen/usage";
 import type {
   Habit,
@@ -257,6 +258,10 @@ function parseData(raw: unknown): BackupData {
     screenApps: list(d.screenApps)
       .map(normalizeAppDay)
       .filter((x): x is NonNullable<ReturnType<typeof normalizeAppDay>> => x !== null),
+    // Отсутствует в файлах, записанных до почасовой истории.
+    screenHours: list(d.screenHours)
+      .map(normalizeHourlyDay)
+      .filter((x): x is NonNullable<ReturnType<typeof normalizeHourlyDay>> => x !== null),
   };
 }
 

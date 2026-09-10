@@ -23,6 +23,7 @@ import { normalizeDish, normalizeEntry, normalizeProduct, type Dish, type FoodEn
 import { normalizeWeightEntry, type WeightEntry } from "../lib/balance/weight";
 import { CATALOG_DISHES, CATALOG_PRODUCTS } from "../lib/balance/catalog";
 import { normalizeAppDay, normalizeScreenDay, type AppDay, type ScreenDay } from "../lib/screen/usage";
+import { isEmptyHourlyDay, normalizeHourlyDay, type HourlyDay } from "../lib/screen/hours";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -60,6 +61,7 @@ const KEYS = {
   screenImportedThrough: "screen-imported-through-v1",
   screenLastSync: "screen-last-sync-v1",
   screenAppInfo: "screen-app-info-v1",
+  screenHours: "screen-hours-v1",
 };
 
 export interface CalendarPrefs {
@@ -883,6 +885,42 @@ export const api = {
     return { days: wroteDays, apps: wroteApps };
   },
 
+  /**
+   * Почасовая картина дней: считается, пока живы системные события, и живёт дальше сама.
+   *
+   * Пустые дни не хранятся: двадцать четыре нуля ничем не отличаются от отсутствия записи,
+   * а место занимают. День, про который записи нет, честно значит «по часам неизвестно».
+   */
+  async getHourlyDays(from: string, to: string): Promise<HourlyDay[]> {
+    const raw = await read<unknown[]>(KEYS.screenHours, []);
+    return (Array.isArray(raw) ? raw : [])
+      .map(normalizeHourlyDay)
+      .filter((d): d is HourlyDay => d !== null && inRange(d.date, from, to))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  },
+  async getHourlyDay(date: string): Promise<HourlyDay | null> {
+    const rows = await this.getHourlyDays(date, date);
+    return rows[0] ?? null;
+  },
+  async mergeHourlyDays(rows: HourlyDay[]): Promise<number> {
+    if (rows.length === 0) return 0;
+    return withKeyLock(KEYS.screenHours, async () => {
+      const stored = await read<unknown[]>(KEYS.screenHours, []);
+      const byDate = new Map(
+        (Array.isArray(stored) ? stored : [])
+          .map(normalizeHourlyDay)
+          .filter((d): d is HourlyDay => d !== null)
+          .map((d) => [d.date, d] as const),
+      );
+      for (const row of rows) {
+        if (isEmptyHourlyDay(row)) byDate.delete(row.date);
+        else byDate.set(row.date, row);
+      }
+      await write(KEYS.screenHours, [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)));
+      return rows.length;
+    });
+  },
+
   /** Докуда история уже перенесена. Пусто — не переносили ни разу. */
   async getScreenImportedThrough(): Promise<string | null> {
     const value = await read<string | null>(KEYS.screenImportedThrough, null);
@@ -1221,6 +1259,8 @@ export interface BackupData {
   /** Экранное время по дням и по приложениям. Без них копия теряет всю историю «Экрана». */
   screenDays: ScreenDay[];
   screenApps: AppDay[];
+  /** Почасовая картина дней. Отсутствует в файлах, записанных до неё. */
+  screenHours: HourlyDay[];
 }
 
 /** What an import actually changed, so the UI can report it honestly. */
@@ -1264,7 +1304,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight, screenDays, screenApps] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight, screenDays, screenApps, screenHours] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -1290,6 +1330,7 @@ export async function exportData(): Promise<BackupData> {
       read<WeightEntry[]>(KEYS.balanceWeight, []),
       read<ScreenDay[]>(KEYS.screenDays, []),
       read<AppDay[]>(KEYS.screenApps, []),
+      read<HourlyDay[]>(KEYS.screenHours, []),
     ]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -1316,6 +1357,7 @@ export async function exportData(): Promise<BackupData> {
     balanceWeight,
     screenDays,
     screenApps,
+    screenHours,
   };
 }
 
@@ -1347,6 +1389,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.balanceWeight, data.balanceWeight),
       write(KEYS.screenDays, data.screenDays),
       write(KEYS.screenApps, data.screenApps),
+      write(KEYS.screenHours, data.screenHours ?? []),
     ]);
     return {
       habits: data.habits.length,
@@ -1636,6 +1679,28 @@ export async function mergeData(data: BackupData): Promise<ImportStats> {
       stats.screen++;
     }
     if (appsChanged) await write(KEYS.screenApps, screenApps);
+
+    // Почасовая картина: чужой день берётся, только если своего нет. Пересчитать её задним
+    // числом нельзя ни здесь, ни там, так что спорить о том, чей день вернее, нечем — а
+    // затирать свой, посчитанный по своим же событиям, тем более незачем.
+    const hours = await read<unknown[]>(KEYS.screenHours, []);
+    const hourByDate = new Map(
+      (Array.isArray(hours) ? hours : [])
+        .map(normalizeHourlyDay)
+        .filter((d): d is HourlyDay => d !== null)
+        .map((d) => [d.date, d] as const),
+    );
+    let hoursChanged = false;
+    for (const raw of data.screenHours ?? []) {
+      const day = normalizeHourlyDay(raw);
+      if (!day || isEmptyHourlyDay(day) || hourByDate.has(day.date)) continue;
+      hourByDate.set(day.date, day);
+      hoursChanged = true;
+      stats.screen++;
+    }
+    if (hoursChanged) {
+      await write(KEYS.screenHours, [...hourByDate.values()].sort((a, b) => a.date.localeCompare(b.date)));
+    }
 
     // The screen-time limit is a setting of *this* phone, not history — merging
     // deliberately leaves it alone.
