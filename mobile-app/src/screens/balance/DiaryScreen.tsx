@@ -451,7 +451,15 @@ function MealSection({
         accessibilityLabel={`Добавить в ${MEAL_LABELS[meal].toLowerCase()}`}
         style={({ pressed }) => [styles.mealHead, pressed && styles.pressed]}
       >
-        <Text style={styles.mealTitle}>{MEAL_LABELS[meal]}</Text>
+        {/* Уголок стоит вплотную к слову, а не у правого края.
+            У правого края он читался бы как «раскрыть список», а нажимается здесь само
+            название: знак должен сидеть на том, что нажимают. Обёртка тянется на всю
+            ширину, но её содержимое прижато к началу — поэтому уголок едет вместе с длиной
+            слова, а число калорий остаётся справа. */}
+        <View style={styles.mealName}>
+          <Text style={styles.mealTitle}>{MEAL_LABELS[meal]}</Text>
+          <Feather name="chevron-right" size={15} color={colors.textMuted} />
+        </View>
         {entries.length > 0 && <Text style={styles.mealTotal}>{total.kcal} ккал</Text>}
       </Pressable>
 
@@ -700,7 +708,10 @@ const styles = StyleSheet.create({
   // Шапка приёма — теперь кнопка, и у неё должна быть высота, в которую попадает палец.
   // Одна строка текста в четырнадцать пунктов такой высотой не является.
   mealHead: { flexDirection: "row", alignItems: "center", paddingVertical: 8, marginBottom: 2 },
-  mealTitle: { color: colors.text, fontSize: 14, fontWeight: "600", flex: 1 },
+  // Ширину держит обёртка `mealName`, а не сам текст: с `flex: 1` на тексте уголок
+  // отъезжал бы к правому краю, то есть ровно туда, откуда его просили убрать.
+  mealName: { flexDirection: "row", alignItems: "center", gap: 2, flex: 1 },
+  mealTitle: { color: colors.text, fontSize: 14, fontWeight: "600" },
   mealTotal: { color: colors.textMuted, fontSize: 12, fontVariant: ["tabular-nums"] },
   entry: {
     flexDirection: "row",
