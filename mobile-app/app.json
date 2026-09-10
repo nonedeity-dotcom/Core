@@ -10,7 +10,7 @@
     "icon": "./assets/icon.png",
     "splash": {
       "image": "./assets/splash.png",
-      "backgroundColor": "#12151a"
+      "backgroundColor": "#040406"
     },
     "ios": {
       "supportsTablet": false,
@@ -28,7 +28,7 @@
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#12151a"
+        "backgroundColor": "#040406"
       }
     },
     "plugins": [
