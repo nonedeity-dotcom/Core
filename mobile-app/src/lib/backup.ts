@@ -237,7 +237,7 @@ function parseData(raw: unknown): BackupData {
     // Missing from files written before the reference was editable.
     tipPrefs: normalizeTipPrefs(d.tipPrefs),
     lateRule: normalizeLateRule(d.lateRule),
-    // Отсутствует во всех файлах, записанных до «Баланса».
+    // Отсутствует во всех файлах, записанных до CaloriX.
     balanceProfile: normalizeProfile(d.balanceProfile),
     balanceProducts: list(d.balanceProducts)
       .map(normalizeProduct)

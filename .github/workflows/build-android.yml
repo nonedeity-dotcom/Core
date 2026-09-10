@@ -60,7 +60,7 @@ jobs:
           // everything off the applicationId, so without this the test build would replace
           // the app being used every day — which is exactly what a test build must not do.
           if (process.env.GITHUB_REF_NAME !== "claude/tracker-app-demo-8eowpg") {
-            j.expo.name = "Стержень (тест)";
+            j.expo.name = "Sterzhen (тест)";
             j.expo.android.package = "com.yourcompany.noburnout.dev";
           }
 
@@ -98,12 +98,12 @@ jobs:
         run: |
           if [ "$GITHUB_REF_NAME" = "claude/tracker-app-demo-8eowpg" ]; then
             echo "tag=android-build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-            echo "title=Стержень — сборка ${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-            echo "note=Обычная сборка «Стержня»." >> "$GITHUB_OUTPUT"
+            echo "title=Sterzhen — сборка ${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "note=Обычная сборка Sterzhen." >> "$GITHUB_OUTPUT"
           else
             echo "tag=test-build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-            echo "title=Стержень (тест) — сборка ${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-            echo "note=Отдельное приложение: ставится рядом с обычным «Стержнем» и не трогает его данные." >> "$GITHUB_OUTPUT"
+            echo "title=Sterzhen (тест) — сборка ${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "note=Отдельное приложение: ставится рядом с обычным Sterzhen и не трогает его данные." >> "$GITHUB_OUTPUT"
           fi
 
       - name: Publish release with APK

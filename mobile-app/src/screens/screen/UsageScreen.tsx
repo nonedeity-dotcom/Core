@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Image, View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
+import * as Application from "expo-application";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type AppInfoEntry } from "../../api/client";
 import { colors } from "../../theme/colors";
@@ -42,6 +43,17 @@ import PeriodBar from "../../components/screen/PeriodBar";
 const SCOPES: Scope[] = ["all", "apps", "phone"];
 const SORTS: Metric[] = ["time", "launches"];
 /** Условный пакет строки «Телефон» — своего у неё нет, она собрана из нескольких. */
+/**
+ * Как приложение называется на телефоне.
+ *
+ * В системном списке доступа оно стоит под своим именем, а имён у него два: обычное и
+ * «(тест)» у сборки, которая ставится рядом. Спросить систему надёжнее, чем угадать: под
+ * тем же именем человек его и ищет.
+ */
+function appName(): string {
+  return Application.applicationName ?? "Sterzhen";
+}
+
 const PHONE = "__phone__";
 
 /**
@@ -378,8 +390,7 @@ export default function UsageScreen({
             <Text style={styles.primaryText}>Открыть настройки</Text>
           </Pressable>
           <Text style={styles.footnote}>
-            Найди «Стержень (тест)» в списке и включи переключатель. Вернувшись сюда,
-            приложение пересчитает само.
+            {`Найди «${appName()}» в списке и включи переключатель. Вернувшись сюда, приложение пересчитает само.`}
           </Text>
         </View>
       )}

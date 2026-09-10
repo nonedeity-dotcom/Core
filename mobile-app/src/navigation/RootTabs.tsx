@@ -77,7 +77,7 @@ function Tabs() {
 }
 
 /**
- * «Баланс» — второй раздел приложения, со своим набором вкладок.
+ * CaloriX — второй раздел приложения, со своим набором вкладок.
  *
  * Три вкладки в порядке от ежедневного к разовому: дневник открывают каждый день,
  * статистику — раз в неделю посмотреть, куда всё идёт, а профиль настраивают один раз и
@@ -95,7 +95,7 @@ function BalanceTabs() {
         tabBarItemStyle: { paddingHorizontal: 0 },
       }}
     >
-      {/* Дневник первым: за ним открывают «Баланс» каждый день, а профиль настраивают раз. */}
+      {/* Дневник первым: за ним открывают CaloriX каждый день, а профиль настраивают раз. */}
       <Tab.Screen name="Дневник" component={DiaryScreen} options={{ tabBarIcon: icon("book-open") }} />
       <Tab.Screen name="Статистика" component={BalanceStatsScreen} options={{ tabBarIcon: icon("trending-up") }} />
       <Tab.Screen name="Профиль" component={BalanceProfileScreen} options={{ tabBarIcon: icon("user") }} />
@@ -129,7 +129,7 @@ function ScreenTabs() {
 export default function RootTabs() {
   // Раздел живёт здесь, а не в навигаторе: это не экран, на который переходят, а то, чем
   // приложение сейчас является. Не запоминается между запусками — открывается всегда на
-  // «Стержне», потому что открывают приложение ради него.
+  // Sterzhen, потому что открывают приложение ради него.
   const [section, setSection] = useState<Section>("sterzhen");
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -163,7 +163,7 @@ export default function RootTabs() {
             ),
             headerRight: () => (
               <View style={{ flexDirection: "row", alignItems: "center" }}>
-                {/* Кнопка обновления читает creker и относится только к «Стержню». */}
+                {/* Кнопка обновления читает creker и относится только к Sterzhen. */}
                 {section === "sterzhen" && <HeaderRefresh />}
                 <Pressable
                   onPress={() => navigation.navigate("Settings")}

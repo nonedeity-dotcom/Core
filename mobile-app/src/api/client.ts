@@ -606,7 +606,7 @@ export const api = {
   },
 
   /**
-   * «Баланс»: рост, вес, возраст и цель, из которых считаются нормы.
+   * CaloriX: рост, вес, возраст и цель, из которых считаются нормы.
    *
    * null, пока не заполнен — считать не по чему, и половина норм хуже, чем честная просьба
    * дозаполнить.
@@ -619,7 +619,7 @@ export const api = {
     return { ok: true as const };
   },
 
-  /** Свои продукты — всё, что есть у «Баланса»: встроенной базы нет. */
+  /** Свои продукты — всё, что есть у CaloriX: встроенной базы нет. */
   async getFoodProducts(): Promise<FoodProduct[]> {
     const raw = await read<unknown[]>(KEYS.balanceProducts, []);
     return (Array.isArray(raw) ? raw : []).map(normalizeProduct).filter((p): p is FoodProduct => p !== null);
@@ -1249,7 +1249,7 @@ export interface BackupData {
   tipPrefs: TipPrefs;
   /** What a missed window costs. Absent from older files, which import as "ничего". */
   lateRule: LateRule;
-  /** «Баланс»: the profile the day's targets are worked out from. null until it is filled in. */
+  /** CaloriX: the profile the day's targets are worked out from. null until it is filled in. */
   balanceProfile: Profile | null;
   balanceProducts: FoodProduct[];
   balanceFoodLog: FoodEntry[];
@@ -1272,7 +1272,7 @@ export interface ImportStats {
   rewards: number;
   reviews: number;
   tasks: number;
-  /** Записи «Баланса»: продукты, блюда, съеденное и взвешивания вместе. */
+  /** Записи CaloriX: продукты, блюда, съеденное и взвешивания вместе. */
   balance: number;
   /** Дни и строки «Экрана». */
   screen: number;
@@ -1557,7 +1557,7 @@ export async function mergeData(data: BackupData): Promise<ImportStats> {
     }
     if (habitFreezesChanged) await write(KEYS.habitFreezes, habitFreezes);
 
-    // --- «Баланс» ---
+    // --- CaloriX ---
     //
     // Раньше этого блока не было вовсе: файл содержал и продукты, и съеденное, и блюда, а
     // «Объединить» их молча не читало. Экспорт обещал полную копию, импорт половину терял.

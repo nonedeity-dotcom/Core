@@ -37,8 +37,8 @@ export default function SectionMenu({
   extra?: MenuItem[];
 }) {
   const sections: { id: Section; title: string; hint: string; icon: MenuItem["icon"] }[] = [
-    { id: "sterzhen", title: "Стержень", hint: "Привычки, фокус, энергия", icon: "check-square" },
-    { id: "balance", title: "Баланс", hint: "Калории и белок за день", icon: "pie-chart" },
+    { id: "sterzhen", title: "Sterzhen", hint: "Привычки, фокус, энергия", icon: "check-square" },
+    { id: "balance", title: "CaloriX", hint: "Калории и белок за день", icon: "pie-chart" },
     { id: "screen", title: "Экран", hint: "Сколько времени и в чём", icon: "smartphone" },
   ];
 

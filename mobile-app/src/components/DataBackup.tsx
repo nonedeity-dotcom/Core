@@ -45,10 +45,10 @@ function describeImport(stats: ImportStats, mode: ImportMode): string {
     `${stats.habitLog} ${plural(stats.habitLog, ["отметка", "отметки", "отметок"])}`,
     `${stats.sessions} ${plural(stats.sessions, ["сессия", "сессии", "сессий"])}`,
   ];
-  // «Баланс» упоминается, только когда из него что-то пришло: у того, кто им не пользуется,
-  // строчка «0 записей Баланса» — это шум про раздел, которого для него нет.
+  // CaloriX упоминается, только когда из него что-то пришло: у того, кто им не пользуется,
+  // строчка «0 записей CaloriX» — это шум про раздел, которого для него нет.
   if (stats.balance > 0) {
-    parts.push(`${stats.balance} ${plural(stats.balance, ["запись", "записи", "записей"])} «Баланса»`);
+    parts.push(`${stats.balance} ${plural(stats.balance, ["запись", "записи", "записей"])} CaloriX`);
   }
   if (stats.screen > 0) {
     parts.push(`${stats.screen} ${plural(stats.screen, ["запись", "записи", "записей"])} «Экрана»`);
