@@ -10,6 +10,7 @@ import { DEFAULT_TIP_PREFS, allTips, rotationNumberFor, type TipPrefs } from "..
 import { todayKey } from "../lib/date";
 import { plural } from "../lib/plural";
 import { useFold } from "../lib/useFold";
+import { requestNotificationPermission } from "../notifications/reminders";
 import {
   CYCLE_PHASES,
   FOCUS_PHASES,
@@ -380,12 +381,31 @@ export default function FocusScreen() {
 
       {/* The OS's answer, not ours: a timer you trust enough to walk away from has to say
           whether it can actually reach you. */}
-      {cycle.running && (
-        <Text style={styles.footnote}>
-          {alarmArmed === false
-            ? "Прозвенит только пока приложение открыто — уведомления запрещены."
-            : "Прозвенит и с закрытым приложением."}
-        </Text>
+      {cycle.running && alarmArmed !== false && (
+        <Text style={styles.footnote}>Прозвенит и с закрытым приложением.</Text>
+      )}
+      {/* Не просто «запрещены», а кнопка рядом: человек узнаёт о проблеме ровно в тот
+          момент, когда собрался отложить телефон, и чинить её надо здесь же. */}
+      {cycle.running && alarmArmed === false && (
+        <Pressable
+          onPress={async () => {
+            const ok = await requestNotificationPermission();
+            if (!ok) {
+              setAlarmArmed(false);
+              return;
+            }
+            const armed = await scheduleChime(phase, Date.now() + cycle.secondsLeft * 1000);
+            setAlarmArmed(armed);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Разрешить уведомления, чтобы таймер прозвенел с закрытым приложением"
+          style={({ pressed }) => [styles.permBtn, pressed && { opacity: 0.75 }]}
+        >
+          <Feather name="bell-off" size={14} color={colors.accent} />
+          <Text style={styles.permText}>
+            Прозвенит только пока приложение открыто — уведомления запрещены. Разрешить
+          </Text>
+        </Pressable>
       )}
 
       <Text style={styles.footnote}>
@@ -900,5 +920,18 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   iconBtn: { padding: 6 },
+  permBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 10,
+  },
+  permText: { color: colors.accent, fontSize: 12, lineHeight: 17, flex: 1 },
   skipText: { color: colors.textMuted, fontSize: 12, textAlign: "center", marginTop: 18 },
 });

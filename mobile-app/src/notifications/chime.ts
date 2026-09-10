@@ -5,6 +5,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import { Audio } from "expo-av";
 import type { FocusPhase } from "../lib/focusPhases";
+import { requestNotificationPermission } from "./reminders";
 import { PHASE_LABELS } from "../lib/focusPhases";
 
 /**
@@ -33,7 +34,14 @@ const SOUNDS_KEY = "focus-sounds-v1";
  * other one armed.
  */
 const SCHEDULED_KEY = "focus-chime-ids-v1";
-export const CHANNEL_ID = "focus-timer";
+/**
+ * В имени канала стоит версия, и это не украшение.
+ *
+ * Android фиксирует важность и звук канала в момент создания и потом их не меняет: канал,
+ * заведённый прошлой сборкой тихим, останется тихим, сколько его ни переписывай. Единственный
+ * способ починить звук — завести новый канал, поэтому у имени есть номер.
+ */
+export const CHANNEL_ID = "focus-timer-v2";
 
 /** Where a picked file is copied to, so it survives the picker's temp cache being cleared. */
 const SOUND_DIR = FileSystem.documentDirectory ? `${FileSystem.documentDirectory}focus-sounds/` : null;
@@ -228,6 +236,10 @@ export async function scheduleChime(phase: FocusPhase, deadline: number): Promis
   await cancelChime(phase);
   const seconds = Math.round((deadline - Date.now()) / 1000);
   if (seconds <= 0) return false;
+  // Без разрешения система принимает будильник и молча его не показывает: приложение
+  // считало, что всё в порядке, а телефон в кармане молчал. Спрашиваем здесь — момент
+  // запуска таймера и есть тот, когда просьба понятна.
+  if (!(await requestNotificationPermission())) return false;
   try {
     await ensureChimeChannel();
     const id = await Notifications.scheduleNotificationAsync({

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { View, Text, TextInput, Pressable, Switch, ScrollView, Linking, Platform, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
+import { plural } from "../lib/plural";
 import NotificationAccess from "../components/NotificationAccess";
 import { PHASE_STEPS } from "../lib/phase";
 import { phaseColors } from "../theme/colors";
@@ -10,6 +11,12 @@ import {
   setPhaseAlert,
   type PhaseAlerts,
 } from "../notifications/phaseAlerts";
+import {
+  getSmartRules,
+  setSmartRules,
+} from "../notifications/watchers";
+import { setBackgroundCheck } from "../notifications/background";
+import type { SmartRules, TimeRule } from "../lib/notify/rules";
 import {
   getReminderSettings,
   setReminderSettings,
@@ -74,10 +81,32 @@ export default function ReminderScreen({
   const [alerts, setAlerts] = useState<PhaseAlerts | null>(null);
   const [failure, setFailure] = useState<{ kind: ReminderFailure; detail?: string } | null>(null);
   const [statusKey, setStatusKey] = useState(0);
+  const [rules, setRules] = useState<SmartRules | null>(null);
 
   useEffect(() => {
     getReminderSettings().then(setSettings);
     getPhaseAlerts().then(setAlerts);
+    getSmartRules().then(setRules);
+  }, []);
+
+  /**
+   * Правила пишутся сразу, а не по кнопке «сохранить».
+   *
+   * Заодно решается судьба фоновой проверки: выключены все правила — снимаем её, иначе она
+   * будила бы процесс раз в четверть часа, чтобы ничего не сделать.
+   */
+  const patchRules = useCallback((next: SmartRules) => {
+    setRules(next);
+    void setSmartRules(next).then((applied) => {
+      setRules(applied);
+      const anyOn =
+        applied.habitsUndone.enabled ||
+        applied.diaryEmpty.enabled ||
+        applied.water.enabled ||
+        applied.screenSoon.enabled ||
+        applied.screenOver.enabled;
+      void setBackgroundCheck(anyOn);
+    });
   }, []);
 
   const update = useCallback((next: ReminderSettings) => {
@@ -92,7 +121,7 @@ export default function ReminderScreen({
     });
   }, []);
 
-  if (!settings || !alerts) return null;
+  if (!settings || !alerts || !rules) return null;
 
   const own = settings.channels[channel];
   const patchChannel = (patch: Partial<typeof own>) =>
@@ -246,6 +275,147 @@ export default function ReminderScreen({
         </View>
       ))}
 
+
+      {/* Условные напоминания. Их отличие от расписания выше — в том, что у них есть
+          повод: «осталось две привычки», «до лимита сорок минут». Нет повода — тишина. */}
+      <Text style={styles.sectionLabel}>Когда есть что сказать</Text>
+      <Text style={styles.subtle}>
+        Эти приходят не по часам, а по делу — и молчат, когда повода нет. Внутри настоящие
+        числа: приложение смотрит на сегодняшний день в момент отправки.
+      </Text>
+
+      {channel === "sterzhen" && (
+        <>
+          <RuleRow
+            title="Если день не закрыт"
+            hint="Вечером, когда остались невыполненные привычки. В тексте — сколько именно осталось."
+            value={rules.habitsUndone.enabled}
+            onChange={(enabled) =>
+              patchRules({ ...rules, habitsUndone: { ...rules.habitsUndone, enabled } })
+            }
+          />
+          {rules.habitsUndone.enabled && (
+            <TimeStepper
+              time={rules.habitsUndone}
+              label="Во сколько проверять"
+              onChange={(t) => patchRules({ ...rules, habitsUndone: { ...rules.habitsUndone, ...t } })}
+            />
+          )}
+          {/* Честно про то, чего расписание не умеет: обычное напоминание — это будильник
+              в системе, и отменить одно сегодняшнее срабатывание, сохранив завтрашнее,
+              Android не даёт. Поэтому не «мы промолчим», а «выключи то, что шумит». */}
+          {rules.habitsUndone.enabled && own.enabled && (
+            <Text style={styles.subtle}>
+              Напоминание по часам выше придёт и тогда, когда всё уже сделано: отменить одно
+              сегодняшнее срабатывание системный будильник не позволяет. Если хочешь получать
+              только по делу — выключи расписание выше, а это оставь.
+            </Text>
+          )}
+        </>
+      )}
+
+      {channel === "calorix" && (
+        <>
+          <RuleRow
+            title="Если дневник пуст"
+            hint="Когда к этому часу за сегодня нет ни одной записи о еде."
+            value={rules.diaryEmpty.enabled}
+            onChange={(enabled) => patchRules({ ...rules, diaryEmpty: { ...rules.diaryEmpty, enabled } })}
+          />
+          {rules.diaryEmpty.enabled && (
+            <TimeStepper
+              time={rules.diaryEmpty}
+              label="Во сколько проверять"
+              onChange={(t) => patchRules({ ...rules, diaryEmpty: { ...rules.diaryEmpty, ...t } })}
+            />
+          )}
+          <RuleRow
+            title="Вода, пока норма не набрана"
+            hint="Напоминает через равные промежутки и замолкает, как только норма закрыта."
+            value={rules.water.enabled}
+            onChange={(enabled) => patchRules({ ...rules, water: { ...rules.water, enabled } })}
+          />
+          {rules.water.enabled && (
+            <View style={styles.ruleCard}>
+              <Counter
+                label="Как часто"
+                value={`${rules.water.everyHours} ${plural(rules.water.everyHours, ["час", "часа", "часов"])}`}
+                onLess={() =>
+                  patchRules({ ...rules, water: { ...rules.water, everyHours: rules.water.everyHours - 1 } })
+                }
+                onMore={() =>
+                  patchRules({ ...rules, water: { ...rules.water, everyHours: rules.water.everyHours + 1 } })
+                }
+              />
+              <Counter
+                label="С какого часа"
+                value={`${pad(rules.water.fromHour)}:00`}
+                onLess={() => patchRules({ ...rules, water: { ...rules.water, fromHour: rules.water.fromHour - 1 } })}
+                onMore={() => patchRules({ ...rules, water: { ...rules.water, fromHour: rules.water.fromHour + 1 } })}
+              />
+              <Counter
+                label="По какой"
+                value={`${pad(rules.water.toHour)}:00`}
+                onLess={() => patchRules({ ...rules, water: { ...rules.water, toHour: rules.water.toHour - 1 } })}
+                onMore={() => patchRules({ ...rules, water: { ...rules.water, toHour: rules.water.toHour + 1 } })}
+              />
+              <Text style={styles.subtle}>Ночью не приходит: за окном человек спит, а не пьёт.</Text>
+            </View>
+          )}
+        </>
+      )}
+
+      {channel === "creker" && (
+        <>
+          <RuleRow
+            title="Перед лимитом"
+            hint="Когда до дневного лимита экрана остаётся выбранный запас."
+            value={rules.screenSoon.enabled}
+            onChange={(enabled) => patchRules({ ...rules, screenSoon: { ...rules.screenSoon, enabled } })}
+          />
+          {rules.screenSoon.enabled && (
+            <View style={styles.ruleCard}>
+              <Counter
+                label="За сколько предупредить"
+                value={
+                  rules.screenSoon.minutesBefore >= 60
+                    ? `${Math.floor(rules.screenSoon.minutesBefore / 60)} ч ${
+                        rules.screenSoon.minutesBefore % 60 === 0 ? "" : `${rules.screenSoon.minutesBefore % 60} мин`
+                      }`.trim()
+                    : `${rules.screenSoon.minutesBefore} мин`
+                }
+                onLess={() =>
+                  patchRules({
+                    ...rules,
+                    screenSoon: { ...rules.screenSoon, minutesBefore: rules.screenSoon.minutesBefore - 15 },
+                  })
+                }
+                onMore={() =>
+                  patchRules({
+                    ...rules,
+                    screenSoon: { ...rules.screenSoon, minutesBefore: rules.screenSoon.minutesBefore + 15 },
+                  })
+                }
+              />
+            </View>
+          )}
+          <RuleRow
+            title="Когда лимит пройден"
+            hint="Один раз в момент, когда экранное время перешагнуло лимит."
+            value={rules.screenOver.enabled}
+            onChange={(enabled) => patchRules({ ...rules, screenOver: { enabled } })}
+          />
+          {/* Сказано прямо, а не оставлено на догадки: это единственные напоминания, которым
+              нужно, чтобы приложение просыпалось само. */}
+          <Text style={styles.subtle}>
+            Эти два считают экранное время, пока приложение закрыто. Android будит его для
+            этого не чаще раза в четверть часа и в спящем режиме может отложить — значит,
+            «за час» на деле означает «где-то между часом и сорока минутами». Отключи для
+            Core экономию батареи, и станет точнее.
+          </Text>
+        </>
+      )}
+
       {channel === "sterzhen" && (
         <>
       <Text style={styles.sectionLabel}>Этапы</Text>
@@ -316,6 +486,102 @@ export default function ReminderScreen({
   );
 }
 
+
+/** Строка правила: заголовок, пояснение и переключатель. */
+function RuleRow({
+  title,
+  hint,
+  value,
+  onChange,
+}: {
+  title: string;
+  hint: string;
+  value: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <View style={styles.ruleRow}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.ruleTitle}>{title}</Text>
+        <Text style={styles.ruleHint}>{hint}</Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        accessibilityLabel={title}
+        trackColor={{ false: colors.cardBorder, true: colors.accentGreenDark }}
+        thumbColor={colors.text}
+      />
+    </View>
+  );
+}
+
+/** Часы и минуты одной строкой — для правил, у которых есть свой час проверки. */
+function TimeStepper({
+  time,
+  label,
+  onChange,
+}: {
+  time: TimeRule;
+  label: string;
+  onChange: (patch: { hour?: number; minute?: number }) => void;
+}) {
+  return (
+    <View style={styles.ruleCard}>
+      <Counter
+        label={label}
+        value={`${pad(time.hour)}:${pad(time.minute)}`}
+        onLess={() => onChange({ hour: (time.hour + 23) % 24 })}
+        onMore={() => onChange({ hour: (time.hour + 1) % 24 })}
+      />
+      <Counter
+        label="Минуты"
+        value={pad(time.minute)}
+        onLess={() => onChange({ minute: (time.minute + 55) % 60 })}
+        onMore={() => onChange({ minute: (time.minute + 5) % 60 })}
+      />
+    </View>
+  );
+}
+
+/** Пара кнопок вокруг значения. Границы держит нормализация, а не экран. */
+function Counter({
+  label,
+  value,
+  onLess,
+  onMore,
+}: {
+  label: string;
+  value: string;
+  onLess: () => void;
+  onMore: () => void;
+}) {
+  return (
+    <View style={styles.counterRow}>
+      <Text style={styles.ruleHint}>{label}</Text>
+      <View style={styles.counter}>
+        <Pressable
+          onPress={onLess}
+          accessibilityRole="button"
+          accessibilityLabel={`${label}: меньше`}
+          style={({ pressed }) => [styles.smallBtn, pressed && styles.dimmed]}
+        >
+          <Text style={styles.smallBtnText}>−</Text>
+        </Pressable>
+        <Text style={styles.countValue}>{value}</Text>
+        <Pressable
+          onPress={onMore}
+          accessibilityRole="button"
+          accessibilityLabel={`${label}: больше`}
+          style={({ pressed }) => [styles.smallBtn, pressed && styles.dimmed]}
+        >
+          <Text style={styles.smallBtnText}>+</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   sectionLabel: { color: colors.textMuted, fontSize: 12, marginTop: 24, marginBottom: 8 },
@@ -357,6 +623,27 @@ const styles = StyleSheet.create({
   },
   batteryBtnText: { color: colors.text, fontSize: 13, fontWeight: "500" },
   subtle: { color: colors.textMuted, fontSize: 12, lineHeight: 17, marginBottom: 16 },
+  ruleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 10,
+  },
+  ruleTitle: { color: colors.text, fontSize: 15, fontWeight: "500" },
+  ruleHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 3 },
+  ruleCard: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 10,
+    gap: 12,
+  },
+  counterRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   enableRow: {
     flexDirection: "row",
     alignItems: "center",

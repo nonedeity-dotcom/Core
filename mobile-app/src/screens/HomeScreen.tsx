@@ -296,7 +296,7 @@ function Card({
           {value}
         </Text>
         <Text style={styles.hint}>{hint}</Text>
-        {extra && <Text style={styles.hint}>{extra}</Text>}
+        {extra && <Text style={styles.extra}>{extra}</Text>}
       </View>
 
       <Feather name="chevron-right" size={16} color={colors.textMuted} />
@@ -335,5 +335,7 @@ const styles = StyleSheet.create({
   done: { color: colors.accentGreen },
   over: { color: colors.accent },
   hint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 3 },
+  // Вторая строка светлая, а не серая: это не пояснение к числу выше, а своё число.
+  extra: { color: colors.text, fontSize: 12, lineHeight: 16, marginTop: 4, fontVariant: ["tabular-nums"] },
   footnote: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 14 },
 });
