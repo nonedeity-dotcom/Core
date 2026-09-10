@@ -1,9 +1,10 @@
 import { useEffect } from "react";
 import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
+import Svg, { Circle } from "react-native-svg";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { colors } from "../theme/colors";
+import { colors, withAlpha } from "../theme/colors";
 import { plural } from "../lib/plural";
 import { useTodayKey } from "../lib/useTodayKey";
 import { formatDayLong } from "../lib/date";
@@ -16,6 +17,7 @@ import { totalScreenMillis, totalUnlocks, type ScreenDay } from "../lib/screen/u
 import { formatCompact } from "../lib/screen/duration";
 import { hasUsageAccess } from "../../modules/creker-usage";
 import { syncUsage } from "../integrations/usageSync";
+import RotatingTip from "../components/RotatingTip";
 import type { Section } from "../navigation/SectionMenu";
 
 /**
@@ -106,9 +108,11 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
 
       <Card
         name="Sterzhen"
+        icon="check-square"
         onPress={() => onOpen("sterzhen")}
-        value={noHabits ? "Пока пусто" : `${done} из ${deciding.length}`}
+        fraction={noHabits ? 0 : done / deciding.length}
         tone={allDone ? "done" : "plain"}
+        value={noHabits ? "Пока пусто" : `${done} из ${deciding.length}`}
         big={!noHabits}
         hint={
           noHabits
@@ -123,7 +127,10 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
 
       <Card
         name="CaloriX"
+        icon="pie-chart"
         onPress={() => onOpen("balance")}
+        fraction={target ? eaten.kcal / target.calories : 0}
+        tone={target && eaten.kcal > target.calories ? "over" : "plain"}
         value={
           !target
             ? "Нет нормы"
@@ -132,7 +139,6 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
               : `${eaten.kcal} из ${target.calories} ккал`
         }
         big={Boolean(target) && entries.length > 0}
-        tone="plain"
         hint={
           !target
             ? "Заполни профиль — рост, вес, возраст и цель"
@@ -147,10 +153,12 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
 
       <Card
         name="Creker"
+        icon="smartphone"
         onPress={() => onOpen("screen")}
+        fraction={limit > 0 ? screenMs / (limit * 60_000) : 0}
+        tone={overLimit ? "over" : "plain"}
         value={screenKnown ? formatCompact(screenMs) : access ? "Пока ноль" : "Нет доступа"}
         big={screenKnown}
-        tone={overLimit ? "over" : "plain"}
         hint={
           !screenKnown
             ? access
@@ -164,6 +172,10 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
         }
       />
 
+      {/* Подсказка стоит здесь, а не только на «Отчёте»: главную открывают каждый раз, и
+          это единственное на экране, что не является числом про тебя. */}
+      <RotatingTip />
+
       {/* Внизу и мелким: главная отвечает про сегодня, а «сегодня» — это не вся правда.
           Строчка напоминает, что за ней есть история, и не притворяется числом. */}
       <Text style={styles.footnote}>
@@ -173,49 +185,101 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
   );
 }
 
+const RING = 46;
+const RING_STROKE = 4;
+const RING_R = (RING - RING_STROKE) / 2;
+const RING_C = 2 * Math.PI * RING_R;
+
 /**
- * Строка раздела.
+ * Строка раздела: кольцо, число, пояснение.
  *
- * Цветом отмечается только то, что человек и так хотел узнать: зелёным — что привычки на
- * сегодня закрыты, тёплым — что экран перешагнул лимит. Всё остальное обычным цветом:
- * подсветить каждое число значит не подсветить ни одного.
+ * Кольцо показывает долю от того, что у раздела и есть мера дня, — закрытые привычки,
+ * съеденная норма, лимит экрана. Три текстовые строки подряд читаются как список, а не как
+ * картина дня; кольцо возвращает то, ради чего на экран смотрят, — «сколько уже».
+ *
+ * Цвет по состоянию, а не по разделу: зелёное — идёт как надо, тёплое — просит внимания
+ * (норма превышена, экран перешагнул лимит). Разделы своими цветами не метятся: подсветить
+ * каждое число значит не подсветить ни одного, а трёх осмысленных цветов у палитры и нет —
+ * синий занят фокус-сессиями.
  */
 function Card({
   name,
+  icon,
   value,
   hint,
   big,
   tone,
+  fraction,
   onPress,
 }: {
   name: string;
+  icon: React.ComponentProps<typeof Feather>["name"];
   value: string;
   hint: string;
   big: boolean;
   tone: "plain" | "done" | "over";
+  /** Доля дня, закрытая этим разделом. Больше единицы кольцо не рисует. */
+  fraction: number;
   onPress: () => void;
 }) {
+  const tint = tone === "over" ? colors.accent : colors.accentGreen;
+  const filled = Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0));
+
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`${name}: ${value}. ${hint}`}
-      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.card,
+        tone === "over" && { borderColor: withAlpha(colors.accent, 0.35) },
+        pressed && styles.pressed,
+      ]}
     >
-      <View style={styles.head}>
-        <Text style={styles.name}>{name}</Text>
-        <Feather name="chevron-right" size={16} color={colors.textMuted} />
+      <View style={styles.ring}>
+        <Svg width={RING} height={RING} style={{ transform: [{ rotate: "-90deg" }] }}>
+          <Circle
+            cx={RING / 2}
+            cy={RING / 2}
+            r={RING_R}
+            stroke={colors.cardBorder}
+            strokeWidth={RING_STROKE}
+            fill="none"
+          />
+          {filled > 0 && (
+            <Circle
+              cx={RING / 2}
+              cy={RING / 2}
+              r={RING_R}
+              stroke={tint}
+              strokeWidth={RING_STROKE}
+              fill="none"
+              strokeLinecap="round"
+              strokeDasharray={`${RING_C} ${RING_C}`}
+              strokeDashoffset={RING_C * (1 - filled)}
+            />
+          )}
+        </Svg>
+        <View style={styles.ringIcon}>
+          <Feather name={icon} size={16} color={filled > 0 ? tint : colors.textMuted} />
+        </View>
       </View>
-      <Text
-        style={[
-          big ? styles.value : styles.valueSmall,
-          tone === "done" && styles.done,
-          tone === "over" && styles.over,
-        ]}
-      >
-        {value}
-      </Text>
-      <Text style={styles.hint}>{hint}</Text>
+
+      <View style={{ flex: 1 }}>
+        <Text style={styles.name}>{name}</Text>
+        <Text
+          style={[
+            big ? styles.value : styles.valueSmall,
+            tone === "done" && styles.done,
+            tone === "over" && styles.over,
+          ]}
+        >
+          {value}
+        </Text>
+        <Text style={styles.hint}>{hint}</Text>
+      </View>
+
+      <Feather name="chevron-right" size={16} color={colors.textMuted} />
     </Pressable>
   );
 }
@@ -225,25 +289,31 @@ const styles = StyleSheet.create({
   date: { color: colors.textMuted, fontSize: 12 },
   lead: { color: colors.text, fontSize: 15, fontWeight: "500", marginTop: 2, marginBottom: 16 },
   card: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
     backgroundColor: colors.card,
     borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "transparent",
     paddingHorizontal: 16,
     paddingVertical: 14,
     marginBottom: 10,
   },
   pressed: { opacity: 0.75 },
-  head: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  ring: { width: RING, height: RING, alignItems: "center", justifyContent: "center" },
+  ringIcon: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
   name: { color: colors.textMuted, fontSize: 12 },
   value: {
     color: colors.text,
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "600",
-    marginTop: 6,
+    marginTop: 2,
     fontVariant: ["tabular-nums"],
   },
-  valueSmall: { color: colors.text, fontSize: 15, fontWeight: "500", marginTop: 6 },
+  valueSmall: { color: colors.text, fontSize: 15, fontWeight: "500", marginTop: 2 },
   done: { color: colors.accentGreen },
   over: { color: colors.accent },
-  hint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 4 },
+  hint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 3 },
   footnote: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 14 },
 });
