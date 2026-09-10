@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { View, Text, Pressable, ScrollView, AppState, StyleSheet } from "react-native";
+import { View, Text, Pressable, ScrollView, Switch, AppState, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import * as Application from "expo-application";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -9,7 +9,6 @@ import { colors } from "../theme/colors";
 import { plural } from "../lib/plural";
 import DataBackup from "../components/DataBackup";
 import NotificationAccess from "../components/NotificationAccess";
-import CrekerStatus from "../components/CrekerStatus";
 import type { Habit } from "../types";
 import { DEFAULT_DAY_RULE, describeDayRule, type DayRule } from "../lib/dayRule";
 import { DEFAULT_SKIP_RULE, describeSkipRule, type SkipRule } from "../lib/skipRule";
@@ -18,6 +17,10 @@ import { confirmDestructive } from "../lib/confirm";
 import {
   getReminderSettings,
   getReminderStatus,
+  setReminderSettings,
+  CHANNELS,
+  CHANNEL_LABELS,
+  type ReminderChannel,
   type ReminderSettings,
   type ReminderStatus,
 } from "../notifications/reminders";
@@ -63,20 +66,35 @@ function formatMinutes(min: number) {
   return m === 0 ? `${h} ч` : `${h} ч ${m} мин`;
 }
 
-function describeReminder(settings: ReminderSettings | null, status: ReminderStatus | null): string {
-  if (!settings || !status) return "Время, текст и уведомления об этапах";
-  if (!settings.enabled) return "Выключено";
+/**
+ * Строчка под названием раздела: во сколько он напоминает и напоминает ли вообще.
+ *
+ * Общий выключатель называется отдельно от своего: «выключено» и «выключено всё» — разные
+ * причины тишины, и чинятся они в разных местах.
+ */
+function describeChannel(
+  channel: ReminderChannel,
+  settings: ReminderSettings | null,
+  status: ReminderStatus | null,
+): string {
+  if (!settings || !status) return "Время и текст напоминаний";
+  const own = settings.channels[channel];
+  if (!own.enabled) return "Выключено";
+  if (!settings.enabled) return "Включено, но общий переключатель выключен";
   if (status.permission !== "granted") return "Включено, но система не пропускает уведомления";
-  const n = settings.times.length;
-  const word = n === 1 ? "раз" : n < 5 ? "раза" : "раз";
-  return `${n} ${word} в день · ${settings.times.map((t) => `${pad(t.hour)}:${pad(t.minute)}`).join(", ")} · плюс этапы`;
+  const times = own.times.map((t) => `${pad(t.hour)}:${pad(t.minute)}`).join(", ");
+  return channel === "sterzhen" ? `${times} · плюс этапы` : times;
 }
 
 function pad(n: number) {
   return String(n).padStart(2, "0");
 }
 
-export default function SettingsScreen({ navigation }: { navigation: { navigate: (screen: string) => void } }) {
+export default function SettingsScreen({
+  navigation,
+}: {
+  navigation: { navigate: (screen: string, params?: Record<string, unknown>) => void };
+}) {
   const qc = useQueryClient();
 
   // Not react-query: these come from the OS and from a non-KEYS storage entry,
@@ -136,6 +154,22 @@ export default function SettingsScreen({ navigation }: { navigation: { navigate:
       false,
     );
 
+  /**
+   * Общий выключатель.
+   *
+   * Гасит расписание целиком, не трогая переключатели разделов: человек, выключивший всё
+   * на неделю отпуска, включает обратно ровно то, что у него было.
+   */
+  const toggleAll = (enabled: boolean) => {
+    if (!reminder) return;
+    const next = { ...reminder, enabled };
+    setReminder(next);
+    setReminderSettings(next).then((applied) => {
+      setReminder(applied.settings);
+      getReminderStatus().then(setNotifStatus);
+    });
+  };
+
   // Just the count for the row's hint — the screen itself loads the marks.
   const { data: archived = [] } = useQuery<Habit[]>({
     queryKey: ["archivedHabits"],
@@ -146,7 +180,6 @@ export default function SettingsScreen({ navigation }: { navigation: { navigate:
       ? "Пусто — сюда попадают привычки, убранные из чек-листа"
       : `${archived.length} ${plural(archived.length, ["убранная привычка", "убранные привычки", "убранных привычек"])}`;
 
-  const reminderHint = describeReminder(reminder, notifStatus);
 
   // The limit behind the "Экранное время в норме" habit was hardcoded at three
   // hours with nowhere to change it — the value existed in storage but no
@@ -195,18 +228,36 @@ export default function SettingsScreen({ navigation }: { navigation: { navigate:
           the OS lets anything through is the first thing worth knowing, and
           the switch alone never said. */}
       <NotificationAccess onChanged={refreshReminder} />
-      <View style={{ height: 10 }} />
-      <Row
-        label="Что и когда приходит"
-        hint={reminderHint}
-        onPress={() => navigation.navigate("Reminder")}
-      />
 
-      <Text style={[styles.sectionLabel, styles.spaced]}>Creker</Text>
-      {/* The habit below ticks itself from creker's numbers, and every way that can
-          fail looks the same on the checklist — an unticked box. This says which
-          failure it is before the limit under it is worth adjusting. */}
-      <CrekerStatus />
+      {/* Общий выключатель гасит все три раздела разом и ничего не забывает: их
+          собственные переключатели остаются как были, и включить всё обратно — одно
+          движение, а не три настройки заново. */}
+      <View style={styles.switchRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowLabel}>Все уведомления</Text>
+          <Text style={styles.rowHint}>
+            {reminder?.enabled
+              ? "Разделы присылают то, что им включено ниже"
+              : "Выключено всё сразу — разделы ниже молчат, но настройки помнят"}
+          </Text>
+        </View>
+        <Switch
+          value={reminder?.enabled ?? false}
+          onValueChange={toggleAll}
+          accessibilityLabel="Все уведомления"
+          trackColor={{ false: colors.cardBorder, true: colors.accentGreenDark }}
+          thumbColor={colors.text}
+        />
+      </View>
+
+      {CHANNELS.map((channel) => (
+        <Row
+          key={channel}
+          label={CHANNEL_LABELS[channel]}
+          hint={describeChannel(channel, reminder, notifStatus)}
+          onPress={() => navigation.navigate("Reminder", { channel })}
+        />
+      ))}
 
       <Text style={[styles.sectionLabel, styles.spaced]}>Экранное время</Text>
       <View style={styles.limitCard}>
@@ -237,8 +288,32 @@ export default function SettingsScreen({ navigation }: { navigation: { navigate:
         </View>
       </View>
 
+      {/* Копия всего — и по копии на раздел. Раздельные нужны ровно потому, что разделы
+          независимы: перенести еду на другой телефон, не трогая тамошние привычки, —
+          обычное желание, а общая копия такого не умеет. */}
       <View style={styles.spaced}>
         <DataBackup />
+      </View>
+      <View style={styles.spaced}>
+        <DataBackup
+          scope="sterzhen"
+          title="Данные Sterzhen"
+          hint="Привычки, отметки, сессии, энергия, задачи и сверки — без еды и экрана."
+        />
+      </View>
+      <View style={styles.spaced}>
+        <DataBackup
+          scope="calorix"
+          title="Данные CaloriX"
+          hint="Продукты, блюда, съеденное и дневник веса — без привычек и экрана."
+        />
+      </View>
+      <View style={styles.spaced}>
+        <DataBackup
+          scope="creker"
+          title="Данные Creker"
+          hint="Экранное время по дням, по приложениям и по часам — без привычек и еды."
+        />
       </View>
 
       {/* Last, small, and easy to read out loud. Every build used to call itself 1.0.0, so
@@ -265,6 +340,17 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   pressed: { opacity: 0.75 },
+  switchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginTop: 10,
+    marginBottom: 10,
+  },
   rowLabel: { color: colors.text, fontSize: 15, fontWeight: "500" },
   rowHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 3 },
   limitCard: {

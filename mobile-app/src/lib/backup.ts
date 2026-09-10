@@ -40,10 +40,57 @@ import type {
 /** Marks the file as ours, so a random .json picked by mistake is rejected. */
 const APP_ID = "no-burnout";
 
+/**
+ * Что именно лежит в файле.
+ *
+ * Копия бывает общей и отдельной: один раздел — один файл. Разделять полезно ровно потому,
+ * что разделы независимы: перенести еду на другой телефон, не трогая тамошние привычки, —
+ * обычное желание, а общая копия такого не умеет.
+ *
+ * Файл всегда одной и той же формы, чужие разделы в нём просто пусты. Так старое
+ * приложение прочитает новый файл, а новое — старый: отсутствие поля и пустое поле здесь
+ * значат одно и то же.
+ */
+export type BackupScope = "all" | "sterzhen" | "calorix" | "creker";
+
+export const SCOPE_LABELS: Record<BackupScope, string> = {
+  all: "Все данные",
+  sterzhen: "Sterzhen",
+  calorix: "CaloriX",
+  creker: "Creker",
+};
+
+/** Поля, которые принадлежат разделу. Всё, чего нет ни в одном, — общее и едет с «Sterzhen». */
+const SCOPE_FIELDS: Record<Exclude<BackupScope, "all">, (keyof BackupData)[]> = {
+  sterzhen: [
+    "habits",
+    "habitLog",
+    "energy",
+    "sessions",
+    "milestones",
+    "freezes",
+    "rewardOptions",
+    "rewards",
+    "reviews",
+    "tasks",
+    "screenTimeLimitMinutes",
+    "focusIntervals",
+    "dayRule",
+    "skipRule",
+    "habitFreezes",
+    "tipPrefs",
+    "lateRule",
+  ],
+  calorix: ["balanceProfile", "balanceProducts", "balanceFoodLog", "balanceDishes", "balanceWeight"],
+  creker: ["screenDays", "screenApps", "screenHours"],
+};
+
 export interface BackupFile {
   app: typeof APP_ID;
   formatVersion: number;
   exportedAt: string;
+  /** Отсутствует в файлах, записанных до раздельных копий: они всегда были общими. */
+  scope: BackupScope;
   data: BackupData;
   reminder: ReminderSettings;
 }
@@ -53,18 +100,70 @@ export type ImportMode = "merge" | "replace";
 /** A problem with the file itself; `message` is shown to the user as-is. */
 export class BackupError extends Error {}
 
-export function backupFileName(now = new Date()): string {
-  return `no-burnout-${toDateKey(now)}.json`;
+export function backupFileName(now = new Date(), scope: BackupScope = "all"): string {
+  const prefix = scope === "all" ? APP_ID : scope;
+  return `${prefix}-${toDateKey(now)}.json`;
+}
+
+/** Пустая копия — форма файла без единой записи; в неё вкладывается только нужный раздел. */
+function emptyData(): BackupData {
+  return {
+    habits: [],
+    habitLog: [],
+    energy: [],
+    sessions: [],
+    milestones: [],
+    freezes: [],
+    rewardOptions: [],
+    rewards: [],
+    reviews: [],
+    tasks: [],
+    screenTimeLimitMinutes: 180,
+    focusIntervals: DEFAULT_FOCUS_INTERVALS,
+    dayRule: normalizeDayRule(undefined),
+    skipRule: normalizeSkipRule(undefined),
+    habitFreezes: {},
+    tipPrefs: normalizeTipPrefs(undefined),
+    lateRule: normalizeLateRule(undefined),
+    balanceProfile: null,
+    balanceProducts: [],
+    balanceFoodLog: [],
+    balanceDishes: [],
+    balanceWeight: [],
+    screenDays: [],
+    screenApps: [],
+    screenHours: [],
+  };
+}
+
+/** Оставить в копии только один раздел, остальные — пустыми. */
+function narrow(data: BackupData, scope: BackupScope): BackupData {
+  if (scope === "all") return data;
+  const out = emptyData();
+  for (const field of SCOPE_FIELDS[scope]) {
+    (out as unknown as Record<string, unknown>)[field] = data[field];
+  }
+  return out;
+}
+
+/** Положить поля раздела из копии поверх того, что уже есть. Остальное остаётся своим. */
+function overlay(current: BackupData, incoming: BackupData, scope: Exclude<BackupScope, "all">): BackupData {
+  const out = { ...current };
+  for (const field of SCOPE_FIELDS[scope]) {
+    (out as unknown as Record<string, unknown>)[field] = incoming[field];
+  }
+  return out;
 }
 
 /** The exact text that gets written to the file. */
-export async function buildBackupText(): Promise<string> {
+export async function buildBackupText(scope: BackupScope = "all"): Promise<string> {
   const [data, reminder] = await Promise.all([exportData(), getReminderSettings()]);
   const file: BackupFile = {
     app: APP_ID,
     formatVersion: BACKUP_FORMAT_VERSION,
     exportedAt: new Date().toISOString(),
-    data,
+    scope,
+    data: narrow(data, scope),
     reminder,
   };
   // Indented: the file is small and a person may well open it in a text editor.
@@ -281,14 +380,42 @@ function parseReminder(raw: unknown): ReminderSettings | null {
   // normalizeSettings understands both the current { times: [...] } shape and
   // the single { hour, minute } one older exports carry, and drops anything
   // out of range, so a file from either version imports cleanly.
-  const settings = normalizeSettings(raw);
-  return settings.times.length > 0 ? settings : null;
+  return normalizeSettings(raw);
+}
+
+function parseScope(raw: unknown): BackupScope {
+  return raw === "sterzhen" || raw === "calorix" || raw === "creker" ? raw : "all";
 }
 
 export interface ParsedBackup {
   data: BackupData;
   reminder: ReminderSettings | null;
   exportedAt: string | null;
+  /** Какой раздел лежит в файле. Файлы, записанные до раздельных копий, — всегда общие. */
+  scope: BackupScope;
+}
+
+/** Сколько записей в копии относится к разделу — то, что человек считает «данными». */
+export function countRecords(data: BackupData, scope: BackupScope): number {
+  const sterzhen =
+    data.habits.length +
+    data.habitLog.length +
+    data.sessions.length +
+    data.energy.length +
+    data.rewards.length +
+    data.reviews.length +
+    data.tasks.length;
+  const calorix =
+    data.balanceProducts.length +
+    data.balanceDishes.length +
+    data.balanceFoodLog.length +
+    data.balanceWeight.length +
+    (data.balanceProfile ? 1 : 0);
+  const creker = data.screenDays.length + data.screenApps.length + data.screenHours.length;
+  if (scope === "sterzhen") return sterzhen;
+  if (scope === "calorix") return calorix;
+  if (scope === "creker") return creker;
+  return sterzhen + calorix + creker;
 }
 
 /** Turns file text into something safe to write. Throws `BackupError`. */
@@ -306,17 +433,20 @@ export function parseBackupText(text: string): ParsedBackup {
   }
 
   const data = parseData(raw.data);
-  const isEmpty =
-    data.habits.length === 0 &&
-    data.habitLog.length === 0 &&
-    data.sessions.length === 0 &&
-    data.energy.length === 0 &&
-    data.rewards.length === 0 &&
-    data.reviews.length === 0 &&
-    data.tasks.length === 0;
-  if (isEmpty) throw new BackupError("В файле нет данных, которые можно перенести.");
+  const scope = parseScope(raw.scope);
+  // Пусто ли — спрашивается у того раздела, который в файле и лежит. Раньше проверялись
+  // только привычки, и копия одного «Экрана» отвергалась как пустая, хотя в ней был год
+  // истории.
+  if (countRecords(data, scope) === 0) {
+    throw new BackupError("В файле нет данных, которые можно перенести.");
+  }
 
-  return { data, reminder: parseReminder(raw.reminder), exportedAt: isStr(raw.exportedAt) ? raw.exportedAt : null };
+  return {
+    data,
+    scope,
+    reminder: parseReminder(raw.reminder),
+    exportedAt: isStr(raw.exportedAt) ? raw.exportedAt : null,
+  };
 }
 
 /**
@@ -325,9 +455,17 @@ export function parseBackupText(text: string): ParsedBackup {
  * The reminder time is only taken on a full replace — merging is for pulling
  * history in from another phone, and silently re-arming someone else's 21:00
  * notification would be a surprise.
+ *
+ * Замена по копии одного раздела заменяет только его: остальное берётся из того, что уже
+ * лежит на телефоне. Иначе «заменить еду» стирало бы привычки — файл-то их не содержит, и
+ * пустота в нём означает «не про меня», а не «удалить».
  */
 export async function applyBackup(parsed: ParsedBackup, mode: ImportMode): Promise<ImportStats> {
-  const stats = mode === "replace" ? await replaceData(parsed.data) : await mergeData(parsed.data);
+  const incoming =
+    mode === "replace" && parsed.scope !== "all"
+      ? overlay(await exportData(), parsed.data, parsed.scope)
+      : parsed.data;
+  const stats = mode === "replace" ? await replaceData(incoming) : await mergeData(incoming);
   if (mode === "replace" && parsed.reminder) {
     // Goes through setReminderSettings, not straight to storage, so the OS
     // notification is actually re-scheduled for the restored time.

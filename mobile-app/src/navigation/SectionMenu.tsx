@@ -12,34 +12,24 @@ export type Section = "sterzhen" | "balance" | "screen";
  * проверить нигде, кроме телефона. Разница ровно одна — открывается кнопкой, а не свайпом
  * от края; для списка из трёх пунктов это не потеря.
  */
-export interface MenuItem {
-  id: string;
-  title: string;
-  hint: string;
-  icon: React.ComponentProps<typeof Feather>["name"];
-  /** Отсутствует у пунктов, которые пока нельзя открыть — они видны, но не нажимаются. */
-  onPress?: () => void;
-  disabledNote?: string;
-}
-
 export default function SectionMenu({
   visible,
   section,
   onClose,
   onSelect,
-  extra = [],
+  onSettings,
 }: {
   visible: boolean;
   section: Section;
   onClose: () => void;
   onSelect: (section: Section) => void;
-  /** Пункты, которые не являются разделами этого приложения, — например соседнее приложение. */
-  extra?: MenuItem[];
+  /** Настройки живут здесь же, внизу: это не раздел, а то, что настраивает все три. */
+  onSettings: () => void;
 }) {
-  const sections: { id: Section; title: string; hint: string; icon: MenuItem["icon"] }[] = [
+  const sections: { id: Section; title: string; hint: string; icon: React.ComponentProps<typeof Feather>["name"] }[] = [
     { id: "sterzhen", title: "Sterzhen", hint: "Привычки, фокус, энергия", icon: "check-square" },
     { id: "balance", title: "CaloriX", hint: "Калории и белок за день", icon: "pie-chart" },
-    { id: "screen", title: "Экран", hint: "Сколько времени и в чём", icon: "smartphone" },
+    { id: "screen", title: "Creker", hint: "Сколько времени и в чём", icon: "smartphone" },
   ];
 
   return (
@@ -72,28 +62,24 @@ export default function SectionMenu({
             );
           })}
 
-          {extra.length > 0 && <View style={styles.divider} />}
-          {extra.map((item) => (
-            <Pressable
-              key={item.id}
-              onPress={() => {
-                if (!item.onPress) return;
-                item.onPress();
-                onClose();
-              }}
-              disabled={!item.onPress}
-              accessibilityRole="button"
-              accessibilityState={{ disabled: !item.onPress }}
-              style={({ pressed }) => [styles.row, !item.onPress && styles.rowOff, pressed && styles.pressed]}
-            >
-              <Feather name={item.icon} size={18} color={colors.textMuted} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowTitle}>{item.title}</Text>
-                <Text style={styles.rowHint}>{item.onPress ? item.hint : (item.disabledNote ?? item.hint)}</Text>
-              </View>
-              {item.onPress && <Feather name="external-link" size={14} color={colors.textMuted} />}
-            </Pressable>
-          ))}
+          <View style={styles.divider} />
+          {/* Внизу и без выделения: настройки открывают редко, а разделы — каждый раз. */}
+          <Pressable
+            onPress={() => {
+              onSettings();
+              onClose();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Настройки"
+            style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+          >
+            <Feather name="settings" size={18} color={colors.textMuted} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Настройки</Text>
+              <Text style={styles.rowHint}>Уведомления, данные и правила — для всех трёх</Text>
+            </View>
+            <Feather name="chevron-right" size={16} color={colors.textMuted} />
+          </Pressable>
         </Pressable>
       </Pressable>
     </Modal>
@@ -123,7 +109,6 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   rowActive: { backgroundColor: "rgba(143,184,154,0.12)" },
-  rowOff: { opacity: 0.55 },
   pressed: { opacity: 0.75 },
   rowTitle: { color: colors.text, fontSize: 15, fontWeight: "500" },
   rowTitleActive: { color: colors.accentGreen, fontWeight: "600" },

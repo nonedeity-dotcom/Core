@@ -13,20 +13,67 @@ export interface ReminderTime {
   hour: number;
   minute: number;
   /**
-   * What this one says. Optional: an empty slot uses DEFAULT_REMINDER_BODY, which is also
-   * what every reminder said before they could be worded individually.
+   * What this one says. Optional: an empty slot uses the channel's own default wording,
+   * which is also what every reminder said before they could be worded individually.
    */
   text?: string;
 }
 
-export const DEFAULT_REMINDER_TITLE = "Не сбивай ритм";
-export const DEFAULT_REMINDER_BODY = "Загляни в чек-лист привычек — ещё есть время сегодня.";
+/**
+ * Три раздела — три отдельных напоминания.
+ *
+ * Раньше напоминание было одно на всё приложение, и оно всегда звало в чек-лист привычек.
+ * Но «запиши, что съел» и «посмотри, сколько ушло на экран» — это другие просьбы, в другое
+ * время дня, и человеку, который ведёт только еду, привычки напоминать незачем. Каналы
+ * независимы: у каждого свои часы, своё слово и свой выключатель.
+ */
+export type ReminderChannel = "sterzhen" | "calorix" | "creker";
 
-export interface ReminderSettings {
+export const CHANNELS: ReminderChannel[] = ["sterzhen", "calorix", "creker"];
+
+export const CHANNEL_LABELS: Record<ReminderChannel, string> = {
+  sterzhen: "Sterzhen",
+  calorix: "CaloriX",
+  creker: "Creker",
+};
+
+export const CHANNEL_TITLES: Record<ReminderChannel, string> = {
+  sterzhen: "Не сбивай ритм",
+  calorix: "CaloriX",
+  creker: "Creker",
+};
+
+export const CHANNEL_BODIES: Record<ReminderChannel, string> = {
+  sterzhen: "Загляни в чек-лист привычек — ещё есть время сегодня.",
+  calorix: "Запиши, что съел сегодня. Вечером вспомнить труднее, чем кажется.",
+  creker: "Посмотри, сколько сегодня ушло на экран.",
+};
+
+/** Во сколько напоминание приходит по умолчанию: у каждого раздела своё время дня. */
+const CHANNEL_DEFAULT_TIME: Record<ReminderChannel, ReminderTime> = {
+  sterzhen: { hour: 21, minute: 0 },
+  calorix: { hour: 20, minute: 0 },
+  creker: { hour: 21, minute: 30 },
+};
+
+export interface ChannelSettings {
   /** One entry per notification per day, in the order shown. */
   times: ReminderTime[];
   enabled: boolean;
 }
+
+export interface ReminderSettings {
+  /**
+   * Общий выключатель. Выключен — молчат все каналы, а их собственные переключатели
+   * остаются как были: включить всё обратно одним движением, ничего не настраивая заново.
+   */
+  enabled: boolean;
+  channels: Record<ReminderChannel, ChannelSettings>;
+}
+
+/** Заголовок и текст, которыми оставшийся без своих слов слот представится. */
+export const DEFAULT_REMINDER_TITLE = CHANNEL_TITLES.sterzhen;
+export const DEFAULT_REMINDER_BODY = CHANNEL_BODIES.sterzhen;
 
 /** Facts from the OS, so "does it work?" has an answer instead of a hope. */
 export interface ReminderStatus {
@@ -57,7 +104,29 @@ export interface AppliedReminder {
   detail?: string;
 }
 
-const DEFAULT_SETTINGS: ReminderSettings = { times: [{ hour: 21, minute: 0 }], enabled: false };
+const defaultChannel = (channel: ReminderChannel): ChannelSettings => ({
+  enabled: false,
+  times: [CHANNEL_DEFAULT_TIME[channel]],
+});
+
+const DEFAULT_SETTINGS: ReminderSettings = {
+  enabled: false,
+  channels: {
+    sterzhen: defaultChannel("sterzhen"),
+    calorix: defaultChannel("calorix"),
+    creker: defaultChannel("creker"),
+  },
+};
+
+/** Копия по значению: настройки правят на месте, и общий дефолт не должен уезжать вместе. */
+const freshDefaults = (): ReminderSettings => ({
+  enabled: false,
+  channels: {
+    sterzhen: defaultChannel("sterzhen"),
+    calorix: defaultChannel("calorix"),
+    creker: defaultChannel("creker"),
+  },
+});
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -78,40 +147,83 @@ function isTime(v: unknown): v is ReminderTime {
   );
 }
 
-/** The slot's own wording, or the shared default when it has none. */
-export function reminderBody(time: ReminderTime): string {
-  return time.text?.trim() ? time.text.trim() : DEFAULT_REMINDER_BODY;
+/** The slot's own wording, or the channel's default when it has none. */
+export function reminderBody(time: ReminderTime, channel: ReminderChannel = "sterzhen"): string {
+  return time.text?.trim() ? time.text.trim() : CHANNEL_BODIES[channel];
 }
 
-/** Accepts both the current shape and the single-time one that came before it. */
+function normalizeTimes(raw: unknown): ReminderTime[] {
+  const times = Array.isArray(raw) ? raw.filter(isTime) : [];
+  return times.slice(0, MAX_REMINDERS_PER_DAY).map((t) => ({
+    hour: t.hour,
+    minute: t.minute,
+    ...(typeof t.text === "string" && t.text.trim() ? { text: t.text.trim() } : {}),
+  }));
+}
+
+function normalizeChannel(raw: unknown, channel: ReminderChannel): ChannelSettings {
+  if (typeof raw !== "object" || raw === null) return defaultChannel(channel);
+  const o = raw as Record<string, unknown>;
+  const times = normalizeTimes(o.times);
+  return {
+    enabled: o.enabled === true,
+    times: times.length > 0 ? times : [CHANNEL_DEFAULT_TIME[channel]],
+  };
+}
+
+/**
+ * Принимает и нынешнюю форму, и обе прежние.
+ *
+ * До каналов настройка была одна на всё приложение, и звала она в привычки. Такая запись
+ * целиком переезжает в канал Sterzhen: человек включал напоминание про чек-лист, его он и
+ * получит, а два новых канала заводятся выключенными — молчание, о котором не просили,
+ * лучше, чем два новых уведомления, о которых не просили тем более.
+ */
 export function normalizeSettings(raw: unknown): ReminderSettings {
-  if (typeof raw !== "object" || raw === null) return DEFAULT_SETTINGS;
+  if (typeof raw !== "object" || raw === null) return freshDefaults();
   const o = raw as Record<string, unknown>;
   const enabled = o.enabled === true;
 
-  const times = Array.isArray(o.times) ? o.times.filter(isTime) : [];
-  if (times.length > 0) {
+  if (typeof o.channels === "object" && o.channels !== null) {
+    const c = o.channels as Record<string, unknown>;
     return {
       enabled,
-      times: times.slice(0, MAX_REMINDERS_PER_DAY).map((t) => ({
-        hour: t.hour,
-        minute: t.minute,
-        ...(typeof t.text === "string" && t.text.trim() ? { text: t.text.trim() } : {}),
-      })),
+      channels: {
+        sterzhen: normalizeChannel(c.sterzhen, "sterzhen"),
+        calorix: normalizeChannel(c.calorix, "calorix"),
+        creker: normalizeChannel(c.creker, "creker"),
+      },
     };
   }
-  // Legacy: { hour, minute, enabled }.
-  if (isTime(o)) return { enabled, times: [{ hour: o.hour as number, minute: o.minute as number }] };
-  return { ...DEFAULT_SETTINGS, enabled };
+
+  // Прежние формы: { enabled, times } и совсем старая { hour, minute, enabled }.
+  const legacyTimes = normalizeTimes(o.times);
+  const times = legacyTimes.length > 0 ? legacyTimes : isTime(o) ? [{ hour: o.hour as number, minute: o.minute as number }] : [];
+  const base = freshDefaults();
+  if (times.length === 0) return { ...base, enabled };
+  return {
+    enabled,
+    channels: { ...base.channels, sterzhen: { enabled, times } },
+  };
+}
+
+/** Есть ли что ставить в расписание: выключено всё — значит, нечего. */
+export function activeTimes(settings: ReminderSettings): { channel: ReminderChannel; time: ReminderTime }[] {
+  if (!settings.enabled) return [];
+  return CHANNELS.flatMap((channel) =>
+    settings.channels[channel].enabled
+      ? settings.channels[channel].times.map((time) => ({ channel, time }))
+      : [],
+  );
 }
 
 export async function getReminderSettings(): Promise<ReminderSettings> {
   const raw = await AsyncStorage.getItem(SETTINGS_KEY);
-  if (!raw) return DEFAULT_SETTINGS;
+  if (!raw) return freshDefaults();
   try {
     return normalizeSettings(JSON.parse(raw));
   } catch {
-    return DEFAULT_SETTINGS;
+    return freshDefaults();
   }
 }
 
@@ -188,10 +300,12 @@ export async function setReminderSettings(settings: ReminderSettings): Promise<A
     const wanted = normalizeSettings(settings);
     await cancelStored();
 
-    if (!wanted.enabled || wanted.times.length === 0) {
-      const off = { ...wanted, enabled: false };
-      await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(off));
-      return { settings: off, failure: null };
+    const planned = activeTimes(wanted);
+    if (planned.length === 0) {
+      // Ничего не запланировано — либо общий выключатель, либо все каналы молчат. Общий
+      // флаг при этом не гасится: человек мог выключить последний канал, а не всё сразу.
+      await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(wanted));
+      return { settings: wanted, failure: null };
     }
 
     const granted = await requestNotificationPermission();
@@ -203,10 +317,10 @@ export async function setReminderSettings(settings: ReminderSettings): Promise<A
 
     const ids: string[] = [];
     let detail: string | undefined;
-    for (const time of wanted.times) {
+    for (const { channel, time } of planned) {
       try {
         const id = await Notifications.scheduleNotificationAsync({
-          content: { title: DEFAULT_REMINDER_TITLE, body: reminderBody(time) },
+          content: { title: CHANNEL_TITLES[channel], body: reminderBody(time, channel) },
           trigger: { hour: time.hour, minute: time.minute, repeats: true },
         });
         ids.push(id);
@@ -249,10 +363,11 @@ export async function sendTestNotification(): Promise<"sent" | "denied" | "faile
 // reinstalled/updated and the OS-level schedule was cleared).
 export async function restoreReminder(): Promise<void> {
   const settings = await getReminderSettings();
-  if (!settings.enabled) return;
+  const planned = activeTimes(settings);
+  if (planned.length === 0) return;
   try {
     const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-    if (scheduled.length < settings.times.length) await setReminderSettings(settings);
+    if (scheduled.length < planned.length) await setReminderSettings(settings);
   } catch {
     // Nothing to restore on a platform without the module.
   }

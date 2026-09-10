@@ -9,8 +9,11 @@ import {
   applyBackup,
   backupFileName,
   buildBackupText,
+  countRecords,
   BackupError,
   parseBackupText,
+  SCOPE_LABELS,
+  type BackupScope,
   type ImportMode,
   type ParsedBackup,
 } from "../lib/backup";
@@ -20,15 +23,18 @@ import type { ImportStats } from "../api/client";
 type Busy = null | "export" | "import";
 type Note = { tone: "ok" | "error"; text: string };
 
+/**
+ * Одна строка про то, что в файле.
+ *
+ * Раньше перечислялись привычки, отметки и сессии — то есть только Sterzhen, и копия
+ * одного «Экрана» представлялась тремя нулями. Теперь называется раздел файла и сколько в
+ * нём записей: это то, по чему человек и узнаёт, тот ли файл он выбрал.
+ */
 function summarise(p: ParsedBackup): string {
-  const { habits, habitLog, sessions } = p.data;
-  const parts = [
-    `${habits.length} ${plural(habits.length, ["привычка", "привычки", "привычек"])}`,
-    `${habitLog.length} ${plural(habitLog.length, ["отметка", "отметки", "отметок"])}`,
-    `${sessions.length} ${plural(sessions.length, ["сессия", "сессии", "сессий"])}`,
-  ];
   const when = p.exportedAt ? `Копия от ${formatDateShort(p.exportedAt)}` : "Копия";
-  return `${when}: ${parts.join(", ")}`;
+  const n = countRecords(p.data, p.scope);
+  const what = p.scope === "all" ? "" : ` (${SCOPE_LABELS[p.scope]})`;
+  return `${when}${what}: ${n} ${plural(n, ["запись", "записи", "записей"])}`;
 }
 
 function describeImport(stats: ImportStats, mode: ImportMode): string {
@@ -40,18 +46,22 @@ function describeImport(stats: ImportStats, mode: ImportMode): string {
   const added =
     stats.habits + stats.habitLog + stats.sessions + stats.energy + stats.rewards + stats.balance + stats.screen;
   if (added === 0) return "Всё из этого файла уже есть — ничего не изменилось.";
-  const parts = [
-    `${stats.habits} ${plural(stats.habits, ["привычка", "привычки", "привычек"])}`,
-    `${stats.habitLog} ${plural(stats.habitLog, ["отметка", "отметки", "отметок"])}`,
-    `${stats.sessions} ${plural(stats.sessions, ["сессия", "сессии", "сессий"])}`,
-  ];
-  // CaloriX упоминается, только когда из него что-то пришло: у того, кто им не пользуется,
-  // строчка «0 записей CaloriX» — это шум про раздел, которого для него нет.
+  // Называется только то, чего действительно прибавилось: «0 привычек, 0 отметок,
+  // 1 запись CaloriX» — это отчёт о разделах, которых в файле и не было.
+  const parts: string[] = [];
+  const say = (n: number, forms: [string, string, string]) => {
+    if (n > 0) parts.push(`${n} ${plural(n, forms)}`);
+  };
+  say(stats.habits, ["привычка", "привычки", "привычек"]);
+  say(stats.habitLog, ["отметка", "отметки", "отметок"]);
+  say(stats.sessions, ["сессия", "сессии", "сессий"]);
+  say(stats.energy, ["замер энергии", "замера энергии", "замеров энергии"]);
+  say(stats.rewards, ["награда", "награды", "наград"]);
   if (stats.balance > 0) {
     parts.push(`${stats.balance} ${plural(stats.balance, ["запись", "записи", "записей"])} CaloriX`);
   }
   if (stats.screen > 0) {
-    parts.push(`${stats.screen} ${plural(stats.screen, ["запись", "записи", "записей"])} «Экрана»`);
+    parts.push(`${stats.screen} ${plural(stats.screen, ["запись", "записи", "записей"])} Creker`);
   }
   return `Добавлено: ${parts.join(", ")}.`;
 }
@@ -63,7 +73,16 @@ function describeImport(stats: ImportStats, mode: ImportMode): string {
  * changing phones threw away the entire history with no way to get it back.
  * This is that way: one JSON file out, the same file back in.
  */
-export default function DataBackup() {
+export default function DataBackup({
+  scope = "all",
+  title,
+  hint,
+}: {
+  /** Какой раздел выгружается. Загрузка принимает любой файл — он сам говорит, что в нём. */
+  scope?: BackupScope;
+  title?: string;
+  hint?: string;
+}) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState<Busy>(null);
   const [pending, setPending] = useState<ParsedBackup | null>(null);
@@ -73,8 +92,8 @@ export default function DataBackup() {
     setBusy("export");
     setNote(null);
     try {
-      const name = backupFileName();
-      const result = await saveTextFile(name, await buildBackupText());
+      const name = backupFileName(new Date(), scope);
+      const result = await saveTextFile(name, await buildBackupText(scope));
       setNote({
         tone: "ok",
         text:
@@ -129,8 +148,10 @@ export default function DataBackup() {
   const onReplace = () => {
     if (!pending) return;
     confirmDestructive(
-      "Заменить все данные?",
-      "Привычки, отметки, сессии и заметки на этом телефоне будут стёрты и заменены содержимым файла. Отменить это будет нечем.",
+      pending.scope === "all" ? "Заменить все данные?" : `Заменить данные ${SCOPE_LABELS[pending.scope]}?`,
+      pending.scope === "all"
+        ? "Привычки, отметки, сессии и заметки на этом телефоне будут стёрты и заменены содержимым файла. Отменить это будет нечем."
+        : `На этом телефоне будет стёрто и заменено содержимым файла только то, что относится к ${SCOPE_LABELS[pending.scope]}. Остальные разделы не тронутся. Отменить это будет нечем.`,
       () => void run("replace"),
       "Заменить",
     );
@@ -138,9 +159,10 @@ export default function DataBackup() {
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.sectionLabel}>Данные</Text>
+      <Text style={styles.sectionLabel}>{title ?? "Данные"}</Text>
       <Text style={styles.subtle}>
-        Всё хранится только на этом телефоне. Сохрани копию перед переустановкой или переездом на новый.
+        {hint ??
+          "Всё хранится только на этом телефоне. Сохрани копию перед переустановкой или переездом на новый."}
       </Text>
 
       {/* Above the buttons, not below them: this section is the last thing on a
@@ -154,7 +176,7 @@ export default function DataBackup() {
           onPress={onExport}
           disabled={busy !== null}
           accessibilityRole="button"
-          accessibilityLabel="Скачать данные в файл"
+          accessibilityLabel={`Скачать данные (${SCOPE_LABELS[scope]}) в файл`}
           style={({ pressed }) => [styles.button, styles.primary, (pressed || busy === "export") && styles.pressed]}
         >
           <Text style={styles.primaryText}>{busy === "export" ? "Сохраняю…" : "Скачать данные"}</Text>
@@ -163,7 +185,7 @@ export default function DataBackup() {
           onPress={onPick}
           disabled={busy !== null}
           accessibilityRole="button"
-          accessibilityLabel="Загрузить данные из файла"
+          accessibilityLabel={`Загрузить данные (${SCOPE_LABELS[scope]}) из файла`}
           style={({ pressed }) => [styles.button, styles.secondary, pressed && styles.pressed]}
         >
           <Text style={styles.secondaryText}>Загрузить из файла</Text>
@@ -191,7 +213,9 @@ export default function DataBackup() {
               accessibilityRole="button"
               style={({ pressed }) => [styles.button, styles.danger, pressed && styles.pressed]}
             >
-              <Text style={styles.dangerText}>Заменить всё</Text>
+              <Text style={styles.dangerText}>
+                {pending.scope === "all" ? "Заменить всё" : "Заменить раздел"}
+              </Text>
             </Pressable>
           </View>
           <Pressable onPress={() => setPending(null)} accessibilityRole="button" style={styles.cancel}>

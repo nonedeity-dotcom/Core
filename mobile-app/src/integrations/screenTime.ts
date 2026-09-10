@@ -77,7 +77,7 @@ export interface CrekerSyncResult {
  *
  * Молчаливый ноль — нормальное состояние, а не ошибка: creker может быть не установлен, не
  * пускать это приложение или быть слишком старым для пути с приложениями. Отличить одно от
- * другого умеет `getCrekerConnection`, и это забота экрана, а не переноса.
+ * другого умеет `getCrekerConnection` в нативном модуле, и это забота экрана, а не переноса.
  */
 export async function syncFromCreker(): Promise<CrekerSyncResult> {
   const importedThrough = await api.getScreenImportedThrough();

@@ -13,8 +13,10 @@ import {
 import {
   getReminderSettings,
   setReminderSettings,
+  CHANNEL_BODIES,
+  CHANNEL_LABELS,
   MAX_REMINDERS_PER_DAY,
-  DEFAULT_REMINDER_BODY,
+  type ReminderChannel,
   type ReminderFailure,
   type ReminderSettings,
   type ReminderTime,
@@ -55,7 +57,19 @@ async function openBatterySettings(): Promise<boolean> {
   }
 }
 
-export default function ReminderScreen() {
+/**
+ * Что и когда присылает один раздел.
+ *
+ * Экран один на все три: у напоминаний Sterzhen, CaloriX и Creker разные слова и разное
+ * время, но одна и та же механика — сколько раз в день и во сколько. Раздел приходит
+ * параметром, а вместе с ним и то, чего у остальных нет: этапы бывают только у привычек.
+ */
+export default function ReminderScreen({
+  route,
+}: {
+  route?: { params?: { channel?: ReminderChannel } };
+}) {
+  const channel: ReminderChannel = route?.params?.channel ?? "sterzhen";
   const [settings, setSettings] = useState<ReminderSettings | null>(null);
   const [alerts, setAlerts] = useState<PhaseAlerts | null>(null);
   const [failure, setFailure] = useState<{ kind: ReminderFailure; detail?: string } | null>(null);
@@ -80,29 +94,30 @@ export default function ReminderScreen() {
 
   if (!settings || !alerts) return null;
 
+  const own = settings.channels[channel];
+  const patchChannel = (patch: Partial<typeof own>) =>
+    update({ ...settings, channels: { ...settings.channels, [channel]: { ...own, ...patch } } });
+
   const patchTime = (index: number, patch: Partial<ReminderTime>) =>
-    update({
-      ...settings,
-      times: settings.times.map((t, i) => (i === index ? { ...t, ...patch } : t)),
-    });
+    patchChannel({ times: own.times.map((t, i) => (i === index ? { ...t, ...patch } : t)) });
 
   const bumpHour = (i: number, delta: number) =>
-    patchTime(i, { hour: (settings.times[i].hour + delta + 24) % 24 });
+    patchTime(i, { hour: (own.times[i].hour + delta + 24) % 24 });
   const bumpMinute = (i: number, delta: number) =>
-    patchTime(i, { minute: (settings.times[i].minute + delta + 60) % 60 });
+    patchTime(i, { minute: (own.times[i].minute + delta + 60) % 60 });
 
   const setCount = (count: number) => {
     const target = Math.min(MAX_REMINDERS_PER_DAY, Math.max(1, count));
-    const times = [...settings.times];
+    const times = [...own.times];
     while (times.length > target) times.pop();
     while (times.length < target) times.push(nextSlot(times));
-    update({ ...settings, times });
+    patchChannel({ times });
   };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
       <Text style={styles.subtle}>
-        Всё, что приложение может прислать: когда придёт и что будет написано
+        {`${CHANNEL_LABELS[channel]}: когда придёт напоминание и что в нём будет написано`}
       </Text>
 
       {/* Above the settings on purpose: a time picker is pointless if the OS
@@ -112,13 +127,20 @@ export default function ReminderScreen() {
       <View style={styles.enableRow}>
         <Text style={styles.enableLabel}>Включено</Text>
         <Switch
-          value={settings.enabled}
-          onValueChange={(enabled) => update({ ...settings, enabled })}
-          accessibilityLabel="Включить напоминания"
+          value={own.enabled}
+          onValueChange={(enabled) => patchChannel({ enabled })}
+          accessibilityLabel={`Включить напоминания ${CHANNEL_LABELS[channel]}`}
           trackColor={{ false: colors.cardBorder, true: colors.accentGreenDark }}
           thumbColor={colors.text}
         />
       </View>
+
+      {own.enabled && !settings.enabled && (
+        <Text style={styles.deniedNote}>
+          Общий переключатель уведомлений выключен в настройках — пока он выключен, это
+          напоминание не придёт.
+        </Text>
+      )}
 
       {failure && (
         <Text style={styles.deniedNote}>
@@ -134,26 +156,26 @@ export default function ReminderScreen() {
         <Text style={styles.enableLabel}>Сколько раз в день</Text>
         <View style={styles.counter}>
           <Pressable
-            onPress={() => setCount(settings.times.length - 1)}
-            disabled={settings.times.length <= 1}
+            onPress={() => setCount(own.times.length - 1)}
+            disabled={own.times.length <= 1}
             accessibilityRole="button"
             accessibilityLabel="Меньше уведомлений в день"
             style={({ pressed }) => [
               styles.smallBtn,
-              (pressed || settings.times.length <= 1) && styles.dimmed,
+              (pressed || own.times.length <= 1) && styles.dimmed,
             ]}
           >
             <Text style={styles.smallBtnText}>−</Text>
           </Pressable>
-          <Text style={styles.countValue}>{settings.times.length}</Text>
+          <Text style={styles.countValue}>{own.times.length}</Text>
           <Pressable
-            onPress={() => setCount(settings.times.length + 1)}
-            disabled={settings.times.length >= MAX_REMINDERS_PER_DAY}
+            onPress={() => setCount(own.times.length + 1)}
+            disabled={own.times.length >= MAX_REMINDERS_PER_DAY}
             accessibilityRole="button"
             accessibilityLabel="Больше уведомлений в день"
             style={({ pressed }) => [
               styles.smallBtn,
-              (pressed || settings.times.length >= MAX_REMINDERS_PER_DAY) && styles.dimmed,
+              (pressed || own.times.length >= MAX_REMINDERS_PER_DAY) && styles.dimmed,
             ]}
           >
             <Text style={styles.smallBtnText}>+</Text>
@@ -163,7 +185,7 @@ export default function ReminderScreen() {
 
       {/* Every slot gets its own picker: spreading N reminders across the day
           automatically would mean guessing when your day starts. */}
-      {settings.times.map((time, i) => (
+      {own.times.map((time, i) => (
         <View key={i} style={styles.timeCard}>
           <View style={styles.timeHeader}>
             <Feather name="bell" size={14} color={colors.textMuted} />
@@ -215,7 +237,7 @@ export default function ReminderScreen() {
           <TextInput
             value={time.text ?? ""}
             onChangeText={(text) => patchTime(i, { text })}
-            placeholder={DEFAULT_REMINDER_BODY}
+            placeholder={CHANNEL_BODIES[channel]}
             placeholderTextColor={colors.textMuted}
             multiline
             style={styles.textInput}
@@ -224,6 +246,8 @@ export default function ReminderScreen() {
         </View>
       ))}
 
+      {channel === "sterzhen" && (
+        <>
       <Text style={styles.sectionLabel}>Этапы</Text>
       <Text style={styles.subtle}>
         Приходит один раз за серию, когда начинается новый этап — при первом открытии
@@ -265,6 +289,8 @@ export default function ReminderScreen() {
           </View>
         );
       })}
+        </>
+      )}
 
       {/* Said once, plainly, rather than left to be discovered as a bug: the app asks for a
           time and Android delivers around it. */}

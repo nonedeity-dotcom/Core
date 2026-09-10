@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { NavigationContainer, DarkTheme } from "@react-navigation/native";
+import { NavigationContainer, DarkTheme, createNavigationContainerRef } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { Pressable, View } from "react-native";
@@ -28,6 +28,11 @@ import BalanceStatsScreen from "../screens/balance/StatsScreen";
 import UsageScreen from "../screens/screen/UsageScreen";
 import AppUsageScreen from "../screens/screen/AppUsageScreen";
 import SectionMenu, { type Section } from "./SectionMenu";
+import { CHANNEL_LABELS, type ReminderChannel } from "../notifications/reminders";
+
+// Меню разделов живёт рядом с навигатором, а не внутри экрана, поэтому своего `navigation`
+// у него нет: переход в настройки идёт через ссылку на контейнер.
+const navRef = createNavigationContainerRef();
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -134,7 +139,7 @@ export default function RootTabs() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <NavigationContainer theme={navTheme}>
+    <NavigationContainer theme={navTheme} ref={navRef}>
       <Stack.Navigator
         screenOptions={{
           headerStyle: { backgroundColor: colors.bg },
@@ -146,7 +151,7 @@ export default function RootTabs() {
       >
         <Stack.Screen
           name="Tabs"
-          options={({ navigation }) => ({
+          options={() => ({
             // No title: every tab already says what it is, and a second title
             // row would just eat height on a 640px screen.
             headerTitle: "",
@@ -161,19 +166,12 @@ export default function RootTabs() {
                 <Feather name="menu" size={20} color={colors.textMuted} />
               </Pressable>
             ),
+            // Шестерёнка ушла в меню разделов: настройки настраивают все три раздела, и
+            // место им там же, где эти разделы выбирают, — а в шапке остаётся то, что
+            // относится к текущему экрану.
             headerRight: () => (
               <View style={{ flexDirection: "row", alignItems: "center" }}>
-                {/* Кнопка обновления читает creker и относится только к Sterzhen. */}
                 {section === "sterzhen" && <HeaderRefresh />}
-                <Pressable
-                  onPress={() => navigation.navigate("Settings")}
-                  accessibilityRole="button"
-                  accessibilityLabel="Настройки"
-                  hitSlop={12}
-                  style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-                >
-                  <Feather name="settings" size={20} color={colors.textMuted} />
-                </Pressable>
               </View>
             ),
           })}
@@ -200,7 +198,16 @@ export default function RootTabs() {
           component={HabitReportScreen}
           options={({ route }) => ({ title: (route.params as { title?: string })?.title ?? "Привычка" })}
         />
-        <Stack.Screen name="Reminder" component={ReminderScreen} options={{ title: "Уведомления" }} />
+        {/* Заголовок называет раздел: экран один на три, и «Уведомления» без имени
+            оставляли бы вопрос, чьи именно. */}
+        <Stack.Screen
+          name="Reminder"
+          component={ReminderScreen}
+          options={({ route }) => {
+            const channel = (route.params as { channel?: ReminderChannel })?.channel ?? "sterzhen";
+            return { title: `Уведомления · ${CHANNEL_LABELS[channel]}` };
+          }}
+        />
         <Stack.Screen name="Review" component={ReviewScreen} options={{ title: "Сверка за неделю" }} />
       </Stack.Navigator>
 
@@ -209,18 +216,7 @@ export default function RootTabs() {
         section={section}
         onClose={() => setMenuOpen(false)}
         onSelect={setSection}
-        extra={[
-          {
-            id: "creker",
-            title: "Creker",
-            hint: "Отдельное приложение — больше не нужно",
-            icon: "activity",
-            // creker переехал целиком: и экраны, и измерение. Пункт остаётся, пока он у
-            // человека установлен, ровно с одной целью — сказать, что его можно удалить,
-            // забрав историю. Молча исчезнуть было бы хуже: он остался бы на телефоне.
-            disabledNote: "Всё это теперь в разделе «Экран». Забери оттуда историю — и creker можно удалять",
-          },
-        ]}
+        onSettings={() => navRef.current?.navigate("Settings" as never)}
       />
     </NavigationContainer>
   );

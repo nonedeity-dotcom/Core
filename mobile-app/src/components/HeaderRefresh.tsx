@@ -46,7 +46,7 @@ export default function HeaderRefresh() {
       accessibilityLabel="Обновить"
       accessibilityState={{ busy }}
       hitSlop={12}
-      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, marginRight: 16 })}
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
       <Feather name="refresh-cw" size={18} color={busy ? colors.accent : colors.textMuted} />
     </Pressable>
