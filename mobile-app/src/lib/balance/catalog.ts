@@ -63,6 +63,10 @@ export const CATALOG_PRODUCTS: CatalogProduct[] = [
   p("grechka-suh", "Гречка, сухая крупа", 343, 13.3, 3.4, 62),
   p("hlopya", "Овсяные хлопья, сухие", 379, 13.2, 6.5, 68),
   p("pasta-suh", "Макароны, сухая крупа", 371, 13, 1.5, 75),
+  p("lapsha", "Лапша отварная", 130, 4.2, 0.9, 25),
+  // Уточнение длиннее основного имени намеренно: короткое «лапша» должно доставаться той,
+  // которую едят, а не той, которая лежит в пачке. Семьдесят граммов сухой — тарелка в 200.
+  p("lapsha-suh", "Лапша сухая, в пачке", 360, 11.5, 2.5, 70),
   p("bulgur", "Булгур отварной", 83, 3, 0.2, 14.6),
   p("kinoa", "Киноа отварная", 120, 4.4, 1.9, 21.3),
   p("perlovka", "Перловка отварная", 106, 3.1, 0.4, 22.2),
@@ -249,6 +253,35 @@ export const CATALOG_DISHES: CatalogDish[] = [
     items: [
       { productId: "base-protein", grams: 30 },
       { productId: "base-moloko", grams: 250 },
+    ],
+  },
+  {
+    // Две порции одного и того же: тарелка обычная и тарелка побольше. Отдельными блюдами,
+    // а не одним с правкой веса, — чтобы вечером не считать, сколько сегодня наложил.
+    id: "base-dish-lapsha",
+    name: "Лапша",
+    items: [{ productId: "base-lapsha", grams: 200 }],
+  },
+  {
+    id: "base-dish-lapsha-bolshaya",
+    name: "Лапша, большая порция",
+    items: [{ productId: "base-lapsha", grams: 300 }],
+  },
+  {
+    // Курицы здесь немного — она идёт кусочками, а не куском: двадцать пять граммов.
+    id: "base-dish-lapsha-kurica",
+    name: "Лапша с кусочками курицы",
+    items: [
+      { productId: "base-lapsha", grams: 200 },
+      { productId: "base-grudka", grams: 25 },
+    ],
+  },
+  {
+    id: "base-dish-lapsha-kurica-bolshaya",
+    name: "Лапша с курицей, большая порция",
+    items: [
+      { productId: "base-lapsha", grams: 300 },
+      { productId: "base-grudka", grams: 25 },
     ],
   },
   {
