@@ -109,3 +109,29 @@ export function daysBetween(from: string, to: string): number {
   };
   return dayNumber(to) - dayNumber(from);
 }
+
+const MONTHS_IN = [
+  "января",
+  "февраля",
+  "марта",
+  "апреля",
+  "мая",
+  "июня",
+  "июля",
+  "августа",
+  "сентября",
+  "октября",
+  "ноября",
+  "декабря",
+];
+
+/**
+ * «10 сентября» — день так, как его называют вслух.
+ *
+ * Для заголовка, а не для таблицы: там, где дата стоит одна и её читают, а не сравнивают
+ * с соседними, цифры через точку заставляют разбирать, где день, а где месяц.
+ */
+export function formatDayLong(dateKey: string): string {
+  const [, m, d] = dateKey.split("-").map(Number);
+  return `${d} ${MONTHS_IN[m - 1] ?? m}`;
+}

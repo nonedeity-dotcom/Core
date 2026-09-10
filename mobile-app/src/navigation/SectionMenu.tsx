@@ -2,7 +2,7 @@ import { View, Text, Pressable, Modal, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
 
-export type Section = "sterzhen" | "balance" | "screen";
+export type Section = "home" | "sterzhen" | "balance" | "screen";
 
 /**
  * Меню разделов — то, что открывается кнопкой «три линии» слева в шапке.
@@ -27,6 +27,8 @@ export default function SectionMenu({
   onSettings: () => void;
 }) {
   const sections: { id: Section; title: string; hint: string; icon: React.ComponentProps<typeof Feather>["name"] }[] = [
+    // Главная первой: она про сегодняшний день целиком, а разделы — про его части.
+    { id: "home", title: "Главная", hint: "Общая картина за сегодня", icon: "home" },
     { id: "sterzhen", title: "Sterzhen", hint: "Привычки, фокус, энергия", icon: "check-square" },
     { id: "balance", title: "CaloriX", hint: "Калории и белок за день", icon: "pie-chart" },
     { id: "screen", title: "Creker", hint: "Сколько времени и в чём", icon: "smartphone" },

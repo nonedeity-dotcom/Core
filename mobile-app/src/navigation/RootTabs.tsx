@@ -27,6 +27,7 @@ import AddFoodScreen from "../screens/balance/AddFoodScreen";
 import BalanceStatsScreen from "../screens/balance/StatsScreen";
 import UsageScreen from "../screens/screen/UsageScreen";
 import AppUsageScreen from "../screens/screen/AppUsageScreen";
+import HomeScreen from "../screens/HomeScreen";
 import SectionMenu, { type Section } from "./SectionMenu";
 import { CHANNEL_LABELS, type ReminderChannel } from "../notifications/reminders";
 
@@ -133,9 +134,11 @@ function ScreenTabs() {
 // just fit at 320px, and an eighth does not fit at all.
 export default function RootTabs() {
   // Раздел живёт здесь, а не в навигаторе: это не экран, на который переходят, а то, чем
-  // приложение сейчас является. Не запоминается между запусками — открывается всегда на
-  // Sterzhen, потому что открывают приложение ради него.
-  const [section, setSection] = useState<Section>("sterzhen");
+  // приложение сейчас является. Он живёт ровно столько, сколько живёт процесс: ушёл в фон и
+  // вернулся — остаёшься там, где был; закрыл приложение совсем — открывается Главная. Это
+  // не настройка, а следствие того, что раздел нигде не сохраняется, и поведение ровно то,
+  // которого от приложения ждут.
+  const [section, setSection] = useState<Section>("home");
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -177,7 +180,15 @@ export default function RootTabs() {
           })}
         >
           {() =>
-            section === "sterzhen" ? <Tabs /> : section === "balance" ? <BalanceTabs /> : <ScreenTabs />
+            section === "home" ? (
+              <HomeScreen onOpen={setSection} />
+            ) : section === "sterzhen" ? (
+              <Tabs />
+            ) : section === "balance" ? (
+              <BalanceTabs />
+            ) : (
+              <ScreenTabs />
+            )
           }
         </Stack.Screen>
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: "Настройки" }} />
