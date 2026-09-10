@@ -76,7 +76,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sterzhen-apk
+          name: core-apk
           path: mobile-app/${{ steps.apk.outputs.path }}
 
       # Одна сборка, одно приложение. Раньше рядом собиралась вторая, со своим
@@ -86,8 +86,8 @@ jobs:
         id: flavour
         run: |
           echo "tag=android-build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "title=Sterzhen — сборка ${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "note=Обычная сборка Sterzhen." >> "$GITHUB_OUTPUT"
+          echo "title=Core — сборка ${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "note=Обычная сборка Core." >> "$GITHUB_OUTPUT"
 
       - name: Publish release with APK
         uses: softprops/action-gh-release@v2

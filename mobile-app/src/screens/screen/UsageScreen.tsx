@@ -51,7 +51,7 @@ const SORTS: Metric[] = ["time", "launches"];
  * тем же именем человек его и ищет.
  */
 function appName(): string {
-  return Application.applicationName ?? "Sterzhen";
+  return Application.applicationName ?? "Core";
 }
 
 const PHONE = "__phone__";

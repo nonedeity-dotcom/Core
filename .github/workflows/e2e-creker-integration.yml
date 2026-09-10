@@ -3,13 +3,13 @@ name: E2E check — creker integration
 # Manual only: boots an Android emulator, seeds creker with a known
 # screen-time value via its CI-only instrumented test (SeedTestDataTest —
 # lives in creker's app/src/androidTest, never ships in a real APK),
-# installs the real sterzhen release APK next to it, launches it, and
+# installs the real core release APK next to it, launches it, and
 # screenshots + logcats the result. This is the only way to check that data
-# actually crosses from creker's ContentProvider into sterzhen's native
+# actually crosses from creker's ContentProvider into core's native
 # module — a build succeeding proves the code compiles, not that the two
 # apps can actually talk to each other on a device.
 #
-# Two separate jobs, not one: building sterzhen's APK (RN/Compose gradle
+# Two separate jobs, not one: building core's APK (RN/Compose gradle
 # cache) and running the emulator (Android SDK + a several-GB system image)
 # together ran the single runner out of disk mid-emulator-setup ("No space
 # left on device") — confirmed by log, not a guess. Splitting them gives
@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: sterzhen
+          path: core
 
       - uses: actions/setup-node@v4
         with:
@@ -37,8 +37,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Build sterzhen release APK
-        working-directory: sterzhen/mobile-app
+      - name: Build core release APK
+        working-directory: core/mobile-app
         run: |
           npm install
 
@@ -57,7 +57,7 @@ jobs:
           # anyway) — the filesystem outcome is checked, not $?, since the
           # exit code can't be trusted.
           EXPO_OFFLINE=1 CI=1 npx expo prebuild --platform android \
-            --template "$GITHUB_WORKSPACE/sterzhen/.github/e2e-assets/expo-template-bare-minimum-51.0.56.tgz"
+            --template "$GITHUB_WORKSPACE/core/.github/e2e-assets/expo-template-bare-minimum-51.0.56.tgz"
           if [ ! -f android/settings.gradle ]; then
             echo "prebuild failed even with the cached template — see log above"
             exit 1
@@ -68,7 +68,7 @@ jobs:
           ./gradlew assembleRelease --no-daemon
 
       - name: Dump merged manifest for diagnosis
-        working-directory: sterzhen/mobile-app
+        working-directory: core/mobile-app
         run: |
           MANIFEST=$(find android/app/build/intermediates -iname "AndroidManifest.xml" -path "*release*" | head -n 1)
           echo "Merged manifest: $MANIFEST"
@@ -76,16 +76,16 @@ jobs:
             grep -n -A2 -B2 "creker\|queries\|READ_USAGE" "$MANIFEST" || echo "no creker-related lines found in merged manifest"
           fi
 
-      - name: Locate sterzhen APK
+      - name: Locate core APK
         id: nb_apk
         run: |
-          APK=$(find sterzhen/mobile-app/android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          APK=$(find core/mobile-app/android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
           echo "Found $APK"
           cp "$APK" ./app-release.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sterzhen-apk
+          name: core-apk
           path: app-release.apk
           retention-days: 1
 
@@ -98,7 +98,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: sterzhen
+          path: core
 
       # creker is a public repo on the same account, so this needs no token —
       # a plain checkout works exactly like it would for any public repo.
@@ -110,7 +110,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: sterzhen-apk
+          name: core-apk
 
       - uses: actions/setup-java@v4
         with:
@@ -123,7 +123,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Seed creker, install sterzhen, verify + screenshot via Maestro
+      - name: Seed creker, install core, verify + screenshot via Maestro
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
@@ -141,12 +141,12 @@ jobs:
           # lines — dependent steps are chained with `&&` inside one line.
           #
           # The real bug behind every prior "checkbox never auto-ticks" run:
-          # `pm list packages` right after this step showed ONLY sterzhen
+          # `pm list packages` right after this step showed ONLY core
           # installed — creker was gone, despite SeedTestDataTest passing
           # moments earlier. `./gradlew connectedDebugAndroidTest` (AGP's
           # standard task) installs, runs, then UNINSTALLS the app under test
           # as part of its own cleanup — wiping creker's freshly-seeded Room
-          # DB with it before sterzhen ever got to query it. That's the
+          # DB with it before core ever got to query it. That's the
           # actual reason ContentResolver saw "Failed to find provider info":
           # the app genuinely wasn't there, not a package-visibility problem.
           # Fixed by building + installing creker's app and androidTest APKs
@@ -171,14 +171,14 @@ jobs:
             # Expected to print "No result found." now: creker decides per calling app,
             # and the shell is not one of the apps the user allowed. That is the check
             # working, not failing -- the real cross-app read is the Maestro flow below,
-            # which runs as sterzhen, the one package creker allows by default. Kept
+            # which runs as core, the one package creker allows by default. Kept
             # because a *successful* read here would mean the per-app gate is not holding.
             echo "=== adb shell content query (expected: refused, shell is not an allowed app) ===" && adb shell content query --uri content://com.creker.screentime.provider/device_usage --bind 0:s:$(date -u +%F) --bind 1:s:$(date -u +%F)
             curl -Ls "https://get.maestro.mobile.dev" | bash
-            (export PATH="$PATH:$HOME/.maestro/bin" && maestro test sterzhen/mobile-app/.maestro/screentime-integration.yaml) || echo "screentime-integration FAILED" > flow-screentime.status
-            (export PATH="$PATH:$HOME/.maestro/bin" && maestro test sterzhen/mobile-app/.maestro/data-backup.yaml) || echo "data-backup FAILED" > flow-backup.status
-            (export PATH="$PATH:$HOME/.maestro/bin" && maestro test sterzhen/mobile-app/.maestro/library.yaml) || echo "library FAILED" > flow-library.status
-            (export PATH="$PATH:$HOME/.maestro/bin" && maestro test sterzhen/mobile-app/.maestro/controls.yaml) || echo "controls FAILED" > flow-controls.status
+            (export PATH="$PATH:$HOME/.maestro/bin" && maestro test core/mobile-app/.maestro/screentime-integration.yaml) || echo "screentime-integration FAILED" > flow-screentime.status
+            (export PATH="$PATH:$HOME/.maestro/bin" && maestro test core/mobile-app/.maestro/data-backup.yaml) || echo "data-backup FAILED" > flow-backup.status
+            (export PATH="$PATH:$HOME/.maestro/bin" && maestro test core/mobile-app/.maestro/library.yaml) || echo "library FAILED" > flow-library.status
+            (export PATH="$PATH:$HOME/.maestro/bin" && maestro test core/mobile-app/.maestro/controls.yaml) || echo "controls FAILED" > flow-controls.status
             adb logcat -d > logcat.txt
             cat flow-screentime.status flow-backup.status flow-library.status flow-controls.status 2>/dev/null; [ ! -s flow-screentime.status ] && [ ! -s flow-backup.status ] && [ ! -s flow-library.status ] && [ ! -s flow-controls.status ]
 
@@ -232,7 +232,7 @@ jobs:
       # history of images.
       - name: Publish screenshot + logcat to e2e-results branch for review
         if: always()
-        working-directory: sterzhen
+        working-directory: core
         run: |
           git config user.email "actions@github.com"
           git config user.name "github-actions[bot]"
