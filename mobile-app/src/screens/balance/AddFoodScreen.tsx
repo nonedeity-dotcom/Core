@@ -675,15 +675,52 @@ function DishForm({
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-      <Text style={styles.pickedName}>{dish ? dish.name : "Несколько продуктов"}</Text>
+      <Text style={styles.pickedName}>{dish ? dish.name : "Набор продуктов"}</Text>
       <Text style={styles.caption}>
         {dish
-          ? "Уже записанное в дневник не изменится — там свои числа"
-          : "Набери состав — строкой или руками. Дальше можно положить его в дневник разом " +
-            "или сохранить блюдом, чтобы в следующий раз добавлять одним нажатием."}
+          ? "Правится рецепт. Уже записанное в дневник не изменится — там свои числа"
+          : "Собери, что съел. Дальше — положить в дневник или сохранить блюдом"}
       </Text>
 
-      <Text style={styles.sectionLabel}>Строкой</Text>
+      {/*
+        Порядок экрана — это порядок действий: сперва добавить, потом посмотреть, что вышло,
+        потом решить, куда это деть.
+
+        Раньше он был перемешан: строкой добавляли вверху, поиском — в самом низу, а между
+        ними стоял набор и итог. Два способа сделать одно и то же на разных концах экрана, и
+        итог посередине, хотя итог — это конец. Теперь оба способа рядом, набор под ними, а
+        обе двери наружу — в самом низу и подписаны тем, что они делают.
+      */}
+      <Text style={styles.sectionLabel}>Что добавить</Text>
+      <TextInput
+        value={query}
+        onChangeText={setQuery}
+        placeholder="Найти среди своих продуктов…"
+        placeholderTextColor={colors.textMuted}
+        style={styles.search}
+        accessibilityLabel="Поиск продукта для набора"
+      />
+      {/* Пустой запрос — недавние, а не весь список: восемь случайных продуктов между
+          поиском и набором отодвигали набор за край экрана. Того, что ел вчера, обычно
+          хватает; остальное находится по названию. */}
+      {(query.trim() === "" ? recentProducts(products).slice(0, 4) : searchProducts(products, query).slice(0, 8))
+        .map((p) => (
+          <Pressable
+            key={p.id}
+            onPress={() => setItems([...items, { productId: p.id, grams: p.portionG ?? 100 }])}
+            accessibilityRole="button"
+            accessibilityLabel={`В набор: ${p.name}`}
+            style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowName}>{p.name}</Text>
+              <Text style={styles.rowDetail}>{`${p.kcal} ккал на 100 г`}</Text>
+            </View>
+            <Feather name="plus" size={16} color={colors.accentGreen} />
+          </Pressable>
+        ))}
+
+      <Text style={styles.subLabel}>Или строкой, если продуктов несколько</Text>
       <TextInput
         value={line}
         onChangeText={setLine}
@@ -703,7 +740,7 @@ function DishForm({
         <Feather name="corner-down-left" size={15} color={colors.textMuted} />
         <Text style={styles.addText}>Разобрать</Text>
       </Pressable>
-      <Text style={styles.rowHint}>
+      <Text style={styles.hintUnder}>
         Узнаёт только свои продукты — те, что уже заведены. Единицу можно не называть: «2
         яйца» это две штуки, «400 риса» — четыреста граммов.
       </Text>
@@ -717,14 +754,21 @@ function DishForm({
             </Text>
           ))}
           <Text style={styles.rowHint}>
-            Либо такого продукта ещё нет в списке, либо не назван вес. Добавь это ниже руками.
+            Либо такого продукта ещё нет в списке, либо не назван вес. Найди его выше по
+            названию или заведи отдельно.
           </Text>
         </View>
       )}
 
-      {items.length > 0 && (
+      <Text style={styles.sectionLabel}>
+        {items.length === 0
+          ? "В наборе"
+          : `В наборе · ${items.length} ${plural(items.length, ["продукт", "продукта", "продуктов"])}`}
+      </Text>
+      {items.length === 0 ? (
+        <Text style={styles.empty}>Пока пусто. Найди продукт выше или запиши строкой.</Text>
+      ) : (
         <>
-          <Text style={styles.sectionLabel}>В наборе</Text>
           {items.map((item, i) => {
             const product = byId.get(item.productId);
             const step = product ? stepGrams(product) : 25;
@@ -773,71 +817,57 @@ function DishForm({
         </>
       )}
 
-      <Text style={styles.sectionLabel}>Добавить продукт</Text>
-      <TextInput
-        value={query}
-        onChangeText={setQuery}
-        placeholder="Найти…"
-        placeholderTextColor={colors.textMuted}
-        style={styles.search}
-        accessibilityLabel="Поиск продукта для блюда"
-      />
-      {searchProducts(products, query)
-        .slice(0, 8)
-        .map((p) => (
-          <Pressable
-            key={p.id}
-            onPress={() => setItems([...items, { productId: p.id, grams: p.portionG ?? 100 }])}
-            accessibilityRole="button"
-            accessibilityLabel={`В набор: ${p.name}`}
-            style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowName}>{p.name}</Text>
-              <Text style={styles.rowDetail}>{`${p.kcal} ккал на 100 г`}</Text>
-            </View>
-            <Feather name="plus" size={16} color={colors.textMuted} />
-          </Pressable>
-        ))}
-
-      {/* Дневник первым: набирают чаще ради одного раза, чем ради рецепта. */}
+      {/* Две двери наружу, и подписаны они тем, что делают, а не тем, как называются.
+          Дневник первым: набирают чаще ради одного раза, чем ради рецепта. */}
       {!dish && (
-        <Pressable
-          onPress={() => canAdd && onAddToDiary(items)}
-          disabled={!canAdd}
-          accessibilityRole="button"
-          accessibilityLabel="Добавить набор в дневник"
-          style={({ pressed }) => [styles.primary, !canAdd && styles.primaryOff, pressed && styles.pressed]}
-        >
-          <Text style={styles.primaryText}>
-            {canAdd ? `Добавить в дневник · ${totals.kcal} ккал` : "Добавить в дневник"}
-          </Text>
-        </Pressable>
+        <>
+          <Text style={styles.sectionLabel}>Куда это деть</Text>
+          <Pressable
+            onPress={() => canAdd && onAddToDiary(items)}
+            disabled={!canAdd}
+            accessibilityRole="button"
+            accessibilityLabel="Добавить набор в дневник"
+            style={({ pressed }) => [styles.primaryTight, !canAdd && styles.primaryOff, pressed && styles.pressed]}
+          >
+            <Text style={styles.primaryText}>
+              {canAdd ? `В дневник · ${totals.kcal} ккал` : "В дневник"}
+            </Text>
+          </Pressable>
+          <Text style={styles.hintUnder}>Каждый продукт ляжет отдельной строкой — можно поправить по одному.</Text>
+        </>
       )}
 
-      <Text style={styles.sectionLabel}>Название — только чтобы сохранить как блюдо</Text>
-      <TextInput
-        value={name}
-        onChangeText={setName}
-        placeholder="Например, «Курица с рисом»"
-        placeholderTextColor={colors.textMuted}
-        style={styles.search}
-        accessibilityLabel="Название блюда"
-      />
-      <Pressable
-        onPress={() => canSave && onSaveDish(name.trim(), items)}
-        disabled={!canSave}
-        accessibilityRole="button"
-        accessibilityLabel="Сохранить блюдо"
-        style={({ pressed }) => [
-          styles.addRow,
-          !canSave && styles.rowOff,
-          pressed && styles.pressed,
-        ]}
-      >
-        <Feather name="layers" size={15} color={colors.textMuted} />
-        <Text style={styles.addText}>{dish ? "Сохранить изменения" : "Сохранить как блюдо"}</Text>
-      </Pressable>
+      {/* Имя и кнопка — одним блоком: поле «Название» само по себе не объясняло, зачем оно,
+          и стояло в стороне от кнопки, которой оно нужно. */}
+      <View style={styles.saveCard}>
+        <Text style={styles.saveTitle}>{dish ? "Сохранить изменения" : "Сохранить блюдом"}</Text>
+        {!dish && (
+          <Text style={styles.rowHint}>Чтобы в следующий раз добавить это одним нажатием.</Text>
+        )}
+        <TextInput
+          value={name}
+          onChangeText={setName}
+          placeholder="Например, «Курица с рисом»"
+          placeholderTextColor={colors.textMuted}
+          style={styles.saveInput}
+          accessibilityLabel="Название блюда"
+        />
+        <Pressable
+          onPress={() => canSave && onSaveDish(name.trim(), items)}
+          disabled={!canSave}
+          accessibilityRole="button"
+          accessibilityLabel="Сохранить блюдо"
+          style={({ pressed }) => [styles.saveBtn, !canSave && styles.rowOff, pressed && styles.pressed]}
+        >
+          <Feather name="layers" size={15} color={colors.accentGreen} />
+          <Text style={styles.saveBtnText}>Сохранить</Text>
+        </Pressable>
+        {!canSave && (
+          <Text style={styles.rowHint}>
+            {items.length === 0 ? "Сначала добавь хотя бы один продукт." : "Осталось придумать название."}
+          </Text>
+        )}
+      </View>
 
       <Pressable onPress={onCancel} accessibilityRole="button" style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
         <Text style={styles.backText}>Отмена</Text>
@@ -1062,6 +1092,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
+    // Отступ снизу — у самого поля, а не у того, что под ним.
+    // Его тут не было, и это не замечалось, пока за каждым полем шла подпись раздела со
+    // своим верхним отступом. Стоило поставить под поиск кнопки, а под поиск в блюде —
+    // сразу найденное, и оба слиплись с полем вплотную. Поле само отвечает за воздух под
+    // собой: тогда за ним можно ставить что угодно.
+    marginBottom: 10,
   },
   row: {
     flexDirection: "row",
@@ -1096,6 +1132,45 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   toolText: { color: colors.textMuted, fontSize: 11 },
+  // Подзаголовок внутри раздела: «или строкой» — это второй способ сделать то же самое,
+  // а не новый раздел, и весит он меньше.
+  subLabel: { color: colors.textMuted, fontSize: 12, marginTop: 14, marginBottom: 8 },
+  // Пояснение под тем, что оно поясняет, — с воздухом сверху, чтобы не липло к кнопке.
+  hintUnder: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 8 },
+  primaryTight: {
+    backgroundColor: colors.accentGreen,
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  saveCard: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginTop: 20,
+    gap: 8,
+  },
+  saveTitle: { color: colors.text, fontSize: 14, fontWeight: "600" },
+  saveInput: {
+    color: colors.text,
+    fontSize: 14,
+    backgroundColor: colors.bg,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  saveBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.accentGreen,
+    paddingVertical: 12,
+  },
+  saveBtnText: { color: colors.accentGreen, fontSize: 14, fontWeight: "600" },
   addRow: {
     flexDirection: "row",
     alignItems: "center",
