@@ -32,6 +32,14 @@ import {
 } from "../../lib/balance/food";
 import { parseFoodLine } from "../../lib/balance/parse";
 import BarcodeScan from "./BarcodeScan";
+import {
+  ORIGIN_FILTERS,
+  ORIGIN_LABELS,
+  EMPTY_HINT,
+  countByOrigin,
+  filterByOrigin,
+  type OriginFilter,
+} from "../../lib/balance/origin";
 
 /**
  * Добавить еду: найти продукт, сказать сколько, положить в дневник.
@@ -71,6 +79,13 @@ export default function AddFoodScreen({
    * продуктов его нет.
    */
   const [draft, setDraft] = useState<Omit<FoodProduct, "id"> | null>(null);
+  /**
+   * Какую группу показывать: всё, своё, со сканера или вшитое.
+   *
+   * Переключателем, а не тремя списками подряд: вшитых продуктов больше ста, и три раздела
+   * друг под другом сделали бы экран втрое длиннее того, который только что укорачивали.
+   */
+  const [origin, setOrigin] = useState<OriginFilter>("all");
 
   const { data: products = [] } = useQuery<FoodProduct[]>({
     queryKey: ["foodProducts"],
@@ -271,10 +286,21 @@ export default function AddFoodScreen({
   }
 
   const recent = recentProducts(products);
-  const found = searchProducts(products, query);
+  const allFound = searchProducts(products, query);
   // Блюда ищутся наравне с продуктами. Раньше их список показывался только при пустом поле,
   // и «Курица с рисом» не находилась по слову «курица».
-  const foundDishes = query.trim() === "" ? recentDishes(dishes) : searchDishes(dishes, query);
+  const allFoundDishes = query.trim() === "" ? recentDishes(dishes) : searchDishes(dishes, query);
+
+  // Переключатель режет оба списка сразу: блюда тоже бывают вшитыми и своими, и разное
+  // правило для соседних списков на одном экране читалось бы как ошибка.
+  const found = filterByOrigin(allFound, origin);
+  const foundDishes = filterByOrigin(allFoundDishes, origin);
+  // Числа на кнопках считаются по всему, что есть, а не по найденному: кнопка должна
+  // говорить, сколько там вообще лежит, и не прыгать от каждой буквы в поиске.
+  const counts = countByOrigin([...products, ...dishes]);
+  // Нашлось в других группах, но не в этой — про это надо сказать, иначе выглядит так,
+  // будто продукта нет вовсе.
+  const elsewhere = allFound.length + allFoundDishes.length - found.length - foundDishes.length;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
@@ -320,9 +346,43 @@ export default function AddFoodScreen({
         />
       </View>
 
+      {/* Переключатель источника. Числа стоят на самих кнопках: кнопка без числа
+          заставляет нажать, чтобы узнать, есть ли там что-нибудь. */}
+      <View style={styles.origins}>
+        {ORIGIN_FILTERS.map((f) => (
+          <Pressable
+            key={f}
+            onPress={() => setOrigin(f)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: origin === f }}
+            accessibilityLabel={`${ORIGIN_LABELS[f]}: ${counts[f]}`}
+            style={({ pressed }) => [styles.origin, origin === f && styles.originOn, pressed && styles.pressed]}
+          >
+            <Text style={[styles.originText, origin === f && styles.originTextOn]}>
+              {`${ORIGIN_LABELS[f]} ${counts[f]}`}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {/* Пустая группа объясняется словами, а не пустым местом: «ничего нет» и «ты сюда
+          ещё ничего не клал» — разные сообщения. */}
+      {origin !== "all" && query.trim() === "" && counts[origin] === 0 && (
+        <Text style={styles.empty}>{EMPTY_HINT[origin].products}</Text>
+      )}
+
+      {origin !== "all" && query.trim() === "" && foundDishes.length === 0 && dishes.length > 0 && (
+        <>
+          <Text style={styles.sectionLabel}>{`${ORIGIN_LABELS[origin]} — блюда`}</Text>
+          <Text style={styles.empty}>{EMPTY_HINT[origin].dishes}</Text>
+        </>
+      )}
+
       {foundDishes.length > 0 && (
         <>
-          <Text style={styles.sectionLabel}>Блюда</Text>
+          <Text style={styles.sectionLabel}>
+            {origin === "all" ? "Блюда" : `${ORIGIN_LABELS[origin]} — блюда`}
+          </Text>
           {foundDishes.map((d) => {
             const totals = dishTotals(d, products);
             return (
@@ -367,7 +427,9 @@ export default function AddFoodScreen({
         </>
       )}
 
-      {query.trim() === "" && recent.length > 0 && (
+      {/* «Часто ем» — только когда показано всё. В выбранной группе оно бы дублировало
+          список ниже: те же две-три строки дважды на одном экране. */}
+      {origin === "all" && query.trim() === "" && recent.length > 0 && (
         <>
           <Text style={styles.sectionLabel}>Часто ем</Text>
           {recent.map((p) => (
@@ -383,14 +445,35 @@ export default function AddFoodScreen({
       )}
 
       <Text style={styles.sectionLabel}>
-        {query.trim() === "" ? "Все продукты" : `Продукты: ${found.length}`}
+        {query.trim() !== ""
+          ? `Продукты: ${found.length}`
+          : origin === "all"
+            ? "Все продукты"
+            : `${ORIGIN_LABELS[origin]} — продукты`}
       </Text>
       {found.length === 0 && (
         <Text style={styles.empty}>
           {products.length === 0
             ? "Пока пусто. Добавь базовый набор кнопкой ниже или заведи первый продукт руками — дальше он будет в один тап."
-            : "Ничего не нашлось. Проверь название или заведи новый продукт."}
+            : query.trim() === "" && origin !== "all"
+              ? EMPTY_HINT[origin].products
+              : "Ничего не нашлось. Проверь название или заведи новый продукт."}
         </Text>
+      )}
+      {/* Искал в одной группе, а нашлось в другой. Без этой строки человек решит, что
+          продукта нет вовсе, и заведёт второй такой же. */}
+      {query.trim() !== "" && elsewhere > 0 && (
+        <Pressable
+          onPress={() => setOrigin("all")}
+          accessibilityRole="button"
+          accessibilityLabel={`Показать все группы: ещё ${elsewhere}`}
+          style={({ pressed }) => [styles.elsewhere, pressed && styles.pressed]}
+        >
+          <Feather name="corner-down-right" size={13} color={colors.accent} />
+          <Text style={styles.elsewhereText}>
+            {`В других группах — ещё ${elsewhere}. Показать все`}
+          </Text>
+        </Pressable>
       )}
       {found.map((p) => (
         <ProductRow
@@ -1122,7 +1205,27 @@ const styles = StyleSheet.create({
   rowDetail: { color: colors.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
   rowLabel: { color: colors.text, fontSize: 14, fontWeight: "500" },
   rowHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16 },
-  tools: { flexDirection: "row", gap: 8, marginBottom: 16 },
+  tools: { flexDirection: "row", gap: 8, marginBottom: 12 },
+  origins: { flexDirection: "row", gap: 6, marginBottom: 4 },
+  origin: {
+    flex: 1,
+    backgroundColor: colors.card,
+    borderRadius: 10,
+    paddingVertical: 8,
+    alignItems: "center",
+  },
+  // Выбранная группа — зелёной подсветкой, как всё «включённое» в приложении, а не сменой
+  // цвета целиком: тёмная тема от этого не разъезжается.
+  originOn: { backgroundColor: "rgba(143,184,154,0.14)" },
+  originText: { color: colors.textMuted, fontSize: 11 },
+  originTextOn: { color: colors.accentGreen, fontWeight: "600" },
+  elsewhere: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+  },
+  elsewhereText: { color: colors.accent, fontSize: 13 },
   tool: {
     flex: 1,
     backgroundColor: colors.card,
