@@ -197,8 +197,17 @@ export const METRIC_LABELS: Record<Metric, string> = {
   launches: "Заходы",
 };
 
+/** Два ряда одного дня: время и заходы в тех же часах. */
+export interface HourlySeries {
+  time: HourlyValue[];
+  launches: HourlyValue[];
+}
+
 /**
- * Почасовая разбивка одного дня.
+ * Почасовая разбивка одного дня — время и заходы сразу.
+ *
+ * Оба ряда вместе, а не по одному на запрос: они рисуются на одном графике, считаются из
+ * одних и тех же событий, и делить их значило бы дважды сходить за одним и тем же.
  *
  * Сначала спрашивается хранилище: разбивка посчитана в тот день, когда события были живы, и
  * с тех пор лежит рядом с итогом. Дальше — живые события, для дня, который ещё не успели
@@ -214,13 +223,14 @@ export const METRIC_LABELS: Record<Metric, string> = {
 export async function hourlyFor(
   date: string,
   scope: Scope,
-  metric: Metric,
   homePackages: string[] = [],
   packageName?: string,
-): Promise<HourlyValue[] | null> {
+): Promise<HourlySeries | null> {
   if (!packageName) {
     const stored = await api.getHourlyDay(date);
-    if (stored) return seriesFor(stored, scope, metric);
+    if (stored) {
+      return { time: seriesFor(stored, scope, "time"), launches: seriesFor(stored, scope, "launches") };
+    }
   }
   if (!hasUsageAccess()) return null;
   const [y, m, d] = date.split("-").map(Number);
@@ -233,27 +243,27 @@ export async function hourlyFor(
   if (events.length === 0) return null;
   const home = new Set(homePackages);
 
-  if (metric === "launches") {
-    // У «телефона» заходы — это разблокировки, и по часам тоже: иначе график и крупное
-    // число под ним считали бы разные вещи.
-    if (scope === "phone" && !packageName) return toHourlyUnlocks(events, startMs, endMs);
-    const opened = launchEvents(events).filter((e) =>
-      packageName ? e.packageName === packageName : !home.has(e.packageName),
-    );
-    // Отбор уже сделан, дедупликация внутри повторно ничего не изменит.
-    const launches = toHourlyLaunches(opened, startMs, endMs);
-    if (scope !== "all" || packageName) return launches;
-    // «Общий» — это заходы в приложения плюс разблокировки, ровно как в крупном числе.
-    const unlocks = toHourlyUnlocks(events, startMs, endMs);
-    return launches.map((h, i) => ({ hour: h.hour, value: h.value + (unlocks[i]?.value ?? 0) }));
+  const foreground = buildIntervals(events, startMs, endMs, nowMs);
+  const opened = launchEvents(events).filter((e) =>
+    packageName ? e.packageName === packageName : !home.has(e.packageName),
+  );
+  // Отбор уже сделан, дедупликация внутри повторно ничего не изменит.
+  const appLaunches = toHourlyLaunches(opened, startMs, endMs);
+  const unlocks = toHourlyUnlocks(events, startMs, endMs);
+
+  if (packageName) {
+    return { time: toHourlyUsage(onlyPackage(foreground, packageName)), launches: appLaunches };
   }
 
-  const foreground = buildIntervals(events, startMs, endMs, nowMs);
-  if (packageName) return toHourlyUsage(onlyPackage(foreground, packageName));
-
   const apps = toHourlyUsage(foreground.filter((i) => !home.has(i.packageName)));
-  if (scope === "apps") return apps;
+  if (scope === "apps") return { time: apps, launches: appLaunches };
 
   const screen = toHourlyUsage(buildScreenOnIntervals(events, startMs, endMs, nowMs));
-  return scope === "all" ? screen : subtractHourly(screen, apps);
+  // У «телефона» заходы — это разблокировки, а у «общего» — заходы в приложения плюс они
+  // же: ровно так же, как считаются крупные числа над графиком.
+  if (scope === "phone") return { time: subtractHourly(screen, apps), launches: unlocks };
+  return {
+    time: screen,
+    launches: appLaunches.map((h, i) => ({ hour: h.hour, value: h.value + (unlocks[i]?.value ?? 0) })),
+  };
 }

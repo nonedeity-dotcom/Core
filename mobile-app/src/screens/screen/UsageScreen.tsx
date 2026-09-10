@@ -40,7 +40,7 @@ import ValueChart, { type ChartKind } from "../../components/screen/ValueChart";
 import PeriodBar from "../../components/screen/PeriodBar";
 
 const SCOPES: Scope[] = ["all", "apps", "phone"];
-const METRICS: Metric[] = ["time", "launches"];
+const SORTS: Metric[] = ["time", "launches"];
 /** Условный пакет строки «Телефон» — своего у неё нет, она собрана из нескольких. */
 const PHONE = "__phone__";
 
@@ -65,7 +65,7 @@ export default function UsageScreen({
   const today = useTodayKey();
   const [selection, setSelection] = useState<Selection>({ kind: "preset", preset: "day" });
   const [scope, setScope] = useState<Scope>("all");
-  const [metric, setMetric] = useState<Metric>("time");
+  const [sort, setSort] = useState<Metric>("time");
   const [chart, setChart] = useState<ChartKind>("bars");
 
   const [access, setAccess] = useState<boolean>(() => hasUsageAccess());
@@ -130,8 +130,8 @@ export default function UsageScreen({
   const names = Object.fromEntries(Object.entries(icons).map(([pkg, info]) => [pkg, info.label]));
 
   const { data: hourly } = useQuery({
-    queryKey: ["hourly", range.from, scope, metric, access],
-    queryFn: () => hourlyFor(range.from, scope, metric, homeList),
+    queryKey: ["hourly", range.from, scope, access],
+    queryFn: () => hourlyFor(range.from, scope, homeList),
     enabled: single,
   });
 
@@ -267,11 +267,7 @@ export default function UsageScreen({
   const now = measureOf(days, allApps);
   const before = measureOf(prevDays, allPrevApps);
   const value = now[scope];
-  const change = usageChange(
-    metric === "time" ? value.time : value.launches,
-    metric === "time" ? before[scope].time : before[scope].launches,
-    spanDays,
-  );
+  const change = usageChange(value.time, before[scope].time, spanDays);
 
   /**
    * Список под карточкой.
@@ -290,14 +286,17 @@ export default function UsageScreen({
     shareOfTop: 0,
     shareOfTotal: 0,
   };
+  /**
+   * Чем меряется строка списка — тем же, чем он отсортирован.
+   *
+   * Иначе выходила бы бессмыслица: список выстроен по заходам, а доля рядом посчитана от
+   * времени, и первая строка оказывалась бы «20 %», а третья «40 %».
+   */
+  const weigh = (row: AppTotal) => (sort === "launches" ? row.launchCount : row.usageMillis);
   const rows =
-    scope === "phone"
-      ? []
-      : scope === "apps"
-        ? appTotals
-        : [...appTotals, phoneRow].sort((a, b) => b.usageMillis - a.usageMillis);
-  const rowsSum = rows.reduce((sum, r) => sum + r.usageMillis, 0);
-  const topRow = rows.reduce((m, r) => Math.max(m, r.usageMillis), 0);
+    scope === "phone" ? [] : [...appTotals, ...(scope === "apps" ? [] : [phoneRow])].sort((a, b) => weigh(b) - weigh(a));
+  const rowsSum = rows.reduce((sum, r) => sum + weigh(r), 0);
+  const topRow = rows.reduce((m, r) => Math.max(m, weigh(r)), 0);
 
   const prevByPackage = new Map(
     totalsByApp(relabel(allPrevApps.filter((r) => !home.has(r.packageName)), names)).map(
@@ -305,13 +304,16 @@ export default function UsageScreen({
     ),
   );
 
-  const byDate = new Map<string, { screen: number; apps: number; launches: number }>();
+  const byDate = new Map<string, { screen: number; apps: number; launches: number; unlocks: number }>();
   for (const date of datesBetween(range.from, range.to)) {
-    byDate.set(date, { screen: 0, apps: 0, launches: 0 });
+    byDate.set(date, { screen: 0, apps: 0, launches: 0, unlocks: 0 });
   }
   for (const d of days) {
     const slot = byDate.get(d.date);
-    if (slot) slot.screen = d.screenMillis;
+    if (slot) {
+      slot.screen = d.screenMillis;
+      slot.unlocks = d.unlocks ?? 0;
+    }
   }
   for (const row of allApps) {
     const slot = byDate.get(row.date);
@@ -320,12 +322,21 @@ export default function UsageScreen({
     slot.launches += row.launchCount;
   }
   const dayPoints = datesBetween(range.from, range.to).map((date) => {
-    const slot = byDate.get(date) ?? { screen: 0, apps: 0, launches: 0 };
+    const slot = byDate.get(date) ?? { screen: 0, apps: 0, launches: 0, unlocks: 0 };
     const time =
       scope === "all" ? slot.screen : scope === "apps" ? slot.apps : Math.max(0, slot.screen - slot.apps);
-    return { key: date, label: weekdayLabel(date), value: metric === "time" ? time : slot.launches };
+    const launches =
+      scope === "apps" ? slot.launches : scope === "phone" ? slot.unlocks : slot.launches + slot.unlocks;
+    return { key: date, label: weekdayLabel(date), time, launches };
   });
-  const hourPoints = (hourly ?? []).map((h) => ({ key: `${h.hour}`, label: `${h.hour}`, value: h.value }));
+  const hourPoints = (hourly?.time ?? []).map((h, i) => ({
+    key: `${h.hour}`,
+    label: `${h.hour}`,
+    time: h.value,
+    launches: hourly?.launches[i]?.value ?? 0,
+  }));
+  /** Как называть заходы на графике: у «телефона» это разблокировки. */
+  const chartWord = scope === "phone" ? "разблокировки" : "заходы";
 
   const earliest = earliestStoredDay(everDays, everApps);
   const incomplete = earliest !== null && earliest > range.from;
@@ -409,13 +420,15 @@ export default function UsageScreen({
             </Text>
             {/* Заходы в приложения есть у всех дней, разблокировки — только у измеренных
                 этой версией. Молчать об этом значит выдать неполную сумму за полную. */}
-            {metric === "launches" && scope !== "apps" && blindDays > 0 && (
+            {scope !== "apps" && blindDays > 0 && (
               <Text style={styles.perDay}>
-                {`Разблокировки считаются не за весь период: ${blindDays} ${plural(blindDays, [
-                  "день",
-                  "дня",
-                  "дней",
-                ])} из ${days.length} измерены до того, как их начали считать.`}
+                {blindDays === days.length
+                  ? "Разблокировки за этот период не считались — их начали считать позже."
+                  : `Разблокировки есть не за весь период: ${blindDays} ${plural(blindDays, [
+                      "день",
+                      "дня",
+                      "дней",
+                    ])} из ${days.length} измерены до того, как их начали считать.`}
               </Text>
             )}
             {change && <Text style={styles.change}>{describeChange(change)}</Text>}
@@ -431,33 +444,13 @@ export default function UsageScreen({
 
           <View style={styles.card}>
             <View style={styles.chartHead}>
-              <View style={styles.metrics}>
-                {METRICS.map((m) => (
-                  <Pressable
-                    key={m}
-                    onPress={() => setMetric(m)}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: metric === m }}
-                    accessibilityLabel={`График: ${METRIC_LABELS[m]}`}
-                    style={({ pressed }) => [
-                      styles.metric,
-                      metric === m && styles.metricOn,
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <Text style={[styles.metricText, metric === m && styles.metricTextOn]}>
-                      {METRIC_LABELS[m]}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
               <ChartToggle kind={chart} onChange={setChart} />
             </View>
             {/* У дня без почасовой картины рисуется он сам одним столбиком: пустое место
                 на месте графика читается как «данных нет», хотя итог за день известен. */}
             {single && !hourly ? (
               <>
-                <ValueChart points={dayPoints} kind={chart} counts={metric === "launches"} />
+                <ValueChart points={dayPoints} kind={chart} countWord={chartWord} />
                 <Text style={styles.hint}>
                   По часам этот день не сохранился: подробные события система хранит
                   несколько суток, и всё, что старше начала измерений, осталось только
@@ -465,36 +458,56 @@ export default function UsageScreen({
                 </Text>
               </>
             ) : (
-              <ValueChart
-                points={single ? hourPoints : dayPoints}
-                kind={chart}
-                counts={metric === "launches"}
-              />
+              <ValueChart points={single ? hourPoints : dayPoints} kind={chart} countWord={chartWord} />
             )}
           </View>
 
           {rows.length > 0 && (
             <>
-              <Text style={styles.sectionLabel}>
-                {scope === "all"
-                  ? "Из чего сложилось"
-                  : `Приложения · ${rows.length} ${plural(rows.length, ["штука", "штуки", "штук"])}`}
-              </Text>
+              {/* Сортировка живёт над списком, а не над графиком: она про порядок строк,
+                  и переключатель у той вещи, которой управляет. */}
+              <View style={styles.sectionHead}>
+                <Text style={styles.sectionLabel}>
+                  {scope === "all"
+                    ? "Из чего сложилось"
+                    : `Приложения · ${rows.length} ${plural(rows.length, ["штука", "штуки", "штук"])}`}
+                </Text>
+                <View style={styles.metrics}>
+                  {SORTS.map((m) => (
+                    <Pressable
+                      key={m}
+                      onPress={() => setSort(m)}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: sort === m }}
+                      accessibilityLabel={`Сортировать: ${METRIC_LABELS[m]}`}
+                      style={({ pressed }) => [
+                        styles.metric,
+                        sort === m && styles.metricOn,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.metricText, sort === m && styles.metricTextOn]}>
+                        {METRIC_LABELS[m]}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
               {rows.map((row, i) => {
                 const isPhone = row.packageName === PHONE;
                 const beforeRow = prevByPackage.get(row.packageName);
                 const rowChange = isPhone
                   ? usageChange(
-                      metric === "time" ? now.phone.time : now.phone.launches,
-                      metric === "time" ? before.phone.time : before.phone.launches,
+                      sort === "time" ? now.phone.time : now.phone.launches,
+                      sort === "time" ? before.phone.time : before.phone.launches,
                       spanDays,
                     )
                   : usageChange(
-                      metric === "time" ? row.usageMillis : row.launchCount,
-                      beforeRow ? (metric === "time" ? beforeRow.usageMillis : beforeRow.launchCount) : 0,
+                      sort === "time" ? row.usageMillis : row.launchCount,
+                      beforeRow ? (sort === "time" ? beforeRow.usageMillis : beforeRow.launchCount) : 0,
                       spanDays,
                     );
-                const share = rowsSum > 0 ? row.usageMillis / rowsSum : 0;
+                const share = rowsSum > 0 ? weigh(row) / rowsSum : 0;
                 return (
                   <Pressable
                     key={row.packageName}
@@ -504,7 +517,9 @@ export default function UsageScreen({
                         : navigation.navigate("AppUsage", { packageName: row.packageName, title: row.label })
                     }
                     accessibilityRole="button"
-                    accessibilityLabel={`${row.label}, ${formatCompact(row.usageMillis)}, ${Math.round(
+                    accessibilityLabel={`${row.label}, ${formatCompact(row.usageMillis)}, ${
+                      row.launchCount
+                    } ${countWord(row.launchCount, isPhone ? "phone" : "apps")}, ${Math.round(
                       share * 100,
                     )} процентов`}
                     style={({ pressed }) => [styles.row, pressed && styles.pressed]}
@@ -512,7 +527,7 @@ export default function UsageScreen({
                     <View
                       style={[
                         styles.rowFill,
-                        { width: `${(topRow > 0 ? row.usageMillis / topRow : 0) * 100}%`, backgroundColor: sliceColor(i) },
+                        { width: `${(topRow > 0 ? weigh(row) / topRow : 0) * 100}%`, backgroundColor: sliceColor(i) },
                       ]}
                     />
                     {isPhone ? (
@@ -531,15 +546,18 @@ export default function UsageScreen({
                         {row.label}
                       </Text>
                       <Text style={styles.rowDetail} numberOfLines={1}>
-                        {`${Math.round(share * 100)} % · ${row.launchCount} ${countWord(
-                          row.launchCount,
-                          isPhone ? "phone" : "apps",
-                        )}`}
+                        {/* Рядом с долей стоит то число, которого нет справа: так в строке
+                            всегда видно и время, и заходы, а не одно из двух дважды. */}
+                        {`${Math.round(share * 100)} % · ${
+                          sort === "launches"
+                            ? formatCompact(row.usageMillis)
+                            : `${row.launchCount} ${countWord(row.launchCount, isPhone ? "phone" : "apps")}`
+                        }`}
                         {rowChange ? ` · ${rowChange.isDecrease ? "−" : "+"}${rowChange.percent} %` : ""}
                       </Text>
                     </View>
                     <Text style={styles.rowValue}>
-                      {metric === "launches" ? `${row.launchCount}` : formatCompact(row.usageMillis)}
+                      {sort === "launches" ? `${row.launchCount}` : formatCompact(row.usageMillis)}
                     </Text>
                   </Pressable>
                 );
@@ -695,6 +713,7 @@ const styles = StyleSheet.create({
   bigUnit: { color: colors.textMuted, fontSize: 12, textAlign: "center" },
   change: { color: colors.textMuted, fontSize: 12, textAlign: "center", marginTop: 12 },
   perDay: { color: colors.textMuted, fontSize: 12, textAlign: "center", marginTop: 6 },
+  sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   sectionLabel: { color: colors.textMuted, fontSize: 12, marginTop: 6, marginBottom: 8 },
   row: {
     flexDirection: "row",

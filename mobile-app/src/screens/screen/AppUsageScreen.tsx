@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, Text, Image, Pressable, ScrollView, StyleSheet } from "react-native";
+import { View, Text, Image, ScrollView, StyleSheet } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { api, type AppInfoEntry } from "../../api/client";
 import { colors } from "../../theme/colors";
@@ -9,9 +9,8 @@ import { datesBetween, formatDateShort, weekdayLabel } from "../../lib/date";
 import { formatCompact, formatDuration, formatWithUnits } from "../../lib/screen/duration";
 import { dayCount, resolveSelection, shiftRange, type Selection } from "../../lib/screen/period";
 import { describeChange, usageChange } from "../../lib/screen/compare";
-import { hourlyFor, METRIC_LABELS, type Metric } from "../../integrations/usageSync";
+import { hourlyFor } from "../../integrations/usageSync";
 
-const METRICS: Metric[] = ["time", "launches"];
 import PeriodBar from "../../components/screen/PeriodBar";
 import ValueChart, { type ChartKind } from "../../components/screen/ValueChart";
 import { ChartToggle } from "./UsageScreen";
@@ -37,7 +36,6 @@ export default function AppUsageScreen({
   const today = useTodayKey();
   const packageName = route.params?.packageName ?? "";
   const [selection, setSelection] = useState<Selection>({ kind: "preset", preset: "month" });
-  const [metric, setMetric] = useState<Metric>("time");
   const [chart, setChart] = useState<ChartKind>("bars");
   const [picked, setPicked] = useState<string | null>(null);
 
@@ -59,10 +57,10 @@ export default function AppUsageScreen({
     queryFn: () => api.getAppInfoCache(),
   });
   const { data: hourly } = useQuery({
-    queryKey: ["hourly", range.from, metric, packageName],
+    queryKey: ["hourly", range.from, packageName],
     // Одно приложение — своя область по определению: «общий» и «телефон» тут не значат
     // ничего, поэтому область фиксирована, а выбирать остаётся только метрику.
-    queryFn: () => hourlyFor(range.from, "apps", metric, [], packageName),
+    queryFn: () => hourlyFor(range.from, "apps", [], packageName),
     enabled: single,
   });
 
@@ -73,17 +71,23 @@ export default function AppUsageScreen({
   const dayPoints = datesBetween(range.from, range.to).map((date) => ({
     key: date,
     label: weekdayLabel(date),
-    value: metric === "launches" ? (byDate.get(date)?.launchCount ?? 0) : (byDate.get(date)?.usageMillis ?? 0),
+    time: byDate.get(date)?.usageMillis ?? 0,
+    launches: byDate.get(date)?.launchCount ?? 0,
   }));
-  const hourPoints = (hourly ?? []).map((h) => ({ key: `${h.hour}`, label: `${h.hour}`, value: h.value }));
+  const hourPoints = (hourly?.time ?? []).map((h, i) => ({
+    key: `${h.hour}`,
+    label: `${h.hour}`,
+    time: h.value,
+    launches: hourly?.launches[i]?.value ?? 0,
+  }));
 
   const total = history.reduce((sum, h) => sum + h.usageMillis, 0);
   const launches = history.reduce((sum, h) => sum + h.launchCount, 0);
   const prevTotal = prevHistory.reduce((sum, h) => sum + h.usageMillis, 0);
   const prevLaunches = prevHistory.reduce((sum, h) => sum + h.launchCount, 0);
   const change = usageChange(
-    metric === "launches" ? launches : total,
-    metric === "launches" ? prevLaunches : prevTotal,
+    total,
+    prevTotal,
     span,
   );
   const daysUsed = history.filter((h) => h.usageMillis > 0).length;
@@ -95,21 +99,6 @@ export default function AppUsageScreen({
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <PeriodBar selection={selection} onChange={setSelection} today={today} />
-
-      <View style={styles.metrics}>
-        {METRICS.map((m) => (
-          <Pressable
-            key={m}
-            onPress={() => setMetric(m)}
-            accessibilityRole="radio"
-            accessibilityState={{ selected: metric === m }}
-            accessibilityLabel={`Метрика: ${METRIC_LABELS[m]}`}
-            style={({ pressed }) => [styles.metric, metric === m && styles.metricOn, pressed && styles.pressed]}
-          >
-            <Text style={[styles.metricText, metric === m && styles.metricTextOn]}>{METRIC_LABELS[m]}</Text>
-          </Pressable>
-        ))}
-      </View>
 
       {history.length === 0 ? (
         <View style={styles.card}>
@@ -123,13 +112,12 @@ export default function AppUsageScreen({
         {info?.icon && (
           <Image source={{ uri: info.icon }} style={styles.bigIcon} accessibilityIgnoresInvertColors />
         )}
-        <Text style={styles.big}>
-          {metric === "launches" ? `${launches}` : formatDuration(total)}
+        <Text style={styles.big}>{formatDuration(total)}</Text>
+        <Text style={styles.launches}>
+          {`${launches} ${plural(launches, ["запуск", "запуска", "запусков"])}`}
         </Text>
         <Text style={styles.caption}>
-          {metric === "launches"
-            ? `${plural(launches, ["запуск", "запуска", "запусков"])} за ${span} ${plural(span, ["день", "дня", "дней"])}`
-            : `за ${span} ${plural(span, ["день", "дня", "дней"])} · ${formatCompact(Math.round(total / span))} в день`}
+          {`за ${span} ${plural(span, ["день", "дня", "дней"])} · ${formatCompact(Math.round(total / span))} в день`}
         </Text>
         {change && <Text style={styles.change}>{describeChange(change)}</Text>}
         {/* «Пользуюсь три года» и «поставил неделю назад» — разные факты об одном числе. */}
@@ -146,20 +134,20 @@ export default function AppUsageScreen({
         </View>
         {single && !hourly ? (
           <>
-            <ValueChart points={dayPoints} kind={chart} counts={metric === "launches"} />
+            <ValueChart points={dayPoints} kind={chart} countWord="запуски" />
             <Text style={styles.hint}>
               По часам этот день не сохранился: подробные события система хранит несколько
               суток, а по отдельному приложению разбивка и вовсе живёт только эти дни.
             </Text>
           </>
         ) : single ? (
-          <ValueChart points={hourPoints} kind={chart} counts={metric === "launches"} />
+          <ValueChart points={hourPoints} kind={chart} countWord="запуски" />
         ) : (
           <>
             <ValueChart
               points={dayPoints}
               kind={chart}
-              counts={metric === "launches"}
+              countWord="запуски"
               selected={picked}
               onSelect={(d) => setPicked(d === picked ? null : d)}
             />
@@ -225,12 +213,6 @@ const styles = StyleSheet.create({
   },
   cardTitle: { color: colors.text, fontSize: 13, fontWeight: "600" },
   chartHead: { flexDirection: "row", justifyContent: "flex-end", marginBottom: 10 },
-  metrics: { flexDirection: "row", gap: 6, marginBottom: 12 },
-  metric: { flex: 1, alignItems: "center", paddingVertical: 7, borderRadius: 10, backgroundColor: colors.card },
-  metricOn: { backgroundColor: "rgba(143,184,154,0.14)" },
-  metricText: { color: colors.textMuted, fontSize: 12 },
-  metricTextOn: { color: colors.accentGreen, fontWeight: "600" },
-  pressed: { opacity: 0.75 },
   bigIcon: { width: 40, height: 40, borderRadius: 9, alignSelf: "center", marginBottom: 10 },
   change: { color: colors.textMuted, fontSize: 12, textAlign: "center", marginTop: 8 },
   big: {
@@ -241,6 +223,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontVariant: ["tabular-nums"],
   },
+  launches: { color: colors.text, fontSize: 13, textAlign: "center", marginTop: 10 },
   caption: { color: colors.textMuted, fontSize: 12, textAlign: "center", marginTop: 4 },
   pickHint: { color: colors.textMuted, fontSize: 11, marginTop: 12, textAlign: "center" },
   figures: { flexDirection: "row", gap: 12, marginBottom: 12 },

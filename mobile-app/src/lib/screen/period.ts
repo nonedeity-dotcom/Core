@@ -69,7 +69,17 @@ export function describeRange(range: DayRange, today = todayKey()): string {
   return `${formatDay(range.from)} — ${formatDay(range.to)}`;
 }
 
+const MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+
+/**
+ * День словом, а не цифрами: «29 авг», а не «29.08».
+ *
+ * Точка между числами читается как разделитель, и «20.08 — 05.09» глаз разбирает дважды:
+ * сперва на четыре числа, потом на две даты. Месяц словом снимает эту работу — и заодно
+ * убирает вопрос, где здесь день, а где месяц.
+ */
 function formatDay(key: string): string {
   const [, m, d] = key.split("-");
-  return `${d}.${m}`;
+  const month = MONTHS[Number(m) - 1] ?? m;
+  return `${Number(d)} ${month}`;
 }
