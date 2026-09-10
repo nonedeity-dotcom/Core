@@ -22,6 +22,7 @@ import { normalizeLateRule, normalizeSchedule } from "./habitSchedule";
 import { normalizeProfile } from "./balance/profile";
 import { normalizeDish, normalizeEntry, normalizeProduct } from "./balance/food";
 import { normalizeWeightEntry } from "./balance/weight";
+import { normalizeWaterDay } from "./balance/water";
 import { normalizeHourlyDay } from "./screen/hours";
 import { normalizeAppDay, normalizeScreenDay } from "./screen/usage";
 import type {
@@ -81,7 +82,14 @@ const SCOPE_FIELDS: Record<Exclude<BackupScope, "all">, (keyof BackupData)[]> = 
     "tipPrefs",
     "lateRule",
   ],
-  calorix: ["balanceProfile", "balanceProducts", "balanceFoodLog", "balanceDishes", "balanceWeight"],
+  calorix: [
+    "balanceProfile",
+    "balanceProducts",
+    "balanceFoodLog",
+    "balanceDishes",
+    "balanceWeight",
+    "balanceWater",
+  ],
   creker: ["screenDays", "screenApps", "screenHours"],
 };
 
@@ -130,6 +138,7 @@ function emptyData(): BackupData {
     balanceFoodLog: [],
     balanceDishes: [],
     balanceWeight: [],
+    balanceWater: [],
     screenDays: [],
     screenApps: [],
     screenHours: [],
@@ -350,6 +359,10 @@ function parseData(raw: unknown): BackupData {
     balanceWeight: list(d.balanceWeight)
       .map(normalizeWeightEntry)
       .filter((w): w is NonNullable<ReturnType<typeof normalizeWeightEntry>> => w !== null),
+    // Отсутствует в файлах, записанных до счётчика воды.
+    balanceWater: list(d.balanceWater)
+      .map(normalizeWaterDay)
+      .filter((w): w is NonNullable<ReturnType<typeof normalizeWaterDay>> => w !== null),
     // Отсутствуют во всех файлах, записанных до раздела «Экран».
     screenDays: list(d.screenDays)
       .map(normalizeScreenDay)
@@ -410,6 +423,7 @@ export function countRecords(data: BackupData, scope: BackupScope): number {
     data.balanceDishes.length +
     data.balanceFoodLog.length +
     data.balanceWeight.length +
+    data.balanceWater.length +
     (data.balanceProfile ? 1 : 0);
   const creker = data.screenDays.length + data.screenApps.length + data.screenHours.length;
   if (scope === "sterzhen") return sterzhen;

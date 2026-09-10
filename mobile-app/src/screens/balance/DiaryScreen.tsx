@@ -11,6 +11,13 @@ import { formatDateShort, shiftDate, daysBetween } from "../../lib/date";
 import { targets, type Profile } from "../../lib/balance/profile";
 import { latestWeight, WEIGHT_LIMITS, type WeightEntry } from "../../lib/balance/weight";
 import {
+  formatWater,
+  waterFor,
+  waterTarget,
+  GLASS_ML,
+  type WaterDay,
+} from "../../lib/balance/water";
+import {
   MEALS,
   MEAL_LABELS,
   UNIT_SHORT,
@@ -56,6 +63,10 @@ export default function DiaryScreen({
     queryKey: ["foodLog", prevDay, shown],
     queryFn: () => api.getFoodLog(prevDay, shown),
   });
+  const { data: waterLog = [] } = useQuery<WaterDay[]>({
+    queryKey: ["waterLog"],
+    queryFn: () => api.getWaterLog(),
+  });
   const { data: weightLog = [] } = useQuery<WeightEntry[]>({
     queryKey: ["weightLog"],
     queryFn: () => api.getWeightLog(),
@@ -93,6 +104,10 @@ export default function DiaryScreen({
       qc.invalidateQueries({ queryKey: ["dishes"] });
     },
   });
+  const addWater = useMutation({
+    mutationFn: (ml: number) => api.addWater(shown, ml),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["waterLog"] }),
+  });
   const clearWeight = useMutation({
     mutationFn: (day: string) => api.removeWeight(day),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["weightLog"] }),
@@ -110,6 +125,8 @@ export default function DiaryScreen({
   const eaten = sumNutrition(day);
   const target = profile ? targets(profile) : null;
   const back = daysBetween(shown, today);
+  const drunk = waterFor(waterLog, shown);
+  const waterGoal = profile ? waterTarget(profile) : 0;
   const weight = weightLog.find((w) => w.date === shown) ?? null;
   const lastKnown = latestWeight(weightLog);
 
@@ -148,6 +165,12 @@ export default function DiaryScreen({
           </Text>
         </View>
       )}
+
+      <WaterRow
+        ml={drunk}
+        target={waterGoal}
+        onAdd={(ml) => addWater.mutate(ml)}
+      />
 
       <WeightRow
         weight={weight}
@@ -190,6 +213,73 @@ export default function DiaryScreen({
         />
       ))}
     </ScrollView>
+  );
+}
+
+/**
+ * Вода за день.
+ *
+ * Стаканами, а не полем ввода: человек не знает, сколько выпил за день, — он знает, что
+ * выпил ещё один. Восемь кружков — это норма, разложенная на понятные части; когда она
+ * перекрыта, лишние стаканы считаются числом, а не рисуются девятым и десятым кружком.
+ *
+ * Считается вся жидкость: чай, кофе, молоко, суп. Об этом сказано прямо под кнопкой, потому
+ * что «сколько воды я выпил» и «сколько жидкости я выпил» — вопросы, которые путают чаще
+ * всего, и разница между ними — литр в день.
+ */
+function WaterRow({
+  ml,
+  target,
+  onAdd,
+}: {
+  ml: number;
+  /** Ноль — профиль не заполнен, и нормы нет: тогда счётчик просто считает. */
+  target: number;
+  onAdd: (ml: number) => void;
+}) {
+  const glasses = target > 0 ? Math.max(1, Math.round(target / GLASS_ML)) : 8;
+  const full = Math.floor(ml / GLASS_ML);
+  const done = target > 0 && ml >= target;
+
+  return (
+    <View style={styles.waterCard}>
+      <View style={styles.waterHead}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.weightLabel}>Вода</Text>
+          <Text style={[styles.waterValue, done && styles.waterDone]}>
+            {target > 0 ? `${formatWater(ml)} из ${formatWater(target)}` : formatWater(ml)}
+          </Text>
+        </View>
+        <Pressable
+          onPress={() => onAdd(-GLASS_ML)}
+          disabled={ml <= 0}
+          accessibilityRole="button"
+          accessibilityLabel="Убрать стакан"
+          style={({ pressed }) => [styles.waterBtn, (pressed || ml <= 0) && styles.pressed]}
+        >
+          <Text style={styles.waterBtnText}>−</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => onAdd(GLASS_ML)}
+          accessibilityRole="button"
+          accessibilityLabel="Добавить стакан, 250 мл"
+          style={({ pressed }) => [styles.waterBtn, styles.waterBtnMain, pressed && styles.pressed]}
+        >
+          <Text style={styles.waterBtnMainText}>+</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.glasses}>
+        {Array.from({ length: glasses }, (_, i) => (
+          <View key={i} style={[styles.glass, i < full && styles.glassFull]} />
+        ))}
+        {full > glasses && <Text style={styles.waterExtra}>{`+${full - glasses}`}</Text>}
+      </View>
+
+      <Text style={styles.rowHint}>
+        {`Стакан — ${GLASS_ML} мл. Считается вся жидкость: чай, кофе, молоко, суп.`}
+      </Text>
+    </View>
   );
 }
 
@@ -543,6 +633,45 @@ const styles = StyleSheet.create({
   macro: { flex: 1, gap: 4 },
   macroLabel: { color: colors.textMuted, fontSize: 11 },
   macroValue: { color: colors.text, fontSize: 12, fontVariant: ["tabular-nums"] },
+  waterCard: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 10,
+    gap: 10,
+  },
+  waterHead: { flexDirection: "row", alignItems: "center", gap: 10 },
+  waterValue: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "600",
+    fontVariant: ["tabular-nums"],
+    marginTop: 2,
+  },
+  waterDone: { color: colors.accentGreen },
+  waterBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.bg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  waterBtnText: { color: colors.text, fontSize: 20, fontWeight: "600" },
+  waterBtnMain: { backgroundColor: "rgba(143,184,154,0.14)" },
+  waterBtnMainText: { color: colors.accentGreen, fontSize: 20, fontWeight: "600" },
+  glasses: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 },
+  glass: {
+    width: 18,
+    height: 24,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.bg,
+  },
+  glassFull: { backgroundColor: colors.accentGreenDark, borderColor: colors.accentGreen },
+  waterExtra: { color: colors.accentGreen, fontSize: 12, fontWeight: "600", marginLeft: 2 },
   weightRow: {
     flexDirection: "row",
     alignItems: "center",

@@ -24,6 +24,7 @@ import { normalizeWeightEntry, type WeightEntry } from "../lib/balance/weight";
 import { CATALOG_DISHES, CATALOG_PRODUCTS } from "../lib/balance/catalog";
 import { normalizeAppDay, normalizeScreenDay, type AppDay, type ScreenDay } from "../lib/screen/usage";
 import { isEmptyHourlyDay, normalizeHourlyDay, type HourlyDay } from "../lib/screen/hours";
+import { MAX_DAY_ML, normalizeWaterDay, type WaterDay } from "../lib/balance/water";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -56,6 +57,7 @@ const KEYS = {
   balanceFoodLog: "balance-food-log-v1",
   balanceDishes: "balance-dishes-v1",
   balanceWeight: "balance-weight-v1",
+  balanceWater: "balance-water-v1",
   screenDays: "screen-days-v1",
   screenApps: "screen-apps-v1",
   screenImportedThrough: "screen-imported-through-v1",
@@ -824,6 +826,36 @@ export const api = {
     }
     return saved.clean;
   },
+  /**
+   * Вода за день: накапливается, а не задаётся.
+   *
+   * Прибавка, а не запись числа: человек не знает, сколько выпил за день, — он знает, что
+   * выпил ещё один стакан. Отрицательная прибавка отменяет ошибочный тап, и день не уходит
+   * в минус.
+   */
+  async getWaterLog(): Promise<WaterDay[]> {
+    const raw = await read<unknown[]>(KEYS.balanceWater, []);
+    const clean = (Array.isArray(raw) ? raw : [])
+      .map(normalizeWaterDay)
+      .filter((d): d is WaterDay => d !== null);
+    const byDate = new Map(clean.map((d) => [d.date, d] as const));
+    return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  },
+  async addWater(date: string, ml: number): Promise<number> {
+    return withKeyLock(KEYS.balanceWater, async () => {
+      const log = await read<unknown[]>(KEYS.balanceWater, []);
+      const clean = (Array.isArray(log) ? log : [])
+        .map(normalizeWaterDay)
+        .filter((d): d is WaterDay => d !== null);
+      const current = clean.find((d) => d.date === date)?.ml ?? 0;
+      const next = Math.max(0, Math.min(MAX_DAY_ML, Math.round(current + ml)));
+      const without = clean.filter((d) => d.date !== date);
+      const rows = next > 0 ? [...without, { date, ml: next }] : without;
+      await write(KEYS.balanceWater, rows.sort((a, b) => a.date.localeCompare(b.date)));
+      return next;
+    });
+  },
+
   async removeWeight(date: string): Promise<{ ok: true }> {
     return withKeyLock(KEYS.balanceWeight, async () => {
       const log = await read<WeightEntry[]>(KEYS.balanceWeight, []);
@@ -1256,6 +1288,8 @@ export interface BackupData {
   balanceDishes: Dish[];
   /** Дневник веса. Отсутствует в файлах, записанных до него, — импортируется пустым. */
   balanceWeight: WeightEntry[];
+  /** Вода по дням. Отсутствует в файлах, записанных до неё. */
+  balanceWater: WaterDay[];
   /** Экранное время по дням и по приложениям. Без них копия теряет всю историю «Экрана». */
   screenDays: ScreenDay[];
   screenApps: AppDay[];
@@ -1304,7 +1338,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight, screenDays, screenApps, screenHours] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight, balanceWater, screenDays, screenApps, screenHours] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -1328,6 +1362,7 @@ export async function exportData(): Promise<BackupData> {
       read<FoodEntry[]>(KEYS.balanceFoodLog, []),
       read<Dish[]>(KEYS.balanceDishes, []),
       read<WeightEntry[]>(KEYS.balanceWeight, []),
+      read<WaterDay[]>(KEYS.balanceWater, []),
       read<ScreenDay[]>(KEYS.screenDays, []),
       read<AppDay[]>(KEYS.screenApps, []),
       read<HourlyDay[]>(KEYS.screenHours, []),
@@ -1355,6 +1390,7 @@ export async function exportData(): Promise<BackupData> {
     balanceFoodLog,
     balanceDishes,
     balanceWeight,
+    balanceWater,
     screenDays,
     screenApps,
     screenHours,
@@ -1387,6 +1423,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.balanceFoodLog, data.balanceFoodLog),
       write(KEYS.balanceDishes, data.balanceDishes),
       write(KEYS.balanceWeight, data.balanceWeight),
+      write(KEYS.balanceWater, data.balanceWater ?? []),
       write(KEYS.screenDays, data.screenDays),
       write(KEYS.screenApps, data.screenApps),
       write(KEYS.screenHours, data.screenHours ?? []),
@@ -1639,6 +1676,28 @@ export async function mergeData(data: BackupData): Promise<ImportStats> {
     }
     if (data.balanceWeight.length > 0) {
       await write(KEYS.balanceWeight, weight.sort((a, b) => a.date.localeCompare(b.date)));
+    }
+
+    // Вода — объединение по дням, и местная запись важнее: человек пил здесь, а файл мог
+    // быть записан до того. Складывать два числа за один день нельзя — это был бы литр,
+    // которого не было.
+    const water = await read<unknown[]>(KEYS.balanceWater, []);
+    const waterDays = new Map(
+      (Array.isArray(water) ? water : [])
+        .map(normalizeWaterDay)
+        .filter((d): d is WaterDay => d !== null)
+        .map((d) => [d.date, d] as const),
+    );
+    let waterChanged = false;
+    for (const raw of data.balanceWater ?? []) {
+      const day = normalizeWaterDay(raw);
+      if (!day || waterDays.has(day.date)) continue;
+      waterDays.set(day.date, day);
+      waterChanged = true;
+      stats.balance++;
+    }
+    if (waterChanged) {
+      await write(KEYS.balanceWater, [...waterDays.values()].sort((a, b) => a.date.localeCompare(b.date)));
     }
 
     // --- «Экран» ---

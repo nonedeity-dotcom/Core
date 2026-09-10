@@ -8,6 +8,7 @@ import { dateNDaysAgo, formatDateShort } from "../../lib/date";
 import { targets, type Profile } from "../../lib/balance/profile";
 import type { FoodEntry } from "../../lib/balance/food";
 import { periodStats, diaryStreak, DIARY_WINDOW_DAYS, type PeriodStats } from "../../lib/balance/stats";
+import { averageWater, formatWater, waterTarget, type WaterDay } from "../../lib/balance/water";
 import { weightTrend, latestWeight, type WeightEntry, type WeightTrend } from "../../lib/balance/weight";
 
 /**
@@ -35,16 +36,26 @@ export default function StatsScreen() {
     queryKey: ["weightLog"],
     queryFn: () => api.getWeightLog(),
   });
+  const { data: waterLog = [] } = useQuery<WaterDay[]>({
+    queryKey: ["waterLog"],
+    queryFn: () => api.getWaterLog(),
+  });
 
   const target = profile ? targets(profile) : null;
   const streak = diaryStreak(entries);
   const week = periodStats(entries, 7);
   const month = periodStats(entries, 30);
   const weightNow = latestWeight(weightLog);
+  const days = (n: number) => Array.from({ length: n }, (_, i) => dateNDaysAgo(i));
+  const weekWater = averageWater(waterLog, days(7));
+  const monthWater = averageWater(waterLog, days(30));
+  const waterGoal = profile ? waterTarget(profile) : 0;
   const weekWeight = weightTrend(weightLog, 7, today);
   const monthWeight = weightTrend(weightLog, 30, today);
 
-  if (entries.length === 0 && weightLog.length === 0) {
+  // Вода тоже считается «есть что усреднять»: человек мог неделю отмечать стаканы и ни
+  // разу не записать еду — показать ему пустой экран значило бы потерять то, что он вёл.
+  if (entries.length === 0 && weightLog.length === 0 && waterLog.length === 0) {
     return (
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <View style={styles.card}>
@@ -71,6 +82,38 @@ export default function StatsScreen() {
 
       <Period title="За 7 дней" stats={week} target={target} trend={weekWeight} />
       <Period title="За 30 дней" stats={month} target={target} trend={monthWeight} />
+
+      {/* Вода отдельной карточкой, а не строкой внутри периодов: она не еда, в сумму
+          съеденного не входит и усредняется по своим дням — тем, в которые её отмечали. */}
+      {(weekWater.days > 0 || monthWater.days > 0) && (
+        <View style={styles.card}>
+          <View style={styles.head}>
+            <Text style={styles.title}>Вода</Text>
+            <Text style={styles.coverage}>
+              {`отмечена ${weekWater.days} ${plural(weekWater.days, ["день", "дня", "дней"])} из 7`}
+            </Text>
+          </View>
+          <View style={styles.figures}>
+            <Figure
+              label="За 7 дней"
+              value={formatWater(weekWater.ml)}
+              unit="в день"
+              diff={waterGoal > 0 && weekWater.days > 0 ? weekWater.ml - waterGoal : null}
+              diffUnit="мл"
+            />
+            <Figure
+              label="За 30 дней"
+              value={monthWater.days > 0 ? formatWater(monthWater.ml) : "—"}
+              unit={monthWater.days > 0 ? `в день, по ${monthWater.days} дн.` : "нет записей"}
+              diff={null}
+              diffUnit=""
+            />
+          </View>
+          {waterGoal > 0 && (
+            <Text style={styles.rest}>{`Норма — ${formatWater(waterGoal)} в день, считая чай, кофе и суп`}</Text>
+          )}
+        </View>
+      )}
 
       {weightNow && (
         <Text style={styles.footnote}>
