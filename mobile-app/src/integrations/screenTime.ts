@@ -3,7 +3,8 @@ import { api } from "../api/client";
 import { perDayTarget } from "../lib/habits";
 import { decideScreenTimeHabit } from "../lib/screenTime";
 import { dateNDaysAgo, todayKey } from "../lib/date";
-import { normalizeAppDay, normalizeScreenDay } from "../lib/screen/usage";
+import { normalizeAppDay, normalizeScreenDay, relabel } from "../lib/screen/usage";
+import { resolveAppInfo } from "./usageSync";
 import type { Habit, HabitLog } from "../types";
 
 /**
@@ -92,9 +93,16 @@ export async function syncFromCreker(): Promise<CrekerSyncResult> {
   const days = rawDays
     .map((d) => normalizeScreenDay(d))
     .filter((d): d is NonNullable<typeof d> => d !== null);
-  const apps = rawApps
+  const rows = rawApps
     .map((a) => normalizeAppDay(a))
     .filter((a): a is NonNullable<typeof a> => a !== null);
+  // Старые сборки creker отдавали только имя пакета — имя приложения там завелось позже.
+  // Спросить систему дешевле, чем требовать от человека обновить creker ради названий.
+  const cache = await resolveAppInfo(rows.map((r) => r.packageName));
+  const apps = relabel(
+    rows,
+    Object.fromEntries(Object.entries(cache).map(([pkg, info]) => [pkg, info.label])),
+  );
 
   const written = await api.mergeScreenData(days, apps);
   // Отметка ставится, только если что-то действительно пришло. Иначе первый запуск при

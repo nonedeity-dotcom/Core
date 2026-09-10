@@ -79,6 +79,23 @@ export function normalizeAppDay(value: unknown): AppDay | null {
   };
 }
 
+/**
+ * Подставить в строки настоящие имена приложений.
+ *
+ * В строке дня имя лежит таким, каким было известно в момент записи, — а известно оно бывает
+ * не всегда. Загруженный CSV имён не содержит вовсе, ни свой, ни crekerʼовский: в формате
+ * такой колонки нет, и на месте имени в строку попадает имя пакета. Справочник приложений
+ * собирается у системы отдельно и знает настоящее имя даже для тех дней, что пришли файлом, —
+ * поэтому спрашивается сначала он. Хранимое имя остаётся запасным: приложение могли удалить,
+ * и тогда система о нём уже ничего не скажет, а старая строка ещё помнит, как оно называлось.
+ */
+export function relabel(rows: AppDay[], names: Record<string, string | undefined>): AppDay[] {
+  return rows.map((row) => {
+    const known = names[row.packageName];
+    return known && known !== "" && known !== row.packageName ? { ...row, label: known } : row;
+  });
+}
+
 const inRange = (date: string, from: string, to: string) => date >= from && date <= to;
 
 export function daysInRange(days: ScreenDay[], from: string, to: string): ScreenDay[] {
@@ -92,6 +109,17 @@ export function appsInRange(rows: AppDay[], from: string, to: string): AppDay[] 
 /** Сколько раз телефон разблокировали за период. */
 export function totalUnlocks(days: ScreenDay[]): number {
   return days.reduce((sum, d) => sum + (d.unlocks ?? 0), 0);
+}
+
+/**
+ * Дни, про которые неизвестно, сколько раз телефон разблокировали.
+ *
+ * Ноль разблокировок и «не считали» — разные вещи, и хранятся они по-разному: у первого в
+ * дне лежит число, у второго поля нет вовсе. Дни, измеренные до появления счётчика, и дни,
+ * пришедшие файлом, попадают во второе — и молча занижали бы сумму, если их не показать.
+ */
+export function daysWithoutUnlocks(days: ScreenDay[]): number {
+  return days.reduce((n, d) => n + (d.unlocks === undefined ? 1 : 0), 0);
 }
 
 /** Сумма экранного времени за период. */

@@ -1,4 +1,4 @@
-import { api } from "../api/client";
+import { api, type AppInfoEntry } from "../api/client";
 import { dateNDaysAgo, todayKey } from "../lib/date";
 import { getAppInfo, hasUsageAccess, queryRawEvents } from "../../modules/creker-usage";
 import {
@@ -52,6 +52,47 @@ export interface UsageSyncResult {
 }
 
 /**
+ * Дособрать справочник приложений: что не знаем — спросить у системы.
+ *
+ * Возвращается весь справочник целиком, а не только новое: тем, кто зовёт, нужно имя для
+ * каждого пакета, а не список того, чего не хватало.
+ *
+ * Пере-спрашиваются и те, о ком уже что-то знаем, но не знаем главного: запись, сделанная
+ * до появления признака домашнего экрана, иначе осталась бы без него навсегда — имя и
+ * иконка у неё есть, и за новыми она бы никогда не пошла.
+ *
+ * Без доступа к системе спрашивать некого, и справочник возвращается как есть: загруженная
+ * из файла история тогда покажет имена пакетов, но покажет.
+ */
+export async function resolveAppInfo(packages: string[]): Promise<Record<string, AppInfoEntry>> {
+  const cache = await api.getAppInfoCache();
+  const unknown = [...new Set(packages)].filter((p) => !cache[p] || cache[p].isHome === undefined);
+  if (unknown.length === 0) return cache;
+
+  const fresh = await getAppInfo(unknown);
+  if (fresh.length === 0) return cache;
+
+  await api.saveAppInfo(
+    fresh.map((f) => ({
+      packageName: f.packageName,
+      label: f.label,
+      icon: f.icon,
+      installedAtMs: f.installedAtMs,
+      isHome: f.isHome,
+    })),
+  );
+  for (const f of fresh) {
+    cache[f.packageName] = {
+      label: f.label,
+      icon: f.icon,
+      installedAtMs: f.installedAtMs,
+      isHome: f.isHome,
+    };
+  }
+  return cache;
+}
+
+/**
  * Пересчитывает последние дни из системных событий и кладёт результат к себе.
  *
  * Пустой поток событий не стирает уже сохранённое: пусто бывает и когда ничего не
@@ -86,33 +127,7 @@ export async function syncUsage(nowMs = Date.now()): Promise<UsageSyncResult> {
 
   // Названия берутся из кэша, а недостающие — у системы. Иконка рисуется один раз на
   // приложение, а не на каждый показ списка.
-  const cache = await api.getAppInfoCache();
-  // Пере-спрашиваются и те, о ком уже что-то знаем, но не знаем главного: запись,
-  // сделанная до появления признака домашнего экрана, иначе осталась бы без него навсегда —
-  // имя и иконка у неё есть, и за новыми она бы никогда не пошла.
-  const unknown = [...new Set(appRows.map((r) => r.packageName))].filter(
-    (p) => !cache[p] || cache[p].isHome === undefined,
-  );
-  if (unknown.length > 0) {
-    const fresh = await getAppInfo(unknown);
-    await api.saveAppInfo(
-      fresh.map((f) => ({
-        packageName: f.packageName,
-        label: f.label,
-        icon: f.icon,
-        installedAtMs: f.installedAtMs,
-        isHome: f.isHome,
-      })),
-    );
-    for (const f of fresh) {
-      cache[f.packageName] = {
-        label: f.label,
-        icon: f.icon,
-        installedAtMs: f.installedAtMs,
-        isHome: f.isHome,
-      };
-    }
-  }
+  const cache = await resolveAppInfo(appRows.map((r) => r.packageName));
 
   const apps: AppDay[] = appRows.map((row) => ({
     date: row.date,

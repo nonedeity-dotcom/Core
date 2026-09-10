@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Image, View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -10,6 +10,7 @@ import { datesBetween, weekdayLabel } from "../../lib/date";
 import { syncFromCreker } from "../../integrations/screenTime";
 import {
   syncUsage,
+  resolveAppInfo,
   hourlyFor,
   METRIC_LABELS,
   SCOPE_LABELS,
@@ -24,9 +25,11 @@ import { formatCompact, formatDuration } from "../../lib/screen/duration";
 import { dayCount, resolveSelection, shiftRange, type Selection } from "../../lib/screen/period";
 import { describeChange, usageChange } from "../../lib/screen/compare";
 import {
+  daysWithoutUnlocks,
   earliestStoredDay,
   totalScreenMillis,
   totalUnlocks,
+  relabel,
   totalsByApp,
   type AppDay,
   type AppTotal,
@@ -110,10 +113,21 @@ export default function UsageScreen({
     queryFn: () => api.getScreenImportedThrough(),
   });
 
+  /** Пакеты, про которые систему уже спрашивали: спрашивать второй раз нечего. */
+  const asked = useRef(new Set<string>());
+
   const homeList = Object.entries(icons)
     .filter(([, info]) => info.isHome)
     .map(([packageName]) => packageName);
   const home = new Set(homeList);
+  /**
+   * Имена берутся из справочника, а не из строк дня.
+   *
+   * Иконка и так рисуется по справочнику — и раньше выходило, что у строки правильная
+   * иконка и имя пакета рядом с ней. Справочник знает про приложение больше, чем строка,
+   * записанная когда-то давно или пришедшая из файла, где имён не было вовсе.
+   */
+  const names = Object.fromEntries(Object.entries(icons).map(([pkg, info]) => [pkg, info.label]));
 
   const { data: hourly } = useQuery({
     queryKey: ["hourly", range.from, scope, metric, access],
@@ -158,7 +172,15 @@ export default function UsageScreen({
       const text = await pickTextFile();
       if (text === null) return null;
       const parsed = fromCsv(text);
-      await api.mergeScreenData(parsed.days, parsed.apps);
+      // В файле имён нет — только пакеты, у creker так же. Настоящие имена и иконки
+      // спрашиваются у системы здесь же, иначе загруженные дни навсегда остались бы
+      // списком вида `com.zhiliaoapp.musically`.
+      const cache = await resolveAppInfo(parsed.apps.map((a) => a.packageName));
+      const apps = relabel(
+        parsed.apps,
+        Object.fromEntries(Object.entries(cache).map(([pkg, info]) => [pkg, info.label])),
+      );
+      await api.mergeScreenData(parsed.days, apps);
       return parsed;
     },
     onSuccess: (r) => {
@@ -188,6 +210,25 @@ export default function UsageScreen({
   }, [refresh]);
 
   /**
+   * Дособрать справочник по уже сохранённой истории.
+   *
+   * Дни, загруженные из файла, приходят без имён вовсе, и спросить систему в тот момент
+   * могло быть некому: доступ к статистике мог быть ещё не выдан. Здесь список уже открыт —
+   * значит, самое время дособрать недостающее и один раз обновить экран.
+   *
+   * Спрошенное запоминается на время жизни экрана: про удалённое приложение система молчит,
+   * и без этой памяти запрос уходил бы снова на каждую перерисовку.
+   */
+  useEffect(() => {
+    const missing = [...new Set(allApps.map((r) => r.packageName))].filter(
+      (p) => !icons[p] && !asked.current.has(p),
+    );
+    if (missing.length === 0) return;
+    for (const p of missing) asked.current.add(p);
+    void resolveAppInfo(missing).then(() => qc.invalidateQueries({ queryKey: ["appInfo"] }));
+  }, [allApps, icons, qc]);
+
+  /**
    * Числа одной группы за период.
    *
    * У телефона считаются не открытия рабочего стола, а разблокировки. Открытий рабочего
@@ -215,6 +256,14 @@ export default function UsageScreen({
       ? plural(n, ["разблокировка", "разблокировки", "разблокировок"])
       : plural(n, ["заход", "захода", "заходов"]);
 
+  /**
+   * Сколько сохранённых дней не знают про свои разблокировки.
+   *
+   * Дни, которых в истории нет вовсе, сюда не входят: у них нет и экранного времени, и это
+   * другой разговор, который ведёт пустое состояние выше.
+   */
+  const blindDays = daysWithoutUnlocks(days);
+
   const now = measureOf(days, allApps);
   const before = measureOf(prevDays, allPrevApps);
   const value = now[scope];
@@ -231,7 +280,7 @@ export default function UsageScreen({
    * крупному числу над ними, и ничего не надо досчитывать в уме. В «телефоне» списка нет:
    * список из одной строки — это не список.
    */
-  const appTotals = totalsByApp(allApps.filter((r) => !home.has(r.packageName)));
+  const appTotals = totalsByApp(relabel(allApps.filter((r) => !home.has(r.packageName)), names));
   const phoneRow: AppTotal = {
     packageName: PHONE,
     label: "Телефон",
@@ -251,7 +300,9 @@ export default function UsageScreen({
   const topRow = rows.reduce((m, r) => Math.max(m, r.usageMillis), 0);
 
   const prevByPackage = new Map(
-    totalsByApp(allPrevApps.filter((r) => !home.has(r.packageName))).map((t) => [t.packageName, t] as const),
+    totalsByApp(relabel(allPrevApps.filter((r) => !home.has(r.packageName)), names)).map(
+      (t) => [t.packageName, t] as const,
+    ),
   );
 
   const byDate = new Map<string, { screen: number; apps: number; launches: number }>();
@@ -356,6 +407,17 @@ export default function UsageScreen({
             <Text style={styles.launches}>
               {`${value.launches} ${countWord(value.launches, scope)}`}
             </Text>
+            {/* Заходы в приложения есть у всех дней, разблокировки — только у измеренных
+                этой версией. Молчать об этом значит выдать неполную сумму за полную. */}
+            {metric === "launches" && scope !== "apps" && blindDays > 0 && (
+              <Text style={styles.perDay}>
+                {`Разблокировки считаются не за весь период: ${blindDays} ${plural(blindDays, [
+                  "день",
+                  "дня",
+                  "дней",
+                ])} из ${days.length} измерены до того, как их начали считать.`}
+              </Text>
+            )}
             {change && <Text style={styles.change}>{describeChange(change)}</Text>}
             {spanDays > 1 && (
               <Text style={styles.perDay}>

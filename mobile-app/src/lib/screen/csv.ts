@@ -64,12 +64,11 @@ export function fromCsv(csv: string): ParsedCsv {
     if (kind === "screen") {
       // Досчитанность в файл не пишется: чужой файл не может поручиться за то, до какого
       // момента день был измерён здесь. Ноль — честное «неизвестно».
-      const row = normalizeScreenDay({
-        date,
-        screenMillis: value,
-        updatedAt: 0,
-        unlocks: Number.isFinite(launches) ? launches : 0,
-      });
+      // Ноль в этой колонке — это «не считали», а не «ни разу»: creker разблокировки не
+      // считал вовсе и всегда писал туда ноль. Поле остаётся пустым, и день честно
+      // числится неизмеренным по разблокировкам, а не приносит с собой ложный ноль.
+      const unlocks = Number.isFinite(launches) && launches > 0 ? { unlocks: launches } : {};
+      const row = normalizeScreenDay({ date, screenMillis: value, updatedAt: 0, ...unlocks });
       if (row) days.push(row);
       else skipped++;
     } else if (kind === "app") {
