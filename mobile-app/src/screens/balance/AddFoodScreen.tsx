@@ -373,14 +373,14 @@ export default function AddFoodScreen({
         onPress={() => setBuildingDish(true)}
         disabled={products.length === 0}
         accessibilityRole="button"
-        accessibilityLabel="Несколько продуктов"
+        accessibilityLabel="Собрать блюдо"
         style={({ pressed }) => [styles.addRow, products.length === 0 && styles.rowOff, pressed && styles.pressed]}
       >
         <Feather name="layers" size={16} color={colors.textMuted} />
         <Text style={styles.addText}>
           {products.length === 0
-            ? "Несколько сразу — сначала заведи продукты"
-            : "Несколько продуктов или строкой"}
+            ? "Собрать блюдо — сначала заведи продукты"
+            : "Собрать блюдо или записать строкой"}
         </Text>
       </Pressable>
     </ScrollView>
@@ -637,7 +637,8 @@ function DishForm({
       <Text style={styles.caption}>
         {dish
           ? "Уже записанное в дневник не изменится — там свои числа"
-          : "Собери набор и положи его в дневник — или сохрани как блюдо"}
+          : "Набери состав — строкой или руками. Дальше можно положить его в дневник разом " +
+            "или сохранить блюдом, чтобы в следующий раз добавлять одним нажатием."}
       </Text>
 
       <Text style={styles.sectionLabel}>Строкой</Text>
