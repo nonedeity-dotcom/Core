@@ -31,6 +31,7 @@ import {
   type Unit,
 } from "../../lib/balance/food";
 import { parseFoodLine } from "../../lib/balance/parse";
+import BarcodeScan from "./BarcodeScan";
 
 /**
  * Добавить еду: найти продукт, сказать сколько, положить в дневник.
@@ -60,6 +61,16 @@ export default function AddFoodScreen({
   // будущие записи, а исправить её было нечем.
   const [editingProduct, setEditingProduct] = useState<FoodProduct | null>(null);
   const [editingDish, setEditingDish] = useState<Dish | null>(null);
+  /** Открыт сканер. */
+  const [scanning, setScanning] = useState(false);
+  /**
+   * Товар со штрихкода, ещё не сохранённый.
+   *
+   * Отдельно от `editingProduct`, потому что это не правка существующего, а черновик из
+   * чужой базы: числа подставлены, но их подтверждают, и до подтверждения в списке
+   * продуктов его нет.
+   */
+  const [draft, setDraft] = useState<Omit<FoodProduct, "id"> | null>(null);
 
   const { data: products = [] } = useQuery<FoodProduct[]>({
     queryKey: ["foodProducts"],
@@ -90,6 +101,7 @@ export default function AddFoodScreen({
         setEditingProduct(null);
       } else {
         setCreating(false);
+        setDraft(null);
         setPicked(saved);
       }
     },
@@ -186,14 +198,35 @@ export default function AddFoodScreen({
     });
   };
 
-  if (creating || editingProduct) {
+  if (scanning) {
+    return (
+      <BarcodeScan
+        products={products}
+        onExisting={(p) => {
+          // Эта пачка уже заведена — сразу к «сколько съел», без второго такого же продукта
+          // в списке.
+          setScanning(false);
+          setPicked(p);
+        }}
+        onFound={(d) => {
+          setScanning(false);
+          setDraft(d);
+        }}
+        onCancel={() => setScanning(false)}
+      />
+    );
+  }
+
+  if (creating || editingProduct || draft) {
     return (
       <ProductForm
         product={editingProduct}
+        draft={draft}
         onSave={(p) => saveProduct.mutate(editingProduct ? { ...p, id: editingProduct.id } : p)}
         onCancel={() => {
           setCreating(false);
           setEditingProduct(null);
+          setDraft(null);
         }}
       />
     );
@@ -345,6 +378,18 @@ export default function AddFoodScreen({
       >
         <Feather name="plus" size={16} color={colors.textMuted} />
         <Text style={styles.addText}>Свой продукт</Text>
+      </Pressable>
+
+      {/* Пачка в руке — самый быстрый способ завести продукт: цифры под полосками знают и
+          название, и состав, и вес упаковки. */}
+      <Pressable
+        onPress={() => setScanning(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Сканировать штрихкод"
+        style={({ pressed }) => [styles.addRow, pressed && styles.pressed]}
+      >
+        <Feather name="maximize" size={16} color={colors.textMuted} />
+        <Text style={styles.addText}>Штрихкод с упаковки</Text>
       </Pressable>
 
       {/* Числа справочные, и об этом сказано до нажатия, а не после: жирность творога и
@@ -806,34 +851,50 @@ function DishForm({
 
 
 /** Новый продукт: название и четыре числа на 100 г, плюс необязательный вес порции. */
+/**
+ * Форма продукта: и для своего, и для правки, и для подставленного со штрихкода.
+ *
+ * `draft` — это найденное в открытой базе, но ещё не сохранённое. Отдельно от `product`,
+ * потому что разница видна человеку: правка меняет то, что уже в списке, а черновик — чужие
+ * числа, которые он подтверждает своими глазами и упаковкой в руке. Поэтому у черновика
+ * своя шапка, а не молчаливо заполненные поля.
+ */
 function ProductForm({
   product,
+  draft,
   onSave,
   onCancel,
 }: {
   product: FoodProduct | null;
+  draft?: Omit<FoodProduct, "id"> | null;
   onSave: (p: Omit<FoodProduct, "id">) => void;
   onCancel: () => void;
 }) {
+  // Правка важнее черновика: одновременно их не бывает, но порядок должен быть определён.
+  const base = product ?? draft ?? null;
   const show = (v: number | undefined) => (v === undefined || v === 0 ? "" : String(v));
-  const [name, setName] = useState(product?.name ?? "");
-  const [kcal, setKcal] = useState(show(product?.kcal));
-  const [protein, setProtein] = useState(show(product?.protein));
-  const [fat, setFat] = useState(show(product?.fat));
-  const [carb, setCarb] = useState(show(product?.carb));
-  const [portion, setPortion] = useState(show(product?.portionG));
-  const [unit, setUnit] = useState<Unit>(product ? unitOf(product) : "g");
+  const [name, setName] = useState(base?.name ?? "");
+  const [kcal, setKcal] = useState(show(base?.kcal));
+  const [protein, setProtein] = useState(show(base?.protein));
+  const [fat, setFat] = useState(show(base?.fat));
+  const [carb, setCarb] = useState(show(base?.carb));
+  const [portion, setPortion] = useState(show(base?.portionG));
+  const [unit, setUnit] = useState<Unit>(base ? unitOf(base) : "g");
 
   const num = (v: string) => Math.max(0, Number(v.replace(",", ".")) || 0);
   const canSave = name.trim() !== "";
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-      <Text style={styles.pickedName}>{product ? product.name : "Свой продукт"}</Text>
+      <Text style={styles.pickedName}>
+        {product ? product.name : draft ? "Нашлось по штрихкоду" : "Свой продукт"}
+      </Text>
       <Text style={styles.caption}>
         {product
           ? "Значения на 100 г. Уже записанное в дневник не пересчитается — там свои числа"
-          : "Значения — на 100 граммов"}
+          : draft
+            ? "Значения на 100 г, из открытой базы. Сверь с упаковкой — там их вносят вручную, и ошибки бывают"
+            : "Значения — на 100 граммов"}
       </Text>
 
       <View style={styles.formCard}>
@@ -904,6 +965,10 @@ function ProductForm({
             ...(unit !== "g" && num(portion) > 0
               ? { portionG: num(portion), unit: unit as Exclude<Unit, "g"> }
               : {}),
+            // Штрихкод переживает и правку, и подтверждение черновика: по нему вторая
+            // такая же пачка найдёт этот продукт, а не заведёт двойника.
+            ...(base?.barcode ? { barcode: base.barcode } : {}),
+            ...(base?.source ? { source: base.source } : {}),
           })
         }
         disabled={!canSave}

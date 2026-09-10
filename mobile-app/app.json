@@ -23,7 +23,8 @@
         "NOTIFICATIONS",
         "SCHEDULE_EXACT_ALARM",
         "android.permission.PACKAGE_USAGE_STATS",
-        "android.permission.QUERY_ALL_PACKAGES"
+        "android.permission.QUERY_ALL_PACKAGES",
+        "android.permission.CAMERA"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -45,6 +46,13 @@
         "expo-av",
         {
           "microphonePermission": false
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Камера нужна только чтобы прочитать штрихкод с упаковки. Снимки не делаются и никуда не отправляются.",
+          "recordAudioAndroid": false
         }
       ]
     ]

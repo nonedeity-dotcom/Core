@@ -90,6 +90,15 @@ export interface FoodProduct extends Nutrition {
   unit?: Exclude<Unit, "g">;
   /** Когда его последний раз добавляли — по этому строится «Часто ем». */
   lastUsedAt?: string;
+  /**
+   * Штрихкод, если продукт приехал со сканера.
+   *
+   * Нужен не для красоты: вторым сканированием той же пачки должен находиться тот же
+   * продукт, а не появляться его близнец. По нему же видно, что числа — с упаковки.
+   */
+  barcode?: string;
+  /** Откуда взяты числа: пусто — руками или из набора, `openfoodfacts` — из открытой базы. */
+  source?: string;
 }
 
 /**
@@ -184,6 +193,8 @@ export function normalizeProduct(value: unknown): FoodProduct | null {
       ? { unit: v.unit }
       : {}),
     ...(isStr(v.lastUsedAt) ? { lastUsedAt: v.lastUsedAt } : {}),
+    ...(isStr(v.barcode) && v.barcode.trim() !== "" ? { barcode: v.barcode.trim() } : {}),
+    ...(isStr(v.source) && v.source.trim() !== "" ? { source: v.source.trim() } : {}),
   };
 }
 
