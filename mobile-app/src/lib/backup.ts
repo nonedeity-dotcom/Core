@@ -17,6 +17,7 @@ import {
 import { toDateKey } from "./date";
 import { normalizeDayRule } from "./dayRule";
 import { normalizeSkipRule } from "./skipRule";
+import { normalizeLevelRule } from "./level";
 import { normalizeDayOff } from "./dayOff";
 import { normalizeGoals } from "./goals";
 import { normalizeTipPrefs } from "./tipLibrary";
@@ -79,6 +80,7 @@ const SCOPE_FIELDS: Record<Exclude<BackupScope, "all">, (keyof BackupData)[]> = 
     "focusIntervals",
     "dayRule",
     "skipRule",
+    "levelRule",
     "daysOff",
     "habitFreezes",
     "tipPrefs",
@@ -132,6 +134,7 @@ function emptyData(): BackupData {
     focusIntervals: DEFAULT_FOCUS_INTERVALS,
     dayRule: normalizeDayRule(undefined),
     skipRule: normalizeSkipRule(undefined),
+    levelRule: normalizeLevelRule(undefined),
     daysOff: normalizeDayOff(undefined),
     habitFreezes: {},
     tipPrefs: normalizeTipPrefs(undefined),
@@ -336,6 +339,9 @@ function parseData(raw: unknown): BackupData {
     // Same for the skip allowance: an older file imports as one shared skip a week, which
     // is what the app did before it was settable.
     skipRule: normalizeSkipRule(d.skipRule),
+    // Нет в файлах, записанных до уровней: нормализация отдаёт нули, то есть «уровни ничего
+    // не требуют» — ровно то, чем приложение было до них.
+    levelRule: normalizeLevelRule(d.levelRule),
     daysOff: normalizeDayOff(d.daysOff),
     habitFreezes: parseHabitFreezes(d.habitFreezes),
     // Missing from files written before the reference was editable.

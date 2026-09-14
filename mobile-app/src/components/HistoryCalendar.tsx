@@ -7,6 +7,7 @@ import { plural } from "../lib/plural";
 import { dateNDaysAgo } from "../lib/date";
 import { DEFAULT_DAY_RULE, type DayRule } from "../lib/dayRule";
 import { DEFAULT_DAY_OFF, isDayOff, type DayOffRule } from "../lib/dayOff";
+import { DEFAULT_LEVEL_RULE, type LevelRule } from "../lib/level";
 import {
   buildMonthGrid,
   buildWeeksGrid,
@@ -98,6 +99,10 @@ export default function HistoryCalendar({
     queryKey: ["dayRule"],
     queryFn: () => api.getDayRule(),
   });
+  const { data: levelRule = DEFAULT_LEVEL_RULE } = useQuery<LevelRule>({
+    queryKey: ["levelRule"],
+    queryFn: () => api.getLevelRule(),
+  });
   const { data: daysOff = DEFAULT_DAY_OFF } = useQuery<DayOffRule>({
     queryKey: ["daysOff"],
     queryFn: () => api.getDaysOff(),
@@ -114,7 +119,7 @@ export default function HistoryCalendar({
   const isOff = (date: string) => isDayOff(date, daysOff);
   // Read here rather than passed down: two screens render this component and both would
   // have to thread the same setting through for the calendar to agree with the ring.
-  const states = habit ? singleHabitDayStates(habit, logs) : computeDayStates(habits, logs, rule);
+  const states = habit ? singleHabitDayStates(habit, logs) : computeDayStates(habits, logs, rule, levelRule);
   const cells: Cell[] =
     prefs.mode === "month"
       ? buildMonthGrid(visibleMonth, today, states, frozenDays, isOff)

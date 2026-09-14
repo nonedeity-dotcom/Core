@@ -12,6 +12,7 @@ import NotificationAccess from "../components/NotificationAccess";
 import type { Habit } from "../types";
 import { DEFAULT_DAY_RULE, describeDayRule, type DayRule } from "../lib/dayRule";
 import { DEFAULT_SKIP_RULE, describeSkipRule, type SkipRule } from "../lib/skipRule";
+import { DEFAULT_LEVEL_RULE, describeQuota, quotaIsEmpty, type LevelRule } from "../lib/level";
 import { habitsThatDecideTheDay } from "../lib/habits";
 import { confirmDestructive } from "../lib/confirm";
 import {
@@ -135,7 +136,14 @@ export default function SettingsScreen({
     queryKey: ["skipRule"],
     queryFn: () => api.getSkipRule(),
   });
-  const adminHint = `${describeDayRule(dayRule, habitsThatDecideTheDay(habits).length)} · ${describeSkipRule(skipRule)}`;
+  const { data: levelRule = DEFAULT_LEVEL_RULE } = useQuery<LevelRule>({
+    queryKey: ["levelRule"],
+    queryFn: () => api.getLevelRule(),
+  });
+  // Норма по уровням называется только тогда, когда она поставлена: «ничего не требуется»
+  // в подписи к двери — это строка, которая ничего не говорит и занимает место.
+  const levelPart = quotaIsEmpty(levelRule.daily) ? "" : ` · каждый день ${describeQuota(levelRule.daily)}`;
+  const adminHint = `${describeDayRule(dayRule, habitsThatDecideTheDay(habits).length)}${levelPart} · ${describeSkipRule(skipRule)}`;
 
   /**
    * One question before the rules open.

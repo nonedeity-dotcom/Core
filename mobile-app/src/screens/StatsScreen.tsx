@@ -7,6 +7,7 @@ import { plural } from "../lib/plural";
 import { useTodayKey } from "../lib/useTodayKey";
 import { countedDates, streakSpan } from "../lib/streak";
 import { DEFAULT_DAY_OFF, type DayOffRule } from "../lib/dayOff";
+import { DEFAULT_LEVEL_RULE, type LevelRule } from "../lib/level";
 import { DEFAULT_DAY_RULE, type DayRule } from "../lib/dayRule";
 import {
   WEEKDAY_LABELS,
@@ -64,12 +65,16 @@ export default function StatsScreen() {
     queryKey: ["dayRule"],
     queryFn: () => api.getDayRule(),
   });
+  const { data: levelRule = DEFAULT_LEVEL_RULE } = useQuery<LevelRule>({
+    queryKey: ["levelRule"],
+    queryFn: () => api.getLevelRule(),
+  });
   const { data: daysOff = DEFAULT_DAY_OFF } = useQuery<DayOffRule>({
     queryKey: ["daysOff"],
     queryFn: () => api.getDaysOff(),
   });
 
-  const counted = countedDates(habits, logs, rule);
+  const counted = countedDates(habits, logs, rule, levelRule);
   // Месяц считается по сегодняшний день и не раньше первой отметки вообще: дни до того,
   // как приложение появилось на телефоне, — это не пропущенные дни.
   const month = monthKey(today);
@@ -79,7 +84,7 @@ export default function StatsScreen() {
   const weekdays = weekdayBreakdown(counted, from, today);
   const observed = weekdays.reduce((n, w) => n + w.total, 0);
   const streaks = streakSummary(counted, freezes, from, today, daysOff);
-  const span = streakSpan(habits, logs, freezes, rule, daysOff);
+  const span = streakSpan(habits, logs, freezes, rule, levelRule, daysOff);
   const weeks = focusByWeek(sessions, from, today).slice(-8);
   const focusTotal = totalFocusMinutes(sessions);
   const maxWeek = Math.max(1, ...weeks.map((w) => w.minutes));

@@ -3,6 +3,7 @@ import { DEFAULT_DAY_RULE, requiredForDay, type DayRule } from "./dayRule";
 import { DEFAULT_SKIP_RULE, periodBucket, type SkipRule } from "./skipRule";
 import { DEFAULT_DAY_OFF, isDayOff, type DayOffRule } from "./dayOff";
 import { habitsThatDecideTheDay, logCount, perDayTarget } from "./habits";
+import { capQuota, closedLevels, countLevels, meetsQuota, type LevelRule } from "./level";
 import type { Habit, HabitLog } from "../types";
 
 /** How far back a streak is counted — comfortably past the 66-day mark. */
@@ -26,9 +27,10 @@ export function dayCounts(
   habits: Habit[],
   logs: HabitLog[],
   date: string,
-  rule: DayRule = DEFAULT_DAY_RULE,
+  rule: DayRule,
+  levels: LevelRule,
 ): boolean {
-  return dayCountsWith(habits, logs, date, startsByHabit(habits, logs), rule);
+  return dayCountsWith(habits, logs, date, startsByHabit(habits, logs), rule, levels);
 }
 
 /**
@@ -60,24 +62,37 @@ function dayCountsWith(
   date: string,
   starts: Map<string, string>,
   rule: DayRule,
+  levels: LevelRule,
 ): boolean {
   const deciding = habitsThatDecideTheDay(habits, date, starts);
   if (deciding.length === 0) return false;
   const counts = new Map<string, number>();
   for (const l of logs) if (l.date === date) counts.set(l.habitId, logCount(l));
-  return meetsDay(deciding, counts, rule);
+  return meetsDay(deciding, counts, rule, levels);
 }
 
 /**
  * The rule itself, so the single-day and whole-history callers cannot drift apart.
  *
- * How many have to be closed is [requiredForDay]; *which* ones is deliberately not asked.
- * A rule of "three of five" that also named the three would be a different, longer list of
- * habits rather than a lighter bar over the same one.
+ * Два условия, и оба должны сойтись. Сколько всего закрыть — [requiredForDay], и *какие
+ * именно* там намеренно не спрашивается: правило «три из пяти», которое ещё и называет
+ * тройку, — это другой, более короткий список привычек, а не более низкая планка над тем же.
+ *
+ * Норма по уровням спрашивает как раз про род, а не про штуки, и потому стоит рядом, а не
+ * вместо: «пять из пяти» и «одна из них сложная» — разные требования, и день закрыт, когда
+ * выполнены оба. Норма урезается до того, что в списке есть, иначе получился бы день,
+ * который нельзя закрыть никогда.
  */
-function meetsDay(deciding: Habit[], counts: Map<string, number>, rule: DayRule): boolean {
-  const closed = deciding.filter((h) => (counts.get(h.id) ?? 0) >= perDayTarget(h)).length;
-  return closed >= requiredForDay(rule, deciding.length);
+function meetsDay(
+  deciding: Habit[],
+  counts: Map<string, number>,
+  rule: DayRule,
+  levels: LevelRule,
+): boolean {
+  const isClosed = (h: Habit) => (counts.get(h.id) ?? 0) >= perDayTarget(h);
+  const closed = deciding.filter(isClosed);
+  if (closed.length < requiredForDay(rule, deciding.length)) return false;
+  return meetsQuota(closedLevels(deciding, isClosed), capQuota(levels.daily, countLevels(deciding)));
 }
 
 /**
@@ -89,7 +104,8 @@ function meetsDay(deciding: Habit[], counts: Map<string, number>, rule: DayRule)
 export function countedDates(
   habits: Habit[],
   logs: HabitLog[],
-  rule: DayRule = DEFAULT_DAY_RULE,
+  rule: DayRule,
+  levels: LevelRule,
 ): Set<string> {
   const counted = new Set<string>();
   if (habitsThatDecideTheDay(habits).length === 0) return counted;
@@ -109,7 +125,7 @@ export function countedDates(
   // in the week before it.
   for (const [date, counts] of byDate) {
     const deciding = habitsThatDecideTheDay(habits, date, starts);
-    if (deciding.length > 0 && meetsDay(deciding, counts, rule)) counted.add(date);
+    if (deciding.length > 0 && meetsDay(deciding, counts, rule, levels)) counted.add(date);
   }
   return counted;
 }
@@ -124,8 +140,9 @@ export function countedDates(
 export function computeStreak(
   habits: Habit[],
   logs: HabitLog[],
-  frozen: string[] = [],
-  rule: DayRule = DEFAULT_DAY_RULE,
+  frozen: string[],
+  rule: DayRule,
+  levels: LevelRule,
   daysOff: DayOffRule = DEFAULT_DAY_OFF,
 ): number {
   // With nothing in the "now" pile there is nothing to be consistent about.
@@ -138,7 +155,7 @@ export function computeStreak(
   let streak = 0;
   for (let i = 0; i < STREAK_WINDOW_DAYS; i++) {
     const day = dateNDaysAgo(i);
-    if (dayCountsWith(habits, logs, day, starts, rule)) streak++;
+    if (dayCountsWith(habits, logs, day, starts, rule, levels)) streak++;
     // Today still being unfinished shouldn't break yesterday's streak.
     else if (i === 0) continue;
     // A frozen day neither breaks the chain nor adds to it. Counting it as a day would be
@@ -180,8 +197,9 @@ export interface StreakSpan {
 export function streakSpan(
   habits: Habit[],
   logs: HabitLog[],
-  frozen: string[] = [],
-  rule: DayRule = DEFAULT_DAY_RULE,
+  frozen: string[],
+  rule: DayRule,
+  levels: LevelRule,
   daysOff: DayOffRule = DEFAULT_DAY_OFF,
 ): StreakSpan {
   const empty: StreakSpan = { days: 0, done: 0, frozen: 0, off: 0 };
@@ -203,7 +221,7 @@ export function streakSpan(
 
   for (let i = 0; i < STREAK_WINDOW_DAYS; i++) {
     const day = dateNDaysAgo(i);
-    if (dayCountsWith(habits, logs, day, starts, rule)) {
+    if (dayCountsWith(habits, logs, day, starts, rule, levels)) {
       done++;
       oldest = i;
       if (newest === -1) {
@@ -248,6 +266,7 @@ function skipsUsed(
   logs: HabitLog[],
   frozenDays: Set<string>,
   dayRule: DayRule,
+  levels: LevelRule,
   rule: SkipRule,
   daysOff: DayOffRule,
   candidate: string,
@@ -277,7 +296,7 @@ function skipsUsed(
     if (isDayOff(day, daysOff)) continue;
     // A day that actually held keeps the run going; one that failed unfrozen ended it, and
     // everything before it belongs to a chain that is already over.
-    if (!dayCounts(habits, logs, day, dayRule)) break;
+    if (!dayCounts(habits, logs, day, dayRule, levels)) break;
   }
   return used;
 }
@@ -298,7 +317,8 @@ export function freezeCandidate(
   logs: HabitLog[],
   frozen: string[],
   today: string,
-  dayRule: DayRule = DEFAULT_DAY_RULE,
+  dayRule: DayRule,
+  levels: LevelRule,
   rule: SkipRule = DEFAULT_SKIP_RULE,
   daysOff: DayOffRule = DEFAULT_DAY_OFF,
 ): string | null {
@@ -309,7 +329,7 @@ export function freezeCandidate(
   if (rule.shared.count <= 0) return null;
 
   const yesterday = dateNDaysAgo(1);
-  if (dayCounts(habits, logs, yesterday, dayRule)) return null;
+  if (dayCounts(habits, logs, yesterday, dayRule, levels)) return null;
   // Вчера было выходным — спасать нечего и платить не за что.
   if (isDayOff(yesterday, daysOff)) return null;
 
@@ -327,9 +347,9 @@ export function freezeCandidate(
   // Выходные в эту пару не считаются: отдых по расписанию промахом не является.
   if (frozenDays.has(previous)) return null;
   // Nothing to save: the chain was already broken the day before.
-  if (!dayCounts(habits, logs, previous, dayRule)) return null;
+  if (!dayCounts(habits, logs, previous, dayRule, levels)) return null;
 
-  if (skipsUsed(habits, logs, frozenDays, dayRule, rule, daysOff, yesterday, i) >= rule.shared.count) {
+  if (skipsUsed(habits, logs, frozenDays, dayRule, levels, rule, daysOff, yesterday, i) >= rule.shared.count) {
     return null;
   }
 

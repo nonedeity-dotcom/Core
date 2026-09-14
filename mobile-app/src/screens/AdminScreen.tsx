@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { colors } from "../theme/colors";
+import { colors, levelInk, levelTint } from "../theme/colors";
 import { plural } from "../lib/plural";
 import { habitsThatDecideTheDay } from "../lib/habits";
 import {
@@ -15,6 +16,18 @@ import {
   type DayRule,
 } from "../lib/dayRule";
 import { DEFAULT_LATE_RULE, type LateRule } from "../lib/habitSchedule";
+import {
+  DEFAULT_LEVEL_RULE,
+  LEVELS,
+  LEVEL_LABELS,
+  MAX_QUOTA,
+  capQuota,
+  countLevels,
+  describeQuota,
+  type HabitLevel,
+  type LevelQuota,
+  type LevelRule,
+} from "../lib/level";
 import {
   DEFAULT_SKIP_RULE,
   MAX_SKIPS,
@@ -158,6 +171,108 @@ function DayRuleCard({
           rule is applied to every day in the history, not only to the ones after it. */}
       <Text style={styles.rowHint}>
         Правило применяется и к прошлым дням — серия и календарь пересчитаются сразу.
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * Сколько привычек каждого уровня нужно закрыть — за день и за неделю.
+ *
+ * Стоит рядом с зачётом дня и работает вместе с ним: день закрыт, когда сошлись оба. «Пять
+ * из пяти» и «одна из них сложная» — разные требования, и второе через первое не выразить.
+ *
+ * Зачёта вверх нет намеренно, и карточка об этом говорит: три сложные не закрывают норму по
+ * лёгким. Норма по лёгким — это чаще всего быт, который проседает именно тогда, когда
+ * взялся за тяжёлое, и подменять его тяжёлым значило бы отменить саму норму.
+ *
+ * Дневная норма входит в приговор дня, недельная — нет. По недельному числу нельзя сказать,
+ * закрыт ли вторник, а на этом держится вся серия; поэтому недельная стоит отдельной целью.
+ */
+function LevelRuleCard({
+  rule,
+  available,
+  onChange,
+}: {
+  rule: LevelRule;
+  /** Сколько привычек каждого уровня вообще есть в «ввожу сейчас» — чтобы не просить больше. */
+  available: LevelQuota;
+  onChange: (rule: LevelRule) => void;
+}) {
+  const [period, setPeriod] = useState<"daily" | "weekly">("daily");
+  const quota = rule[period];
+  const capped = period === "daily" ? capQuota(quota, available) : quota;
+
+  const step = (level: HabitLevel, delta: number) => {
+    const next = Math.min(MAX_QUOTA, Math.max(0, quota[level] + delta));
+    onChange({ ...rule, [period]: { ...quota, [level]: next } });
+  };
+
+  return (
+    <View style={styles.limitCard}>
+      <View>
+        <Text style={styles.rowLabel}>Сколько каждого уровня</Text>
+        <Text style={styles.rowHint}>
+          {period === "daily"
+            ? `Каждый день: ${describeQuota(capped)}`
+            : `За неделю: ${describeQuota(quota)}`}
+        </Text>
+      </View>
+
+      <View style={styles.chipRow}>
+        {([
+          ["daily", "В день"],
+          ["weekly", "В неделю"],
+        ] as const).map(([id, title]) => (
+          <Pressable
+            key={id}
+            onPress={() => setPeriod(id)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: period === id }}
+            style={({ pressed }) => [styles.chip, period === id && styles.chipOn, pressed && styles.pressed]}
+          >
+            <Text style={[styles.chipText, period === id && styles.chipTextOn]}>{title}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {LEVELS.map((level) => (
+        <View key={level} style={styles.levelRow}>
+          <View style={[styles.levelTag, { backgroundColor: levelTint[level] }]}>
+            <Text style={[styles.levelTagText, { color: levelInk[level] }]}>{LEVEL_LABELS[level]}</Text>
+          </View>
+          <Text style={styles.levelHave}>
+            {period === "daily" ? `в списке ${available[level]}` : `${available[level]} в списке`}
+          </Text>
+          <View style={styles.levelStepper}>
+            <Pressable
+              onPress={() => step(level, -1)}
+              accessibilityRole="button"
+              accessibilityLabel={`Меньше: ${LEVEL_LABELS[level]}`}
+              style={({ pressed }) => [styles.stepBtnSmall, pressed && styles.pressed]}
+            >
+              <Text style={styles.stepBtnText}>−</Text>
+            </Pressable>
+            <Text style={styles.levelValue}>{quota[level]}</Text>
+            <Pressable
+              onPress={() => step(level, 1)}
+              accessibilityRole="button"
+              accessibilityLabel={`Больше: ${LEVEL_LABELS[level]}`}
+              style={({ pressed }) => [styles.stepBtnSmall, pressed && styles.pressed]}
+            >
+              <Text style={styles.stepBtnText}>+</Text>
+            </Pressable>
+          </View>
+        </View>
+      ))}
+
+      <Text style={styles.rowHint}>
+        {period === "daily"
+          ? "Ноль — этот уровень ничего не требует. Норма урезается до того, что есть в списке: просить две сложные, когда сложная одна, значило бы завести день, который нельзя закрыть."
+          : "Недельная норма день не рушит: по ней нельзя сказать, закрыт ли сегодняшний, а на этом держится серия. Это отдельная цель рядом."}
+      </Text>
+      <Text style={styles.rowHint}>
+        Сложная за среднюю не идёт: каждый уровень закрывается своим.
       </Text>
     </View>
   );
@@ -473,6 +588,10 @@ export default function AdminScreen() {
     queryKey: ["skipRule"],
     queryFn: () => api.getSkipRule(),
   });
+  const { data: levelRule = DEFAULT_LEVEL_RULE } = useQuery<LevelRule>({
+    queryKey: ["levelRule"],
+    queryFn: () => api.getLevelRule(),
+  });
   const { data: lateRule = DEFAULT_LATE_RULE } = useQuery<LateRule>({
     queryKey: ["lateRule"],
     queryFn: () => api.getLateRule(),
@@ -501,6 +620,13 @@ export default function AdminScreen() {
     },
   });
 
+  const setLevelRule = useMutation({
+    mutationFn: (rule: LevelRule) => api.setLevelRule(rule),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["levelRule"] });
+      invalidate();
+    },
+  });
   const setSkipRule = useMutation({
     mutationFn: (rule: SkipRule) => api.setSkipRule(rule),
     onSuccess: () => {
@@ -519,12 +645,19 @@ export default function AdminScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
       <Text style={styles.intro}>
-        Здесь меняются правила, по которым считаются дни и серии. Обе настройки пересчитывают
-        и прошлое: числа в отчёте сдвинутся сразу, а не с завтрашнего дня.
+        Здесь меняются правила, по которым считаются дни и серии. Все они пересчитывают и
+        прошлое: числа в отчёте сдвинутся сразу, а не с завтрашнего дня.
       </Text>
 
       <Text style={styles.sectionLabel}>Зачёт дня</Text>
       <DayRuleCard rule={dayRule} decidingCount={decidingCount} onChange={(r) => setDayRule.mutate(r)} />
+
+      <Text style={[styles.sectionLabel, styles.spaced]}>Уровни</Text>
+      <LevelRuleCard
+        rule={levelRule}
+        available={countLevels(habitsThatDecideTheDay(habits))}
+        onChange={(r) => setLevelRule.mutate(r)}
+      />
 
       <Text style={[styles.sectionLabel, styles.spaced]}>Пропуски</Text>
       <SkipRuleCard rule={skipRule} onChange={(r) => setSkipRule.mutate(r)} />
@@ -566,6 +699,20 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: "rgba(143,184,154,0.12)", borderColor: colors.accentGreen },
   chipText: { color: colors.textMuted, fontSize: 12 },
   chipTextOn: { color: colors.accentGreen, fontWeight: "600" },
+  levelRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  levelTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 7 },
+  levelTagText: { fontSize: 11, fontWeight: "600" },
+  levelHave: { color: colors.textMuted, fontSize: 10, flex: 1 },
+  levelStepper: { flexDirection: "row", alignItems: "center", gap: 10 },
+  levelValue: { color: colors.text, fontSize: 15, fontWeight: "700", minWidth: 18, textAlign: "center" },
+  stepBtnSmall: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: colors.bg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   stepper: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 16 },
   stepBtn: {
     width: 40,

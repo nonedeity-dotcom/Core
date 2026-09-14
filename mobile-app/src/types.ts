@@ -1,3 +1,5 @@
+import type { HabitLevel } from "./lib/level";
+
 /**
  * Which pile a habit or a trigger sits in.
  *
@@ -57,6 +59,13 @@ export interface Habit {
   sortOrder: number;
   /** Defaults to "now" — every habit that existed before the split was one you were doing. */
   group?: ItemGroup;
+  /**
+   * Насколько эта привычка тяжёлая: сложная, средняя или лёгкая.
+   *
+   * Отсутствует — значит средняя, и это то, чем была каждая привычка до того, как уровни
+   * появились. Нужна не сама по себе, а ради нормы по уровням: см. src/lib/level.ts.
+   */
+  level?: HabitLevel;
   /**
    * Defaults to once a day, which is what every habit meant before targets existed.
    *

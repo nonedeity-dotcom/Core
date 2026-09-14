@@ -27,6 +27,26 @@ export const colors = {
  * Each is at least 5:1 against `bg`, so the 11px range line under a title stays readable —
  * the purple is lightened from the mockup's own value for exactly that reason.
  */
+/**
+ * Цвет уровня привычки: тёплый — тяжело, серый — обычно, зелёный — легко.
+ *
+ * Новых оттенков нет намеренно: те же два, что и везде, плюс приглушённый. Тёплый в этом
+ * приложении значит «сюда внимание», и сложная привычка — ровно тот случай. Заливка
+ * полупрозрачная, а не сплошная: метка уровня стоит рядом с названием и не должна спорить
+ * с ним за взгляд.
+ */
+export const levelTint: Record<"hard" | "medium" | "easy", string> = {
+  hard: "rgba(224,138,85,0.16)",
+  medium: "rgba(139,143,152,0.16)",
+  easy: "rgba(143,184,154,0.16)",
+};
+
+export const levelInk: Record<"hard" | "medium" | "easy", string> = {
+  hard: colors.accent,
+  medium: colors.textMuted,
+  easy: colors.accentGreen,
+};
+
 export const phaseColors: Record<PhaseId, string> = {
   honeymoon: "#8cc888",
   dip: "#e06874",

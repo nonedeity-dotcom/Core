@@ -9,6 +9,7 @@ import { countedDates } from "../lib/streak";
 import { monthFacts } from "../lib/stats";
 import { DEFAULT_DAY_RULE, type DayRule } from "../lib/dayRule";
 import { DEFAULT_DAY_OFF, type DayOffRule } from "../lib/dayOff";
+import { DEFAULT_LEVEL_RULE, type LevelRule } from "../lib/level";
 import GoalChecklist from "../components/GoalChecklist";
 import {
   emptyGoal,
@@ -55,6 +56,10 @@ export default function MonthSummaryScreen({ route }: { route: { params: { perio
     queryKey: ["dayRule"],
     queryFn: () => api.getDayRule(),
   });
+  const { data: levelRule = DEFAULT_LEVEL_RULE } = useQuery<LevelRule>({
+    queryKey: ["levelRule"],
+    queryFn: () => api.getLevelRule(),
+  });
   const { data: daysOff = DEFAULT_DAY_OFF } = useQuery<DayOffRule>({
     queryKey: ["daysOff"],
     queryFn: () => api.getDaysOff(),
@@ -62,7 +67,7 @@ export default function MonthSummaryScreen({ route }: { route: { params: { perio
 
   const stored = findGoal(goals, period);
   const goal = stored ?? emptyGoal(period, today);
-  const facts = monthFacts(countedDates(habits, logs, dayRule), freezes, range.from, to, daysOff);
+  const facts = monthFacts(countedDates(habits, logs, dayRule, levelRule), freezes, range.from, to, daysOff);
   const progress = goalProgress(stored);
 
   const [text, setText] = useState("");

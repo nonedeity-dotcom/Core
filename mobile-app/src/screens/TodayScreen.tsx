@@ -3,13 +3,28 @@ import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from "react-
 import { Feather } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { colors } from "../theme/colors";
+import { colors, levelInk, levelTint } from "../theme/colors";
 import { confirmDestructive } from "../lib/confirm";
 import { useTodayKey } from "../lib/useTodayKey";
 import { useNowMinutes } from "../lib/useNowMinutes";
 import { DEFAULT_LATE_RULE, type LateRule } from "../lib/habitSchedule";
 import { dayOffReason, isDayOff } from "../lib/dayOff";
 import { plural } from "../lib/plural";
+import {
+  DEFAULT_LEVEL,
+  LEVELS,
+  LEVEL_LABELS,
+  LEVEL_SHORT,
+  capQuota,
+  closedLevels,
+  countLevels,
+  habitLevel,
+  meetsQuota,
+  quotaIsEmpty,
+  weeklyLevels,
+  type LevelQuota,
+  type HabitLevel,
+} from "../lib/level";
 import { useFoldSet } from "../lib/useFold";
 import { weekStart, weekDatesThrough } from "../lib/week";
 import { habitStanding, standingRank, type HabitStanding } from "../lib/habitStanding";
@@ -61,6 +76,7 @@ export default function TodayScreen() {
   const [editDraft, setEditDraft] = useState("");
   const [editMinimal, setEditMinimal] = useState("");
   const [editGroup, setEditGroup] = useState<ItemGroup>("now");
+  const [editLevel, setEditLevel] = useState<HabitLevel>(DEFAULT_LEVEL);
   const [editTarget, setEditTarget] = useState<HabitTarget>({ kind: "daily", count: 1 });
   const [editSchedule, setEditSchedule] = useState<HabitSchedule | null>(null);
   const [newLabel, setNewLabel] = useState("");
@@ -89,7 +105,7 @@ export default function TodayScreen() {
   // The four months of marks each habit's own run is walked over, plus the chances it has
   // spent. Shared with the report through React Query's cache rather than fetched twice —
   // and this is also the one hook that grants a freeze, which is idempotent.
-  const { logs: streakLogs, freezes, habitFreezes, skipRule, daysOff } = useStreak(today);
+  const { logs: streakLogs, freezes, habitFreezes, skipRule, daysOff, levelRule } = useStreak(today);
 
   // How much of the pile closes a day is a setting; the header is the one place on this
   // screen that has to say what today is actually asking for.
@@ -158,6 +174,7 @@ export default function TodayScreen() {
       label: string;
       minimal: string | null;
       group: ItemGroup;
+      level: HabitLevel;
       target: HabitTarget;
       schedule: HabitSchedule | null;
     }) =>
@@ -165,6 +182,7 @@ export default function TodayScreen() {
         label: data.label,
         minimal: data.minimal,
         group: data.group,
+        level: data.level,
         target: data.target,
         schedule: data.schedule,
       }),
@@ -201,6 +219,7 @@ export default function TodayScreen() {
     setEditDraft(h.label);
     setEditMinimal(h.minimal ?? "");
     setEditGroup(habitGroup(h));
+    setEditLevel(habitLevel(h));
     setEditTarget(habitTarget(h));
     setEditSchedule(h.schedule ?? null);
   };
@@ -213,6 +232,7 @@ export default function TodayScreen() {
         // Empty means "no minimal version", not an empty string to render.
         minimal: editMinimal.trim() || null,
         group: editGroup,
+        level: editLevel,
         target: editTarget,
         schedule: editSchedule,
       });
@@ -253,6 +273,21 @@ export default function TodayScreen() {
   const deciding = habitsThatDecideTheDay(habits);
   const closed = deciding.filter((h) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h)).length;
   const required = requiredForDay(dayRule, deciding.length);
+
+  // Норма по уровням — вторая половина того же приговора дня. Считается здесь, потому что
+  // здесь же стоит и первая: два числа, которые решают день, человек должен видеть рядом,
+  // а не на разных экранах.
+  const isClosedToday = (h: Habit) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h);
+  const dailyQuota = capQuota(levelRule.daily, countLevels(deciding));
+  const dailyClosed = closedLevels(deciding, isClosedToday);
+  // За неделю считаются дни, а не нажатия, и в счёт идут все привычки «ввожу сейчас» —
+  // недельные тоже: «спорт три раза в неделю» это ровно то, что осмысленно мерить неделей.
+  const weekClosedDays = (h: Habit) => {
+    const perDay = perDayTarget(h);
+    return weekDates.filter((d) => logCount(weekLogs.find((l) => l.habitId === h.id && l.date === d)) >= perDay)
+      .length;
+  };
+  const weeklyClosed = weeklyLevels(nowHabits, weekClosedDays);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 20 }}>
@@ -302,6 +337,16 @@ export default function TodayScreen() {
         </Pressable>
       </View>
 
+      {/* Норма по уровням появляется, только если она поставлена: нули — это «уровни ничего
+          не требуют», и карточка с тремя нулями значила бы ровно ничего. */}
+      <LevelQuotaBoard
+        dailyQuota={dailyQuota}
+        dailyClosed={dailyClosed}
+        weeklyQuota={levelRule.weekly}
+        weeklyClosed={weeklyClosed}
+        countMet={deciding.length > 0 && closed >= required}
+      />
+
       {GROUPS.map((group) => {
         const inGroup = habits.filter((h) => habitGroup(h) === group.id);
         // An empty pile is only worth a heading while you are sorting things into it.
@@ -327,6 +372,8 @@ export default function TodayScreen() {
               onMinimal={setEditMinimal}
               group={editGroup}
               onGroup={setEditGroup}
+              level={editLevel}
+              onLevel={setEditLevel}
               target={editTarget}
               onTarget={setEditTarget}
               schedule={editSchedule}
@@ -463,6 +510,7 @@ function HabitRow({
   onReset: () => void;
 }) {
   const target = habitTarget(habit);
+  const level = habitLevel(habit);
   const perDay = perDayTarget(habit);
   const doneToday = count >= perDay;
   const weekly = target.kind === "weekly";
@@ -519,6 +567,12 @@ function HabitRow({
           <View style={{ flex: 1 }}>
             <View style={styles.labelRow}>
               <Text style={[styles.label, { flexShrink: 1 }, !tickable && styles.labelLater]}>{habit.label}</Text>
+              {/* Метка уровня стоит у названия, а не в конце строки: уровень — свойство самой
+                  привычки, и читается он вместе с ней. Приглушённая заливка на то и нужна,
+                  чтобы метка была видна, но не спорила с названием за взгляд. */}
+              <View style={[styles.levelTag, { backgroundColor: levelTint[level] }]}>
+                <Text style={[styles.levelTagText, { color: levelInk[level] }]}>{LEVEL_SHORT[level]}</Text>
+              </View>
               {habit.auto === "screentime" && (
                 <View style={styles.autoTag}>
                   <Feather name="smartphone" size={9} color={colors.textMuted} />
@@ -585,6 +639,69 @@ function HabitRow({
 }
 
 /** The row turned into a form: name, the small version, which pile, and how often. */
+/**
+ * Сколько каждого уровня закрыто против того, сколько нужно.
+ *
+ * Две строки, и они про разное. Дневная норма решает сегодняшний день — без неё он не
+ * закрыт, даже если по числу привычек всё сошлось. Недельная приговор дня не выносит: по
+ * недельному числу нельзя сказать, закрыт ли вторник, а вся серия держится именно на этом.
+ * Поэтому она стоит рядом как отдельная цель и ничего не рушит.
+ */
+function LevelQuotaBoard({
+  dailyQuota,
+  dailyClosed,
+  weeklyQuota,
+  weeklyClosed,
+  countMet,
+}: {
+  dailyQuota: LevelQuota;
+  dailyClosed: LevelQuota;
+  weeklyQuota: LevelQuota;
+  weeklyClosed: LevelQuota;
+  /** Сошлось ли общее число привычек — вторая половина того же приговора. */
+  countMet: boolean;
+}) {
+  const hasDaily = !quotaIsEmpty(dailyQuota);
+  const hasWeekly = !quotaIsEmpty(weeklyQuota);
+  if (!hasDaily && !hasWeekly) return null;
+
+  const line = (quota: LevelQuota, closed: LevelQuota, title: string) => (
+    <View style={styles.quotaLine}>
+      <Text style={styles.quotaTitle}>{title}</Text>
+      <View style={styles.quotaChips}>
+        {LEVELS.filter((l) => quota[l] > 0).map((l) => {
+          const met = closed[l] >= quota[l];
+          return (
+            <View key={l} style={[styles.quotaChip, { backgroundColor: levelTint[l] }]}>
+              <Text style={[styles.quotaChipText, { color: levelInk[l] }]}>{LEVEL_SHORT[l]}</Text>
+              <Text style={[styles.quotaChipCount, met && styles.quotaChipCountMet]}>
+                {Math.min(closed[l], quota[l])}/{quota[l]}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+
+  return (
+    <View style={styles.quotaCard}>
+      {hasDaily && line(dailyQuota, dailyClosed, "Сегодня нужно")}
+      {hasWeekly && line(weeklyQuota, weeklyClosed, "За неделю")}
+      {/* Ровно один случай, и он единственный, где строка нужна: по числу привычек всё
+          сошлось, а по уровням нет. Шапка в этот момент говорит «закрыто 2 из 10 · нужно 2»,
+          и без этой строки её можно прочесть как «день сделан». В остальное время
+          чипы выше говорят всё сами, а постоянная строка стала бы обоями. */}
+      {hasDaily && countMet && !meetsQuota(dailyClosed, dailyQuota) && (
+        <Text style={styles.quotaNote}>
+          По числу привычек день закрыт, но норма по уровням ещё не сошлась — значит, не
+          закрыт.
+        </Text>
+      )}
+    </View>
+  );
+}
+
 function HabitEditor({
   label,
   onLabel,
@@ -592,6 +709,8 @@ function HabitEditor({
   onMinimal,
   group,
   onGroup,
+  level,
+  onLevel,
   target,
   onTarget,
   schedule,
@@ -605,6 +724,8 @@ function HabitEditor({
   onMinimal: (v: string) => void;
   group: ItemGroup;
   onGroup: (v: ItemGroup) => void;
+  level: HabitLevel;
+  onLevel: (v: HabitLevel) => void;
   target: HabitTarget;
   onTarget: (v: HabitTarget) => void;
   /** null when the habit can be done whenever, which is the default and usually the answer. */
@@ -658,6 +779,24 @@ function HabitEditor({
             style={({ pressed }) => [styles.chip, group === g.id && styles.chipOn, pressed && styles.dimmed]}
           >
             <Text style={[styles.chipText, group === g.id && styles.chipTextOn]}>{g.title}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {/* Уровень — не про то, сколько времени это занимает, а про то, сколько стоит усилия.
+          Нужен ради нормы: «каждый день одна сложная» — требование, которое общим числом
+          привычек не выразить. Пока норма нулевая, уровень просто виден и ничего не решает. */}
+      <Text style={styles.editLabel}>Уровень</Text>
+      <View style={styles.chipRow}>
+        {LEVELS.map((l) => (
+          <Pressable
+            key={l}
+            onPress={() => onLevel(l)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: level === l }}
+            style={({ pressed }) => [styles.chip, level === l && styles.chipOn, pressed && styles.dimmed]}
+          >
+            <Text style={[styles.chipText, level === l && styles.chipTextOn]}>{LEVEL_LABELS[l]}</Text>
           </Pressable>
         ))}
       </View>
@@ -977,6 +1116,31 @@ const styles = StyleSheet.create({
   editMinimalInput: { fontSize: 12, color: colors.textMuted },
   editLabel: { color: colors.textMuted, fontSize: 11, marginTop: 4 },
   editNote: { color: colors.textMuted, fontSize: 11, lineHeight: 16 },
+  quotaCard: {
+    backgroundColor: colors.card,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 10,
+    gap: 8,
+  },
+  quotaLine: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
+  quotaTitle: { color: colors.textMuted, fontSize: 11 },
+  quotaChips: { flexDirection: "row", flexWrap: "wrap", gap: 6, flex: 1 },
+  quotaChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  quotaChipText: { fontSize: 10, fontWeight: "600" },
+  quotaChipCount: { color: colors.text, fontSize: 11, fontWeight: "700" },
+  quotaChipCountMet: { color: colors.accentGreen },
+  quotaNote: { color: colors.textMuted, fontSize: 10, lineHeight: 14 },
+  levelTag: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  levelTagText: { fontSize: 9, fontWeight: "600" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
   chipWide: { alignSelf: "flex-start" },
   dayChip: {

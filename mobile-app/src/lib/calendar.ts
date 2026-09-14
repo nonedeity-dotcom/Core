@@ -2,6 +2,7 @@ import { toDateKey } from "./date";
 import { weekStart } from "./week";
 import { habitsThatDecideTheDay, logCount, perDayTarget } from "./habits";
 import { dayCounts } from "./streak";
+import type { LevelRule } from "./level";
 import { DEFAULT_DAY_RULE, type DayRule } from "./dayRule";
 import type { Habit, HabitLog } from "../types";
 
@@ -56,7 +57,8 @@ export function monthRange(key: string): { from: string; to: string } {
 export function computeDayStates(
   habits: Habit[],
   logs: HabitLog[],
-  rule: DayRule = DEFAULT_DAY_RULE,
+  rule: DayRule,
+  levels: LevelRule,
 ): Map<string, "full" | "minimal"> {
   const states = new Map<string, "full" | "minimal">();
   const deciding = habitsThatDecideTheDay(habits);
@@ -66,7 +68,7 @@ export function computeDayStates(
   // is the kind of disagreement nobody can debug from the outside.
   const decidingIds = new Set(deciding.map((h) => h.id));
   for (const date of new Set(logs.map((l) => l.date))) {
-    if (!dayCounts(habits, logs, date, rule)) continue;
+    if (!dayCounts(habits, logs, date, rule, levels)) continue;
     const minimal = logs.some((l) => l.date === date && l.done && l.minimal && decidingIds.has(l.habitId));
     states.set(date, minimal ? "minimal" : "full");
   }

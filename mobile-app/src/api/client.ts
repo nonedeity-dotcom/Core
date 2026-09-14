@@ -17,6 +17,7 @@ import { DEFAULT_DAY_RULE, normalizeDayRule, type DayRule } from "../lib/dayRule
 import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skipRule";
 import { DEFAULT_DAY_OFF, normalizeDayOff, pruneDates, type DayOffRule } from "../lib/dayOff";
 import { normalizeGoals, type PeriodGoal } from "../lib/goals";
+import { DEFAULT_LEVEL_RULE, normalizeLevelRule, type HabitLevel, type LevelRule } from "../lib/level";
 import { STREAK_WINDOW_DAYS } from "../lib/streak";
 import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipLibrary";
 import { DEFAULT_LATE_RULE, normalizeLateRule, normalizeSchedule, type LateRule } from "../lib/habitSchedule";
@@ -51,6 +52,7 @@ const KEYS = {
   nowSinceRepair: "nowsince-repair-v1",
   dayRule: "day-rule-v1",
   skipRule: "skip-rule-v1",
+  levelRule: "level-rule-v1",
   daysOff: "days-off-v1",
   habitFreezes: "habit-freezes-v1",
   tipPrefs: "tip-prefs-v1",
@@ -383,6 +385,7 @@ export const api = {
       hint?: string;
       minimal?: string | null;
       group?: ItemGroup;
+      level?: HabitLevel;
       target?: HabitTarget;
       /** null clears the schedule; undefined leaves it as it was. */
       schedule?: HabitSchedule | null;
@@ -564,6 +567,22 @@ export const api = {
   async setDayRule(rule: DayRule): Promise<{ ok: true }> {
     await write(KEYS.dayRule, normalizeDayRule(rule));
     return { ok: true as const };
+  },
+
+  /**
+   * Сколько привычек каждого уровня нужно закрыть — за день и за неделю.
+   *
+   * Читается тем же, чем и правило дня: приговор дня складывается из обоих, и разойтись им
+   * нельзя. По умолчанию везде нули — то есть пока сам не поставишь числа, уровни только
+   * показываются и ничего не требуют.
+   */
+  async getLevelRule(): Promise<LevelRule> {
+    return normalizeLevelRule(await read<unknown>(KEYS.levelRule, DEFAULT_LEVEL_RULE));
+  },
+  async setLevelRule(rule: LevelRule): Promise<LevelRule> {
+    const clean = normalizeLevelRule(rule);
+    await write(KEYS.levelRule, clean);
+    return clean;
   },
 
   /**
@@ -1312,6 +1331,8 @@ export interface BackupData {
   dayRule: DayRule;
   /** The skip allowance. Absent from older files, which import as one shared skip a week. */
   skipRule: SkipRule;
+  /** Нормы по уровням. Нет в файлах до того, как уровни появились: импортируются нулями. */
+  levelRule: LevelRule;
   daysOff: DayOffRule;
   /** Days each habit spent its own chance on, by habit id. Absent from older files. */
   habitFreezes: Record<string, string[]>;
@@ -1376,7 +1397,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, goals, tasks, limit, focusIntervals, dayRule, skipRule, daysOff, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight, balanceWater, screenDays, screenApps, screenHours] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, goals, tasks, limit, focusIntervals, dayRule, skipRule, levelRule, daysOff, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight, balanceWater, screenDays, screenApps, screenHours] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -1392,6 +1413,7 @@ export async function exportData(): Promise<BackupData> {
       api.getFocusIntervals(),
       api.getDayRule(),
       api.getSkipRule(),
+      api.getLevelRule(),
       api.getDaysOff(),
       api.getHabitFreezes(),
       api.getTipPrefs(),
@@ -1421,6 +1443,7 @@ export async function exportData(): Promise<BackupData> {
     focusIntervals,
     dayRule,
     skipRule,
+    levelRule,
     daysOff,
     habitFreezes,
     tipPrefs,
@@ -1455,6 +1478,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.focusIntervals, data.focusIntervals),
       write(KEYS.dayRule, normalizeDayRule(data.dayRule)),
       write(KEYS.skipRule, normalizeSkipRule(data.skipRule)),
+      write(KEYS.levelRule, normalizeLevelRule(data.levelRule)),
       write(KEYS.daysOff, normalizeDayOff(data.daysOff)),
       write(KEYS.habitFreezes, data.habitFreezes),
       write(KEYS.tipPrefs, normalizeTipPrefs(data.tipPrefs)),

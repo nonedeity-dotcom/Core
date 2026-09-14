@@ -7,6 +7,7 @@ import { computeStreak, freezeCandidate, STREAK_WINDOW_DAYS } from "./streak";
 import { DEFAULT_DAY_RULE, type DayRule } from "./dayRule";
 import { DEFAULT_SKIP_RULE, type SkipRule } from "./skipRule";
 import { DEFAULT_DAY_OFF, type DayOffRule } from "./dayOff";
+import { DEFAULT_LEVEL_RULE, type LevelRule } from "./level";
 import { habitFreezeCandidate } from "./habitStats";
 import type { Habit, HabitLog } from "../types";
 
@@ -26,6 +27,8 @@ export function useStreak(today: string): {
   logs: HabitLog[];
   freezes: string[];
   rule: DayRule;
+  /** Сколько каждого уровня нужно за день и за неделю — вторая половина приговора дня. */
+  levelRule: LevelRule;
   skipRule: SkipRule;
   /** Days each habit spent one of its own chances on, by habit id. */
   habitFreezes: Record<string, string[]>;
@@ -52,6 +55,12 @@ export function useStreak(today: string): {
     queryKey: ["dayRule"],
     queryFn: () => api.getDayRule(),
   });
+  // Вторая половина того же приговора. Пока не загрузилась — нули, то есть «уровни ничего
+  // не требуют»: это и есть честный ответ до того, как настройка прочитана.
+  const { data: levelRule = DEFAULT_LEVEL_RULE, isSuccess: levelLoaded } = useQuery<LevelRule>({
+    queryKey: ["levelRule"],
+    queryFn: () => api.getLevelRule(),
+  });
   const { data: skipRule = DEFAULT_SKIP_RULE, isSuccess: skipLoaded } = useQuery<SkipRule>({
     queryKey: ["skipRule"],
     queryFn: () => api.getSkipRule(),
@@ -74,6 +83,7 @@ export function useStreak(today: string): {
     logsLoaded &&
     freezesLoaded &&
     ruleLoaded &&
+    levelLoaded &&
     skipLoaded &&
     habitFreezesLoaded &&
     // Без выходных нельзя решать, тратить ли шанс: вчера могло быть объявлено нерабочим,
@@ -82,10 +92,10 @@ export function useStreak(today: string): {
 
   useEffect(() => {
     if (!ready) return;
-    const candidate = freezeCandidate(habits, logs, freezes, today, rule, skipRule, daysOff);
+    const candidate = freezeCandidate(habits, logs, freezes, today, rule, levelRule, skipRule, daysOff);
     if (!candidate) return;
     api.grantFreeze(candidate).then(() => qc.invalidateQueries({ queryKey: ["freezes"] }));
-  }, [ready, habits, logs, freezes, today, rule, skipRule, daysOff, qc]);
+  }, [ready, habits, logs, freezes, today, rule, levelRule, skipRule, daysOff, qc]);
 
   // Вторая половина того же начисления — на каждую привычку. Теперь обе половины работают
   // одновременно, а не по очереди: день и привычка защищены порознь, и запасы у них свои.
@@ -110,7 +120,7 @@ export function useStreak(today: string): {
     }
   }, [ready, habits, logs, freezes, habitFreezes, skipRule, daysOff, qc]);
 
-  const streak = computeStreak(habits, logs, freezes, rule, daysOff);
+  const streak = computeStreak(habits, logs, freezes, rule, levelRule, daysOff);
 
   // Announcing the stretch is also a write (it records what has been said), so it belongs
   // here beside the freeze rather than in a screen that might mount twice.
@@ -119,7 +129,7 @@ export function useStreak(today: string): {
     announcePhase(streak);
   }, [ready, streak]);
 
-  return { streak, habits, logs, freezes, rule, skipRule, habitFreezes, daysOff };
+  return { streak, habits, logs, freezes, rule, levelRule, skipRule, habitFreezes, daysOff };
 }
 
 /**
