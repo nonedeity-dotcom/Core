@@ -45,7 +45,7 @@ export default function HabitsReportScreen({
     queryKey: ["lateRule"],
     queryFn: () => api.getLateRule(),
   });
-  const { habits, logs, freezes, skipRule, habitFreezes } = useStreak(today);
+  const { habits, logs, freezes, skipRule, habitFreezes, daysOff } = useStreak(today);
 
   // Monday through today — what a weekly habit's count is taken over.
   const weekDates = weekDatesThrough(today);
@@ -57,6 +57,7 @@ export default function HabitsReportScreen({
       habit,
       stats: habitStats(habit, logs, today, excused),
       standing: habitStanding(habit, logs, {
+        daysOff,
         today,
         excused,
         own,

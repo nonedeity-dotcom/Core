@@ -256,7 +256,13 @@ function skipsUsed(
   const bucket = periodBucket(candidate, rule.shared.period);
   if (bucket !== null) {
     let used = 0;
-    for (const day of frozenDays) if (periodBucket(day, rule.shared.period) === bucket) used++;
+    for (const day of frozenDays) {
+      // Шанс, потраченный на день, который потом объявили выходным, из запаса не
+      // вычитается: за выходной платить нечем. Запись о списании остаётся в истории —
+      // её отменяет этот вычет, а не удаление данных.
+      if (isDayOff(day, daysOff)) continue;
+      if (periodBucket(day, rule.shared.period) === bucket) used++;
+    }
     return used;
   }
 
@@ -264,7 +270,7 @@ function skipsUsed(
   for (let i = from; i < STREAK_WINDOW_DAYS; i++) {
     const day = dateNDaysAgo(i);
     if (frozenDays.has(day)) {
-      used++;
+      if (!isDayOff(day, daysOff)) used++;
       continue;
     }
     // Выходной запаса не тратил и цепочку не обрывал — проходим мимо.

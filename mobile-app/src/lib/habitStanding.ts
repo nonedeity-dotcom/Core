@@ -2,6 +2,7 @@ import { dateNDaysAgo } from "./date";
 import { habitTarget, logCount, perDayTarget, weeklyProgress } from "./habits";
 import { habitSkipsLeft, habitStreakDays } from "./habitStats";
 import { DEFAULT_SKIP_RULE, type SkipRule } from "./skipRule";
+import { DEFAULT_DAY_OFF, isDayOff, type DayOffRule } from "./dayOff";
 import {
   DEFAULT_LATE_RULE,
   effectiveLateRule,
@@ -115,12 +116,15 @@ export interface StandingInput {
   /** Only the chances this habit spent itself. */
   own: string[];
   rule: SkipRule;
+  /** Объявленные выходные: они не промах и правило «два подряд» не запускают. */
+  daysOff: DayOffRule;
   /** Monday through today — what a weekly habit's count is taken over. */
   weekDates: string[];
 }
 
 export function habitStanding(habit: Habit, logs: HabitLog[], input: StandingInput): HabitStanding {
   const { today, excused, own, rule, weekDates, nowMinutes } = input;
+  const daysOff = input.daysOff ?? DEFAULT_DAY_OFF;
   // Each habit answers for itself where it has an answer; the setting is only the fallback.
   const lateRule = effectiveLateRule(habit, input.lateRule ?? DEFAULT_LATE_RULE);
   const weekly = habitTarget(habit).kind === "weekly";
@@ -129,6 +133,10 @@ export function habitStanding(habit: Habit, logs: HabitLog[], input: StandingInp
   if (weekly) return weeklyStanding(habit, logs, today, weekDates, nowMinutes, lateRule);
 
   if (doneOnDate(habit, logs, today)) return { bucket: "done", note: "сегодня закрыта" };
+
+  // Сегодня выходной — ничего не горит. Отметить всё равно можно, но требовать нечего, и
+  // «сегодня обязательно» тут было бы прямой неправдой.
+  if (isDayOff(today, daysOff)) return { bucket: "later", note: "сегодня выходной" };
 
   // The clock, before anything about chances: a habit set for tonight is not something
   // today is asking for yet, however thin its budget is.
@@ -141,7 +149,7 @@ export function habitStanding(habit: Habit, logs: HabitLog[], input: StandingInp
   }
 
   // Nothing to lose yet: a habit with no run cannot break one tonight.
-  const streak = habitStreakDays(habit, logs, excused);
+  const streak = habitStreakDays(habit, logs, excused, daysOff);
   if (streak === 0) return { bucket: "open", note: null };
 
   // Общий запас принадлежит дню, а не этой привычке, поэтому «у неё не осталось шансов»
@@ -150,8 +158,13 @@ export function habitStanding(habit: Habit, logs: HabitLog[], input: StandingInp
 
   // Whether a miss today could be forgiven tomorrow morning — the same two conditions the
   // grant itself checks, read a day early.
-  const yesterdayExcused = excused.includes(dateNDaysAgo(1));
-  const left = habitSkipsLeft(habit, logs, excused, own, rule);
+  //
+  // Выходной сюда не попадает. Правило «два прощённых подряд» — про промахи: за промах
+  // платят шансом, и второй подряд не прощается. Выходной не промах, платить за него нечем,
+  // и вчерашний выходной не делает сегодняшний день обязательным.
+  const yesterday = dateNDaysAgo(1);
+  const yesterdayExcused = excused.includes(yesterday) && !isDayOff(yesterday, daysOff);
+  const left = habitSkipsLeft(habit, logs, excused, own, rule, daysOff);
 
   if (yesterdayExcused) {
     // Two days running are never covered, whatever the budget says.

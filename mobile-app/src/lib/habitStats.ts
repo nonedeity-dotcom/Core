@@ -145,11 +145,17 @@ export function daysBetweenInclusive(from: string, to: string): number {
   return Math.max(0, Math.round((b - a) / 86_400_000) + 1);
 }
 
-export function habitStats(habit: Habit, logs: HabitLog[], today: string, frozen: string[] = []): HabitStats {
+export function habitStats(
+  habit: Habit,
+  logs: HabitLog[],
+  today: string,
+  frozen: string[] = [],
+  daysOff: DayOffRule = DEFAULT_DAY_OFF,
+): HabitStats {
   const weekly = habitTarget(habit).kind === "weekly";
   const firstDay = habitFirstDay(habit, logs);
   return {
-    streak: weekly ? habitStreakWeeks(habit, logs) : habitStreakDays(habit, logs, frozen),
+    streak: weekly ? habitStreakWeeks(habit, logs) : habitStreakDays(habit, logs, frozen, daysOff),
     unit: weekly ? "weeks" : "days",
     firstDay,
     daysSinceStart: firstDay ? daysBetweenInclusive(firstDay, today) : 0,
@@ -174,11 +180,18 @@ function skipsUsedFor(
   ownDays: Set<string>,
   rule: SkipRule,
   offset: number,
+  daysOff: DayOffRule = DEFAULT_DAY_OFF,
 ): number {
   const bucket = periodBucket(dateNDaysAgo(offset), rule.perHabit.period);
   let used = 0;
   if (bucket !== null) {
-    for (const day of ownDays) if (periodBucket(day, rule.perHabit.period) === bucket) used++;
+    for (const day of ownDays) {
+      // Шанс, потраченный на день, который потом объявили выходным, из запаса не
+      // вычитается: за выходной платить нечем, и запись о списании не должна пережить
+      // причину списания. Сама запись остаётся — её отменяет не удаление, а этот вычет.
+      if (isDayOff(day, daysOff)) continue;
+      if (periodBucket(day, rule.perHabit.period) === bucket) used++;
+    }
     return used;
   }
   // "За всю цепочку": walk back to the day this habit's run actually ended, counting the
@@ -186,10 +199,10 @@ function skipsUsedFor(
   for (let i = offset + 1; i < HABIT_WINDOW_DAYS; i++) {
     const day = dateNDaysAgo(i);
     if (ownDays.has(day)) {
-      used++;
+      if (!isDayOff(day, daysOff)) used++;
       continue;
     }
-    if (excusedDays.has(day)) continue;
+    if (excusedDays.has(day) || isDayOff(day, daysOff)) continue;
     if (!doneOn(habit, logs, day)) break;
   }
   return used;
@@ -208,10 +221,11 @@ export function habitSkipsLeft(
   excused: string[],
   own: string[],
   rule: SkipRule = DEFAULT_SKIP_RULE,
+  daysOff: DayOffRule = DEFAULT_DAY_OFF,
 ): number {
   if (rule.perHabit.count <= 0) return 0;
   if (habitTarget(habit).kind === "weekly") return 0;
-  const used = skipsUsedFor(habit, logs, new Set(excused), new Set(own), rule, 0);
+  const used = skipsUsedFor(habit, logs, new Set(excused), new Set(own), rule, 0, daysOff);
   return Math.max(0, rule.perHabit.count - used);
 }
 
@@ -260,6 +274,6 @@ export function habitFreezeCandidate(
   // Nothing to save: this habit's run had already ended.
   if (!doneOn(habit, logs, previous)) return null;
 
-  const used = skipsUsedFor(habit, logs, excusedDays, ownDays, rule, i - 1);
+  const used = skipsUsedFor(habit, logs, excusedDays, ownDays, rule, i - 1, daysOff);
   return used >= rule.perHabit.count ? null : yesterday;
 }

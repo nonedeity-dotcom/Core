@@ -5,7 +5,7 @@ import { dayCounts } from "./streak";
 import { DEFAULT_DAY_RULE, type DayRule } from "./dayRule";
 import type { Habit, HabitLog } from "../types";
 
-export type DayState = "full" | "minimal" | "frozen" | "missed" | "future";
+export type DayState = "full" | "minimal" | "frozen" | "dayOff" | "missed" | "future";
 
 export interface Cell {
   /** null for the blank leading cells a real month starts with. */
@@ -95,16 +95,28 @@ function cellFor(
   states: Map<string, "full" | "minimal">,
   day: number,
   frozen?: Set<string>,
+  isOff?: (date: string) => boolean,
 ): Cell {
   // A frozen day is drawn as its own thing, never as a done one: it kept the chain, it did
   // not do the work, and showing it filled in would make the calendar lie about the month.
+  //
+  // Выходной — третье состояние, и выше пропуска: если день объявлен нерабочим, то шанс на
+  // нём не потрачен, даже когда запись о списании осталась. Рисовать его пропуском значило
+  // бы показывать расход, которого нет.
   const state: DayState =
-    key > today ? "future" : (states.get(key) ?? (frozen?.has(key) ? "frozen" : "missed"));
+    key > today
+      ? "future"
+      : (states.get(key) ?? (isOff?.(key) ? "dayOff" : frozen?.has(key) ? "frozen" : "missed"));
   return { date: key, day, state, isToday: key === today };
 }
 
 /** The rolling window: whole weeks ending with the one containing today. */
-export function buildWeeksGrid(today: string, states: Map<string, "full" | "minimal">, frozen?: Set<string>): Cell[] {
+export function buildWeeksGrid(
+  today: string,
+  states: Map<string, "full" | "minimal">,
+  frozen?: Set<string>,
+  isOff?: (date: string) => boolean,
+): Cell[] {
   const [y, m, d] = weekStart(today).split("-").map(Number);
   const start = new Date(y, m - 1, d);
   start.setDate(start.getDate() - (GRID_WEEKS - 1) * 7);
@@ -112,7 +124,7 @@ export function buildWeeksGrid(today: string, states: Map<string, "full" | "mini
   return Array.from({ length: GRID_WEEKS * 7 }, (_, i) => {
     const date = new Date(start);
     date.setDate(start.getDate() + i);
-    return cellFor(toDateKey(date), today, states, date.getDate(), frozen);
+    return cellFor(toDateKey(date), today, states, date.getDate(), frozen, isOff);
   });
 }
 
@@ -126,6 +138,7 @@ export function buildMonthGrid(
   today: string,
   states: Map<string, "full" | "minimal">,
   frozen?: Set<string>,
+  isOff?: (date: string) => boolean,
 ): Cell[] {
   const [y, m] = key.split("-").map(Number);
   const first = new Date(y, m - 1, 1);
@@ -139,7 +152,7 @@ export function buildMonthGrid(
     isToday: false,
   }));
   for (let day = 1; day <= daysInMonth; day++) {
-    cells.push(cellFor(`${key}-${String(day).padStart(2, "0")}`, today, states, day, frozen));
+    cells.push(cellFor(`${key}-${String(day).padStart(2, "0")}`, today, states, day, frozen, isOff));
   }
   // Pad to whole rows so the grid doesn't reflow as months change length.
   while (cells.length % 7 !== 0) cells.push({ date: null, day: 0, state: "future", isToday: false });

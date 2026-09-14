@@ -6,6 +6,7 @@ import { colors } from "../theme/colors";
 import { plural } from "../lib/plural";
 import { dateNDaysAgo } from "../lib/date";
 import { DEFAULT_DAY_RULE, type DayRule } from "../lib/dayRule";
+import { DEFAULT_DAY_OFF, isDayOff, type DayOffRule } from "../lib/dayOff";
 import {
   buildMonthGrid,
   buildWeeksGrid,
@@ -97,6 +98,10 @@ export default function HistoryCalendar({
     queryKey: ["dayRule"],
     queryFn: () => api.getDayRule(),
   });
+  const { data: daysOff = DEFAULT_DAY_OFF } = useQuery<DayOffRule>({
+    queryKey: ["daysOff"],
+    queryFn: () => api.getDaysOff(),
+  });
   const { data: logs = [] } = useQuery<HabitLog[]>({
     queryKey: ["habitLog", "calendar", range, rangeTo],
     queryFn: () => api.getHabitLog(range, rangeTo) as Promise<HabitLog[]>,
@@ -104,18 +109,22 @@ export default function HistoryCalendar({
   });
 
   const frozenDays = new Set(frozen);
+  // Выходные читаются здесь же, как и правило дня: два экрана рисуют этот календарь, и
+  // протаскивать одно и то же через оба — верный способ получить два разных календаря.
+  const isOff = (date: string) => isDayOff(date, daysOff);
   // Read here rather than passed down: two screens render this component and both would
   // have to thread the same setting through for the calendar to agree with the ring.
   const states = habit ? singleHabitDayStates(habit, logs) : computeDayStates(habits, logs, rule);
   const cells: Cell[] =
     prefs.mode === "month"
-      ? buildMonthGrid(visibleMonth, today, states, frozenDays)
-      : buildWeeksGrid(today, states, frozenDays);
+      ? buildMonthGrid(visibleMonth, today, states, frozenDays, isOff)
+      : buildWeeksGrid(today, states, frozenDays, isOff);
   const counted = countedDays(cells);
   const elapsed = elapsedDays(cells);
   const delta = compareWithPrevious(prefs.mode, visibleMonth, today, states);
   const hasMinimal = cells.some((c) => c.state === "minimal");
   const hasFrozen = cells.some((c) => c.state === "frozen");
+  const hasDayOff = cells.some((c) => c.state === "dayOff");
 
   const currentMonth = monthKey(today);
   const canGoBack = earliest !== null && shiftMonth(visibleMonth, -1) >= monthKey(earliest);
@@ -207,6 +216,7 @@ export default function HistoryCalendar({
                     cell.state === "full" && styles.cellFull,
                     cell.state === "minimal" && styles.cellMinimal,
                     cell.state === "frozen" && styles.cellFrozen,
+                    cell.state === "dayOff" && styles.cellDayOff,
                     cell.date !== null && cell.state === "future" && styles.cellFuture,
                     cell.isToday && styles.cellToday,
                   ]}
@@ -238,7 +248,7 @@ export default function HistoryCalendar({
             )}
           </View>
 
-          {(hasMinimal || hasFrozen) && (
+          {(hasMinimal || hasFrozen || hasDayOff) && (
             <View style={styles.legend}>
               {hasMinimal && (
                 <>
@@ -246,6 +256,12 @@ export default function HistoryCalendar({
                   <Text style={styles.legendText}>полностью</Text>
                   <View style={[styles.swatch, styles.cellMinimal]} />
                   <Text style={styles.legendText}>по минимуму</Text>
+                </>
+              )}
+              {hasDayOff && (
+                <>
+                  <View style={[styles.swatch, styles.cellDayOff]} />
+                  <Text style={styles.legendText}>выходной</Text>
                 </>
               )}
               {hasFrozen && (
@@ -301,6 +317,9 @@ const styles = StyleSheet.create({
   // Outlined, not filled: the day held the chain but nothing was done on it, and a fill
   // would read as another done day when you glance at the month.
   cellFrozen: { borderWidth: 1, borderColor: colors.accentGreen, borderStyle: "dashed" },
+  // Выходной отличается от пропуска заливкой, а не только рамкой: пропуск это потраченный
+  // шанс, выходной — объявленный отдых, и путать их на календаре нельзя.
+  cellDayOff: { backgroundColor: "rgba(143,184,154,0.18)" },
   cellFuture: { backgroundColor: "#1a1e25" },
   cellToday: { borderWidth: 2, borderColor: colors.accent },
   dayNumber: { color: colors.textMuted, fontSize: 9 },

@@ -82,7 +82,7 @@ export default function ReportScreen({
   const reviewDue = !reviewWritten && dayOfWeek(today) >= 5;
 
   // Also where the weekly freeze is granted — see useStreak.
-  const { streak, freezes, habitFreezes, skipRule } = useStreak(today);
+  const { streak, freezes, habitFreezes, skipRule, daysOff } = useStreak(today);
 
   // Everything you are actually doing, in the two piles you sorted it into. "Потом" is the
   // only one left out: it is a plan, and a plan has nothing to report. Archived habits are
@@ -100,6 +100,7 @@ export default function ReportScreen({
   const urgentHabits = reportable.filter(
     (h) =>
       habitStanding(h, streakLogs, {
+        daysOff,
         today,
         excused: frozenDaysFor(h.id, freezes, habitFreezes),
         own: habitFreezes[h.id] ?? [],

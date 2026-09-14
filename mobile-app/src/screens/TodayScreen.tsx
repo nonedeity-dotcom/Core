@@ -239,6 +239,7 @@ export default function TodayScreen() {
 
   const standingOf = (h: Habit): HabitStanding =>
     habitStanding(h, allLogs, {
+        daysOff,
       today,
       excused: frozenDaysFor(h.id, freezes, habitFreezes),
       own: habitFreezes[h.id] ?? [],
