@@ -1,4 +1,5 @@
 import { toDateKey } from "./date";
+import { DEFAULT_DAY_OFF, isDayOff, type DayOffRule } from "./dayOff";
 import { weekKey } from "./week";
 import type { FocusSession } from "../types";
 
@@ -79,6 +80,7 @@ export function streakSummary(
   frozen: string[],
   from: string,
   today: string,
+  daysOff: DayOffRule = DEFAULT_DAY_OFF,
 ): StreakSummary {
   const frozenDays = new Set(frozen);
   const runs: number[] = [];
@@ -90,7 +92,9 @@ export function streakSummary(
       continue;
     }
     // A frozen day, and today while it is still open, are neither a success nor a break.
-    if (frozenDays.has(date) || date === today) continue;
+    // Выходной — то же самое. Без него это число расходилось с серией на главном экране:
+    // там цепочка шла, а здесь обрывалась на каждом объявленном выходном.
+    if (frozenDays.has(date) || isDayOff(date, daysOff) || date === today) continue;
     if (run > 0) runs.push(run);
     run = 0;
   }

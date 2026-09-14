@@ -154,6 +154,88 @@ export function computeStreak(
 }
 
 /**
+ * Сколько календарных дней идёт нынешняя цепочка — считая пропуски и выходные.
+ *
+ * Серия и длина цепочки — разные числа, и оба нужны. Серия считает дни, которые
+ * действительно сделаны: это честная мера работы, и прибавлять к ней отдых значило бы
+ * считать отдых работой. Но «держусь седьмую неделю» — тоже правда, и по одной серии её не
+ * увидеть: цепочка с двумя выходными и потраченным шансом идёт дольше, чем говорит её
+ * счётчик.
+ *
+ * Границы берутся по сделанным дням, а не по краю окна: хвост из выходных в конце длину не
+ * надувает. Цепочка тянется от первого сделанного дня до последнего, а пропуски и выходные
+ * внутри неё считаются отдельно — из них и складывается разница между двумя числами.
+ */
+export interface StreakSpan {
+  /** Календарных дней от первого сделанного дня цепочки до последнего. */
+  days: number;
+  /** Из них сделано — то же число, что показывает серия. */
+  done: number;
+  /** Прощено шансом. */
+  frozen: number;
+  /** Выходных внутри цепочки. */
+  off: number;
+}
+
+export function streakSpan(
+  habits: Habit[],
+  logs: HabitLog[],
+  frozen: string[] = [],
+  rule: DayRule = DEFAULT_DAY_RULE,
+  daysOff: DayOffRule = DEFAULT_DAY_OFF,
+): StreakSpan {
+  const empty: StreakSpan = { days: 0, done: 0, frozen: 0, off: 0 };
+  if (habitsThatDecideTheDay(habits).length === 0) return empty;
+
+  const frozenDays = new Set(frozen);
+  const starts = startsByHabit(habits, logs);
+
+  let done = 0;
+  let insideFrozen = 0;
+  let insideOff = 0;
+  // Смещения первого и последнего сделанного дня — ими и меряется длина.
+  let newest = -1;
+  let oldest = -1;
+  // Пропуски и выходные, встреченные после последнего сделанного дня: пока за ними не
+  // нашлось ни одного сделанного, они висят на хвосте и в длину не идут.
+  let pendingFrozen = 0;
+  let pendingOff = 0;
+
+  for (let i = 0; i < STREAK_WINDOW_DAYS; i++) {
+    const day = dateNDaysAgo(i);
+    if (dayCountsWith(habits, logs, day, starts, rule)) {
+      done++;
+      oldest = i;
+      if (newest === -1) {
+        // Первый встреченный сделанный день — правый край цепочки. Всё, что копилось до
+        // него, лежит новее края: это хвост, он и в длину не идёт, и в счётчики не должен.
+        newest = i;
+      } else {
+        // А это уже промежуток между двумя сделанными днями — он внутри цепочки.
+        insideFrozen += pendingFrozen;
+        insideOff += pendingOff;
+      }
+      pendingFrozen = 0;
+      pendingOff = 0;
+      continue;
+    }
+    if (i === 0) continue;
+    if (frozenDays.has(day)) {
+      pendingFrozen++;
+      continue;
+    }
+    if (isDayOff(day, daysOff)) {
+      pendingOff++;
+      continue;
+    }
+    break;
+  }
+
+  if (newest === -1) return empty;
+  return { days: oldest - newest + 1, done, frozen: insideFrozen, off: insideOff };
+}
+
+/**
  * How much of the skip budget the current run has already spent.
  *
  * For a calendar period that is simply "the frozen days in the same week/month". For "за всю

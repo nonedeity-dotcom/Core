@@ -5,7 +5,8 @@ import { colors } from "../theme/colors";
 import { dateNDaysAgo } from "../lib/date";
 import { plural } from "../lib/plural";
 import { useTodayKey } from "../lib/useTodayKey";
-import { countedDates } from "../lib/streak";
+import { countedDates, streakSpan } from "../lib/streak";
+import { DEFAULT_DAY_OFF, type DayOffRule } from "../lib/dayOff";
 import { DEFAULT_DAY_RULE, type DayRule } from "../lib/dayRule";
 import {
   WEEKDAY_LABELS,
@@ -61,11 +62,16 @@ export default function StatsScreen() {
     queryKey: ["dayRule"],
     queryFn: () => api.getDayRule(),
   });
+  const { data: daysOff = DEFAULT_DAY_OFF } = useQuery<DayOffRule>({
+    queryKey: ["daysOff"],
+    queryFn: () => api.getDaysOff(),
+  });
 
   const counted = countedDates(habits, logs, rule);
   const weekdays = weekdayBreakdown(counted, from, today);
   const observed = weekdays.reduce((n, w) => n + w.total, 0);
-  const streaks = streakSummary(counted, freezes, from, today);
+  const streaks = streakSummary(counted, freezes, from, today, daysOff);
+  const span = streakSpan(habits, logs, freezes, rule, daysOff);
   const weeks = focusByWeek(sessions, from, today).slice(-8);
   const focusTotal = totalFocusMinutes(sessions);
   const maxWeek = Math.max(1, ...weeks.map((w) => w.minutes));
@@ -131,6 +137,23 @@ export default function StatsScreen() {
           <Stat value={String(streaks.best)} label="лучшая" accent />
           <Stat value={String(streaks.restarts)} label="раз начинал заново" />
         </View>
+        {/* Два числа, потому что это две разные правды. Серия считает сделанные дни — это
+            честная мера работы. Длина цепочки считает календарные: «держусь третью неделю»
+            тоже правда, и по одной серии её не видно. Разница между ними раскладывается
+            тут же, чтобы длина не выглядела приписанной. */}
+        {span.days > span.done && (
+          <Text style={styles.note}>
+            {`Цепочка идёт ${span.days} ${plural(span.days, ["день", "дня", "дней"])} подряд: ` +
+              `${span.done} ${plural(span.done, ["сделанный", "сделанных", "сделанных"])}` +
+              (span.frozen > 0
+                ? `, ${span.frozen} ${plural(span.frozen, ["пропуск", "пропуска", "пропусков"])}`
+                : "") +
+              (span.off > 0
+                ? `, ${span.off} ${plural(span.off, ["выходной", "выходных", "выходных"])}`
+                : "") +
+              ". Пропуски и выходные её не рвут, но и в серию не идут."}
+          </Text>
+        )}
         <Text style={styles.note}>
           {streaks.average > 0
             ? `Средняя длина законченной серии — ${streaks.average} ${plural(streaks.average, ["день", "дня", "дней"])}. Обрыв не отменяет пройденного: заново — это не сначала.`
