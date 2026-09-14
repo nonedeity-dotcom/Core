@@ -298,7 +298,7 @@ export default function SettingsScreen({
         <DataBackup
           scope="sterzhen"
           title="Данные Sterzhen"
-          hint="Привычки, отметки, сессии, энергия, задачи и сверки — без еды и экрана."
+          hint="Привычки, отметки, сессии, энергия, задачи и цели — без еды и экрана."
         />
       </View>
       <View style={styles.spaced}>

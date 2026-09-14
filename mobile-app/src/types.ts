@@ -181,16 +181,6 @@ export interface Task {
  * per date so a review written on Sunday and one written on Monday morning
  * don't become two separate weeks.
  */
-export interface WeeklyReview {
-  /** "2026-W35" — see src/lib/week.ts. */
-  week: string;
-  worked: string;
-  didnt: string;
-  change: string;
-  /** Local date the review was written, for the history list. */
-  date: string;
-}
-
 export interface RewardOption {
   id: string;
   label: string;

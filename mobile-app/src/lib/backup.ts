@@ -18,6 +18,7 @@ import { toDateKey } from "./date";
 import { normalizeDayRule } from "./dayRule";
 import { normalizeSkipRule } from "./skipRule";
 import { normalizeDayOff } from "./dayOff";
+import { normalizeGoals } from "./goals";
 import { normalizeTipPrefs } from "./tipLibrary";
 import { normalizeLateRule, normalizeSchedule } from "./habitSchedule";
 import { normalizeProfile } from "./balance/profile";
@@ -36,7 +37,6 @@ import type {
   RewardOption,
   Reward,
   Task,
-  WeeklyReview,
 } from "../types";
 
 /** Marks the file as ours, so a random .json picked by mistake is rejected. */
@@ -73,7 +73,7 @@ const SCOPE_FIELDS: Record<Exclude<BackupScope, "all">, (keyof BackupData)[]> = 
     "freezes",
     "rewardOptions",
     "rewards",
-    "reviews",
+    "goals",
     "tasks",
     "screenTimeLimitMinutes",
     "focusIntervals",
@@ -126,7 +126,7 @@ function emptyData(): BackupData {
     freezes: [],
     rewardOptions: [],
     rewards: [],
-    reviews: [],
+    goals: [],
     tasks: [],
     screenTimeLimitMinutes: 180,
     focusIntervals: DEFAULT_FOCUS_INTERVALS,
@@ -290,17 +290,9 @@ function parseData(raw: unknown): BackupData {
     isStr(r.id) && isDateKey(r.date) && isStr(r.text) ? { id: r.id, date: r.date, text: r.text } : null,
   );
 
-  const reviews = pickValid<WeeklyReview>(d.reviews, (r) =>
-    isStr(r.week) && isDateKey(r.date)
-      ? {
-          week: r.week,
-          date: r.date,
-          worked: isStr(r.worked) ? r.worked : "",
-          didnt: isStr(r.didnt) ? r.didnt : "",
-          change: isStr(r.change) ? r.change : "",
-        }
-      : null,
-  );
+  // Нормализация у целей своя и общая с хранилищем: правило, что считать целью, должно
+  // быть одно — иначе импорт примет то, чего экран показать не сможет.
+  const goals = normalizeGoals(d.goals);
 
   const tasks = pickValid<Task>(d.tasks, (t) =>
     isStr(t.id) && isStr(t.label)
@@ -334,7 +326,7 @@ function parseData(raw: unknown): BackupData {
     freezes,
     rewardOptions,
     rewards,
-    reviews,
+    goals,
     tasks,
     screenTimeLimitMinutes: limit,
     focusIntervals,
@@ -420,7 +412,7 @@ export function countRecords(data: BackupData, scope: BackupScope): number {
     data.sessions.length +
     data.energy.length +
     data.rewards.length +
-    data.reviews.length +
+    data.goals.length +
     data.tasks.length;
   const calorix =
     data.balanceProducts.length +

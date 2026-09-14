@@ -10,13 +10,13 @@ import type {
   RewardOption,
   Reward,
   Task,
-  WeeklyReview,
 } from "../types";
 import { todayKey, tomorrowKey } from "../lib/date";
 import { habitGroup, itemGroup } from "../lib/habits";
 import { DEFAULT_DAY_RULE, normalizeDayRule, type DayRule } from "../lib/dayRule";
 import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skipRule";
 import { DEFAULT_DAY_OFF, normalizeDayOff, pruneDates, type DayOffRule } from "../lib/dayOff";
+import { normalizeGoals, type PeriodGoal } from "../lib/goals";
 import { STREAK_WINDOW_DAYS } from "../lib/streak";
 import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipLibrary";
 import { DEFAULT_LATE_RULE, normalizeLateRule, normalizeSchedule, type LateRule } from "../lib/habitSchedule";
@@ -44,7 +44,7 @@ const KEYS = {
   screenTimeLimit: "screen-time-limit-minutes-v1",
   tipCursor: "tip-cursor-v1",
   focusIntervals: "focus-intervals-v1",
-  reviews: "weekly-reviews-v1",
+  goals: "period-goals-v1",
   tasks: "tasks-v1",
   calendarPrefs: "calendar-prefs-v1",
   freezes: "streak-freezes-v1",
@@ -193,6 +193,7 @@ async function ensureSeeded() {
   // After it, not before: this one reads createdAt.
   await repairNowSinceOnce();
   await dropTriggers();
+  await dropReviews();
 }
 
 /**
@@ -213,6 +214,24 @@ async function dropTriggers(): Promise<void> {
 
 /** Not in KEYS any more — the only thing left that knows this name is the delete above. */
 const TRIGGERS_KEY = "triggers-list-v1";
+
+/**
+ * Удаляет сверку за неделю.
+ *
+ * Экрана больше нет: на его месте цели и итог месяца. Три поля раз в неделю оказались
+ * слишком частыми, чтобы их заполнять, и данных за ними не осталось — строка в хранилище,
+ * которую уже нечем показать. Удаляется, а не бросается, как это было с триггерами.
+ */
+async function dropReviews(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(REVIEWS_KEY);
+  } catch {
+    // Ничто не зависит от того, что её нет; следующий запуск попробует снова.
+  }
+}
+
+/** Тоже не в KEYS: единственное, что ещё знает это имя, — удаление выше. */
+const REVIEWS_KEY = "weekly-reviews-v1";
 
 /**
  * Stamps a start date on habits saved before there was one.
@@ -1107,22 +1126,22 @@ export const api = {
     });
   },
 
-  async getReviews(): Promise<WeeklyReview[]> {
-    const reviews = await read<WeeklyReview[]>(KEYS.reviews, []);
-    // Newest first: the history list reads top-down and the current week is
-    // the one you care about.
-    return [...reviews].sort((a, b) => (a.week < b.week ? 1 : a.week > b.week ? -1 : 0));
+  async getGoals(): Promise<PeriodGoal[]> {
+    const goals = normalizeGoals(await read<unknown>(KEYS.goals, []));
+    // Newest first: история читается сверху вниз, и нынешний период — тот, ради которого
+    // экран открыли.
+    return [...goals].sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0));
   },
-  /** One review per ISO week — writing again replaces that week's entry. */
-  async saveReview(review: WeeklyReview): Promise<WeeklyReview> {
-    return withKeyLock(KEYS.reviews, async () => {
-      const reviews = await read<WeeklyReview[]>(KEYS.reviews, []);
-      const existing = reviews.find((r) => r.week === review.week);
+  /** Одна запись на период — запись поверх заменяет её, а не добавляет вторую. */
+  async saveGoal(goal: PeriodGoal): Promise<PeriodGoal> {
+    return withKeyLock(KEYS.goals, async () => {
+      const goals = normalizeGoals(await read<unknown>(KEYS.goals, []));
+      const existing = goals.find((g) => g.period === goal.period);
       await write(
-        KEYS.reviews,
-        existing ? reviews.map((r) => (r === existing ? review : r)) : [...reviews, review],
+        KEYS.goals,
+        existing ? goals.map((g) => (g === existing ? goal : g)) : [...goals, goal],
       );
-      return review;
+      return goal;
     });
   },
 
@@ -1281,7 +1300,8 @@ export interface BackupData {
   freezes: string[];
   rewardOptions: RewardOption[];
   rewards: Reward[];
-  reviews: WeeklyReview[];
+  /** Цели на месяц и на год вместе с итогами. Нет в файлах до того, как цели появились. */
+  goals: PeriodGoal[];
   tasks: Task[];
   screenTimeLimitMinutes: number;
   focusIntervals: FocusIntervals;
@@ -1322,7 +1342,7 @@ export interface ImportStats {
   sessions: number;
   energy: number;
   rewards: number;
-  reviews: number;
+  goals: number;
   tasks: number;
   /** Записи CaloriX: продукты, блюда, съеденное и взвешивания вместе. */
   balance: number;
@@ -1336,7 +1356,7 @@ const EMPTY_STATS: ImportStats = {
   sessions: 0,
   energy: 0,
   rewards: 0,
-  reviews: 0,
+  goals: 0,
   tasks: 0,
   balance: 0,
   screen: 0,
@@ -1356,7 +1376,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, daysOff, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight, balanceWater, screenDays, screenApps, screenHours] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, goals, tasks, limit, focusIntervals, dayRule, skipRule, daysOff, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight, balanceWater, screenDays, screenApps, screenHours] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -1366,7 +1386,7 @@ export async function exportData(): Promise<BackupData> {
       read<string[]>(KEYS.freezes, []),
       read<RewardOption[]>(KEYS.rewardOptions, []),
       read<Reward[]>(KEYS.rewards, []),
-      read<WeeklyReview[]>(KEYS.reviews, []),
+      read<PeriodGoal[]>(KEYS.goals, []),
       read<Task[]>(KEYS.tasks, []),
       read<number>(KEYS.screenTimeLimit, DEFAULT_SCREEN_TIME_LIMIT_MIN),
       api.getFocusIntervals(),
@@ -1395,7 +1415,7 @@ export async function exportData(): Promise<BackupData> {
     freezes,
     rewardOptions,
     rewards,
-    reviews,
+    goals,
     tasks,
     screenTimeLimitMinutes: limit,
     focusIntervals,
@@ -1429,7 +1449,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.freezes, data.freezes),
       write(KEYS.rewardOptions, data.rewardOptions),
       write(KEYS.rewards, data.rewards),
-      write(KEYS.reviews, data.reviews),
+      write(KEYS.goals, data.goals),
       write(KEYS.tasks, data.tasks),
       write(KEYS.screenTimeLimit, data.screenTimeLimitMinutes),
       write(KEYS.focusIntervals, data.focusIntervals),
@@ -1455,7 +1475,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       sessions: data.sessions.length,
       energy: data.energy.length,
       rewards: data.rewards.length,
-      reviews: data.reviews.length,
+      goals: data.goals.length,
       tasks: data.tasks.length,
       balance:
         data.balanceProducts.length +
@@ -1566,16 +1586,18 @@ export async function mergeData(data: BackupData): Promise<ImportStats> {
     }
     if (stats.rewards > 0) await write(KEYS.rewards, rewards);
 
-    // --- weekly reviews (one per ISO week) ---
-    const reviews = await read<WeeklyReview[]>(KEYS.reviews, []);
-    const seenWeeks = new Set(reviews.map((r) => r.week));
-    for (const r of data.reviews) {
-      if (seenWeeks.has(r.week)) continue;
-      seenWeeks.add(r.week);
-      reviews.push(r);
-      stats.reviews++;
+    // --- цели и итоги (одна запись на период) ---
+    const goals = normalizeGoals(await read<unknown>(KEYS.goals, []));
+    const seenPeriods = new Set(goals.map((g) => g.period));
+    for (const g of data.goals) {
+      // Слияние не переписывает то, что уже есть на устройстве: цель за сентябрь,
+      // написанная здесь, важнее той же самой из копии месячной давности.
+      if (seenPeriods.has(g.period)) continue;
+      seenPeriods.add(g.period);
+      goals.push(g);
+      stats.goals++;
     }
-    if (stats.reviews > 0) await write(KEYS.reviews, reviews);
+    if (stats.goals > 0) await write(KEYS.goals, goals);
 
     // --- tasks ---
     const tasks = await read<Task[]>(KEYS.tasks, []);

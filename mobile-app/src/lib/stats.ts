@@ -142,3 +142,61 @@ export function formatMinutes(total: number): string {
   if (h === 0) return `${m} мин`;
   return m === 0 ? `${h} ч` : `${h} ч ${m} мин`;
 }
+
+export interface MonthFacts {
+  /** Дней месяца, которые уже прошли, — по них и считается всё остальное. */
+  days: number;
+  /** Из них закрытых. */
+  closed: number;
+  /** Потрачено шансов: общих и личных вместе. */
+  skips: number;
+  /** Объявленных выходных. */
+  off: number;
+  /** Самая длинная непрерывная серия внутри месяца. */
+  best: number;
+}
+
+/**
+ * Цифры за месяц — то, что приложение знает само.
+ *
+ * Стоят рядом с итогом не для оценки, а чтобы не вспоминать. Человек, который в конце
+ * месяца пишет «вроде нормально», и человек, который видит «закрыто 19 из 30, два шанса»,
+ * пишут разные итоги — и второй ближе к правде.
+ *
+ * Серия внутри месяца считается по тем же правилам, что и везде: пропуск и выходной её не
+ * рвут, но и не удлиняют. Первое число не наследует декабрьскую серию: это число за месяц,
+ * а не «сколько всего», и «сколько всего» есть выше на том же экране.
+ */
+export function monthFacts(
+  counted: Set<string>,
+  frozen: string[],
+  from: string,
+  to: string,
+  daysOff: DayOffRule = DEFAULT_DAY_OFF,
+): MonthFacts {
+  const frozenDays = new Set(frozen);
+  const facts: MonthFacts = { days: 0, closed: 0, skips: 0, off: 0, best: 0 };
+  let run = 0;
+  for (const date of dateRange(from, to)) {
+    facts.days += 1;
+    // Сделанный день считается сделанным, даже если он был объявлен выходным: выходной —
+    // это разрешение не делать, а не запрет. «Выходных 3» тогда значит «три дня, которыми
+    // ты воспользовался», и это то число, которое и хотят знать.
+    if (counted.has(date)) {
+      facts.closed += 1;
+      run += 1;
+      if (run > facts.best) facts.best = run;
+      continue;
+    }
+    if (isDayOff(date, daysOff)) {
+      facts.off += 1;
+      continue;
+    }
+    if (frozenDays.has(date)) {
+      facts.skips += 1;
+      continue;
+    }
+    run = 0;
+  }
+  return facts;
+}

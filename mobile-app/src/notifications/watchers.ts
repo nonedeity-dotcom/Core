@@ -11,6 +11,7 @@ import { totalScreenMillis } from "../lib/screen/usage";
 import { hasUsageAccess } from "../../modules/creker-usage";
 import { syncUsage } from "../integrations/usageSync";
 import { dueAlerts, normalizeRules, DEFAULT_RULES, type DayState, type SmartRules } from "../lib/notify/rules";
+import { daysLeftInMonth, findGoal, monthKey, summaryWritten } from "../lib/goals";
 import { requestNotificationPermission } from "./reminders";
 import type { Habit, HabitLog } from "../types";
 
@@ -93,7 +94,7 @@ async function ensureChannel(): Promise<void> {
 
 /** Состояние сегодняшнего дня — то, на что смотрят правила. */
 export async function collectDayState(date = todayKey()): Promise<DayState> {
-  const [habits, logs, profile, meals, waterLog, screenDays, limitMin] = await Promise.all([
+  const [habits, logs, profile, meals, waterLog, screenDays, limitMin, goals] = await Promise.all([
     api.getHabits() as Promise<Habit[]>,
     api.getHabitLog(date, date) as Promise<HabitLog[]>,
     api.getBalanceProfile(),
@@ -101,6 +102,7 @@ export async function collectDayState(date = todayKey()): Promise<DayState> {
     api.getWaterLog(),
     api.getScreenDays(date, date),
     api.getScreenTimeLimitMinutes(),
+    api.getGoals(),
   ]);
 
   const deciding = habitsThatDecideTheDay(habits, date);
@@ -118,6 +120,8 @@ export async function collectDayState(date = todayKey()): Promise<DayState> {
     screenMs: totalScreenMillis(screenDays),
     screenLimitMs: limitMin * 60_000,
     screenKnown: screenDays.length > 0,
+    monthDaysLeft: daysLeftInMonth(date),
+    monthSummaryWritten: summaryWritten(findGoal(goals, monthKey(date))),
   };
 }
 
@@ -146,6 +150,7 @@ export async function checkAndNotify(now = new Date()): Promise<CheckResult> {
   const rules = await getSmartRules();
   const anyOn =
     rules.habitsUndone.enabled ||
+    rules.monthSummary.enabled ||
     rules.diaryEmpty.enabled ||
     rules.water.enabled ||
     rules.screenSoon.enabled ||

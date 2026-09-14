@@ -12,10 +12,12 @@ import {
   WEEKDAY_LABELS,
   focusByWeek,
   formatMinutes,
+  monthFacts,
   streakSummary,
   totalFocusMinutes,
   weekdayBreakdown,
 } from "../lib/stats";
+import { monthKey, monthRange, periodTitle } from "../lib/goals";
 import type { FocusSession, Habit, HabitLog } from "../types";
 
 /** Nothing here says anything until there is a history behind it. */
@@ -68,6 +70,12 @@ export default function StatsScreen() {
   });
 
   const counted = countedDates(habits, logs, rule);
+  // Месяц считается по сегодняшний день и не раньше первой отметки вообще: дни до того,
+  // как приложение появилось на телефоне, — это не пропущенные дни.
+  const month = monthKey(today);
+  const monthSpan = monthRange(month);
+  const monthFrom = earliest && earliest > monthSpan.from ? earliest : monthSpan.from;
+  const facts = monthFacts(counted, freezes, monthFrom, today, daysOff);
   const weekdays = weekdayBreakdown(counted, from, today);
   const observed = weekdays.reduce((n, w) => n + w.total, 0);
   const streaks = streakSummary(counted, freezes, from, today, daysOff);
@@ -86,7 +94,22 @@ export default function StatsScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-      <Text style={styles.sectionLabel}>По дням недели</Text>
+      {/* Цифры за месяц — те же, что стоят над итогом месяца в «Отчёте». Одни и те же
+          числа в двух местах должны считаться одной функцией, иначе однажды они разойдутся
+          и верить перестанут обоим. */}
+      <Text style={styles.sectionLabel}>{periodTitle(month)}</Text>
+      <View style={styles.card}>
+        <View style={styles.statRow}>
+          <Stat value={`${facts.closed}`} label={`из ${facts.days} ${plural(facts.days, ["дня", "дней", "дней"])} закрыто`} accent />
+          <Stat value={`${facts.best}`} label="лучшая серия в месяце" />
+        </View>
+        <View style={[styles.statRow, styles.statRowSecond]}>
+          <Stat value={`${facts.skips}`} label={plural(facts.skips, ["шанс потрачен", "шанса потрачено", "шансов потрачено"])} />
+          <Stat value={`${facts.off}`} label={plural(facts.off, ["выходной взят", "выходных взято", "выходных взято"])} />
+        </View>
+      </View>
+
+      <Text style={[styles.sectionLabel, styles.spaced]}>По дням недели</Text>
       <View style={styles.card}>
         {observed < MIN_DAYS_FOR_WEEKDAYS ? (
           <Text style={styles.empty}>
@@ -233,6 +256,7 @@ const styles = StyleSheet.create({
   barValue: { color: colors.textMuted, fontSize: 9, marginTop: 2 },
 
   statRow: { flexDirection: "row", gap: 12 },
+  statRowSecond: { marginTop: 14 },
   stat: { flex: 1 },
   statValue: { color: colors.text, fontSize: 20, fontWeight: "700" },
   statValueAccent: { color: colors.accentGreen },

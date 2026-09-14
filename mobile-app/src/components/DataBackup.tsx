@@ -44,7 +44,14 @@ function describeImport(stats: ImportStats, mode: ImportMode): string {
     } ${plural(stats.habitLog, ["отметка", "отметки", "отметок"])}.`;
   }
   const added =
-    stats.habits + stats.habitLog + stats.sessions + stats.energy + stats.rewards + stats.balance + stats.screen;
+    stats.habits +
+    stats.habitLog +
+    stats.sessions +
+    stats.energy +
+    stats.rewards +
+    stats.goals +
+    stats.balance +
+    stats.screen;
   if (added === 0) return "Всё из этого файла уже есть — ничего не изменилось.";
   // Называется только то, чего действительно прибавилось: «0 привычек, 0 отметок,
   // 1 запись CaloriX» — это отчёт о разделах, которых в файле и не было.
@@ -57,6 +64,7 @@ function describeImport(stats: ImportStats, mode: ImportMode): string {
   say(stats.sessions, ["сессия", "сессии", "сессий"]);
   say(stats.energy, ["замер энергии", "замера энергии", "замеров энергии"]);
   say(stats.rewards, ["награда", "награды", "наград"]);
+  say(stats.goals, ["цель", "цели", "целей"]);
   if (stats.balance > 0) {
     parts.push(`${stats.balance} ${plural(stats.balance, ["запись", "записи", "записей"])} CaloriX`);
   }

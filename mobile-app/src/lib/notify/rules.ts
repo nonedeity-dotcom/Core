@@ -14,6 +14,8 @@
  * проверять на числах, а не на телефоне.
  */
 
+import { SUMMARY_LEAD_DAYS } from "../goals";
+
 /** Что известно про сегодняшний день на момент проверки. */
 export interface DayState {
   /** Привычки, которые решают день: сколько закрыто и сколько всего. */
@@ -29,6 +31,10 @@ export interface DayState {
   screenLimitMs: number;
   /** Есть ли у приложения доступ к статистике: без него про экран сказать нечего. */
   screenKnown: boolean;
+  /** Сколько дней месяца осталось после сегодняшнего. В последний день — ноль. */
+  monthDaysLeft: number;
+  /** Написан ли итог за этот месяц. Написан — напоминать больше не о чем. */
+  monthSummaryWritten: boolean;
 }
 
 export interface TimeRule {
@@ -55,6 +61,8 @@ export interface ScreenRule {
 export interface SmartRules {
   /** Sterzhen: вечером, если день ещё не закрыт. */
   habitsUndone: TimeRule;
+  /** Sterzhen: под конец месяца, если итог за него ещё не написан. */
+  monthSummary: TimeRule;
   /** CaloriX: если к этому часу в дневнике пусто. */
   diaryEmpty: TimeRule;
   /** CaloriX: вода, пока норма не набрана. */
@@ -67,6 +75,7 @@ export interface SmartRules {
 
 export const DEFAULT_RULES: SmartRules = {
   habitsUndone: { enabled: false, hour: 20, minute: 0 },
+  monthSummary: { enabled: false, hour: 19, minute: 0 },
   diaryEmpty: { enabled: false, hour: 20, minute: 0 },
   water: { enabled: false, everyHours: 3, fromHour: 10, toHour: 21 },
   screenSoon: { enabled: false, minutesBefore: 60 },
@@ -100,6 +109,7 @@ export function normalizeRules(raw: unknown): SmartRules {
   >;
   return {
     habitsUndone: normalizeTime(o.habitsUndone, DEFAULT_RULES.habitsUndone),
+    monthSummary: normalizeTime(o.monthSummary, DEFAULT_RULES.monthSummary),
     diaryEmpty: normalizeTime(o.diaryEmpty, DEFAULT_RULES.diaryEmpty),
     water: {
       enabled: w.enabled === true,
@@ -175,6 +185,29 @@ export function dueAlerts(state: DayState, rules: SmartRules, now: Date, sent: s
       body: `Осталось ${left} ${plural(left, ["привычка", "привычки", "привычек"])} из ${
         state.habitsTotal
       } — время ещё есть.`,
+    });
+  }
+
+  // Итог месяца. Напоминание живёт ровно последние три дня месяца и умолкает, как только
+  // итог написан, — поэтому лишнего шума от него не набирается, даже если условие держится
+  // все три дня подряд.
+  if (
+    rules.monthSummary.enabled &&
+    !state.monthSummaryWritten &&
+    state.monthDaysLeft <= SUMMARY_LEAD_DAYS &&
+    nowMin >= rules.monthSummary.hour * 60 + rules.monthSummary.minute
+  ) {
+    push({
+      key: "month-summary",
+      title: "Месяц заканчивается",
+      body:
+        state.monthDaysLeft === 0
+          ? "Сегодня последний день. Пока помнится — короткий итог."
+          : `Осталось ${state.monthDaysLeft} ${plural(state.monthDaysLeft, [
+              "день",
+              "дня",
+              "дней",
+            ])}. Итог проще писать, пока месяц ещё помнится.`,
     });
   }
 

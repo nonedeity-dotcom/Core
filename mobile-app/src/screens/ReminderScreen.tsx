@@ -101,6 +101,7 @@ export default function ReminderScreen({
       setRules(applied);
       const anyOn =
         applied.habitsUndone.enabled ||
+        applied.monthSummary.enabled ||
         applied.diaryEmpty.enabled ||
         applied.water.enabled ||
         applied.screenSoon.enabled ||
@@ -304,6 +305,19 @@ export default function ReminderScreen({
           {/* Честно про то, чего расписание не умеет: обычное напоминание — это будильник
               в системе, и отменить одно сегодняшнее срабатывание, сохранив завтрашнее,
               Android не даёт. Поэтому не «мы промолчим», а «выключи то, что шумит». */}
+          <RuleRow
+            title="Под конец месяца"
+            hint="За пару дней до конца, если итог за месяц ещё не написан. Написал — замолкает."
+            value={rules.monthSummary.enabled}
+            onChange={(enabled) => patchRules({ ...rules, monthSummary: { ...rules.monthSummary, enabled } })}
+          />
+          {rules.monthSummary.enabled && (
+            <TimeStepper
+              time={rules.monthSummary}
+              label="Во сколько напомнить"
+              onChange={(t) => patchRules({ ...rules, monthSummary: { ...rules.monthSummary, ...t } })}
+            />
+          )}
           {rules.habitsUndone.enabled && own.enabled && (
             <Text style={styles.subtle}>
               Напоминание по часам выше придёт и тогда, когда всё уже сделано: отменить одно

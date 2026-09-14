@@ -13,11 +13,22 @@ import { useStreak, frozenDaysFor } from "../lib/useStreak";
 import { useTodayKey } from "../lib/useTodayKey";
 import { useNowMinutes } from "../lib/useNowMinutes";
 import { DEFAULT_LATE_RULE, type LateRule } from "../lib/habitSchedule";
-import { weekKey, dayOfWeek, weekDatesThrough } from "../lib/week";
+import { weekDatesThrough } from "../lib/week";
 import StreakRing from "../components/StreakRing";
 import PhaseBar from "../components/PhaseBar";
 import HistoryCalendar from "../components/HistoryCalendar";
-import type { Habit, HabitLog, FocusSession, WeeklyReview, ItemGroup } from "../types";
+import {
+  findGoal,
+  goalProgress,
+  hasContent,
+  monthKey,
+  periodAccusative,
+  periodTitle,
+  summaryDue,
+  yearKey,
+  type PeriodGoal,
+} from "../lib/goals";
+import type { Habit, HabitLog, ItemGroup } from "../types";
 
 export default function ReportScreen({
   navigation,
@@ -53,33 +64,28 @@ export default function ReportScreen({
     queryKey: ["habitLog", "streak", streakWindowStart, today],
     queryFn: () => api.getHabitLog(streakWindowStart, today) as Promise<HabitLog[]>,
   });
-  const { data: sessions = [] } = useQuery<FocusSession[]>({
-    queryKey: ["sessions", "week", weekStart, today],
-    queryFn: () => api.getSessions(weekStart, today) as Promise<FocusSession[]>,
-  });
-  const { data: reviews = [] } = useQuery<WeeklyReview[]>({
-    queryKey: ["reviews"],
-    queryFn: () => api.getReviews(),
+  const { data: goals = [] } = useQuery<PeriodGoal[]>({
+    queryKey: ["goals"],
+    queryFn: () => api.getGoals(),
   });
   const { data: celebrated = [] } = useQuery<number[]>({
     queryKey: ["milestones"],
     queryFn: () => api.getCelebratedMilestones(),
   });
 
-  // Streak: a day "counts" once at least half the habits are done that day —
-  // same rule as the original demo.
-  const days = Array.from({ length: 7 }, (_, i) => dateNDaysAgo(6 - i));
-
   // Logs of deleted habits must not count towards any of these numbers.
   const habitIds = new Set(habits.map((h) => h.id));
   const countsFor = (log: HabitLog) => log.done && habitIds.has(log.habitId);
 
-  const sessionsByDay = (day: string) => sessions.filter((s) => s.date === day).length;
   const hasHistory = streakLogs.some(countsFor);
 
-  const reviewWritten = reviews.some((r) => r.week === weekKey(today));
-  // Friday onwards: earlier in the week there is not much of a week to review.
-  const reviewDue = !reviewWritten && dayOfWeek(today) >= 5;
+  // Цели: месяц и год всегда на виду — цель, которую не видно, не работает. Итог
+  // появляется только тогда, когда его есть за что писать.
+  const thisMonth = monthKey(today);
+  const thisYear = yearKey(today);
+  const monthGoal = findGoal(goals, thisMonth);
+  const yearGoal = findGoal(goals, thisYear);
+  const duePeriod = summaryDue(goals, today);
 
   // Also where the weekly freeze is granted — see useStreak.
   const { streak, freezes, habitFreezes, skipRule, daysOff } = useStreak(today);
@@ -183,57 +189,98 @@ export default function ReportScreen({
         </Pressable>
       )}
 
-      <View style={styles.sessionsCard}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.sessionsValue}>{sessions.length}</Text>
-          <Text style={styles.subtleSmall}>
-            {plural(sessions.length, ["фокус-сессия", "фокус-сессии", "фокус-сессий"])} за неделю
-          </Text>
-        </View>
-        <View style={styles.spark}>
-          {days.map((d) => {
-            const count = sessionsByDay(d);
-            return (
-              <View key={d} style={styles.sparkCol}>
-                <View
-                  style={[
-                    styles.sparkBar,
-                    { height: count ? Math.min(28, 8 + count * 8) : 5 },
-                    count > 0 && { backgroundColor: colors.blue },
-                  ]}
-                />
-              </View>
-            );
-          })}
-        </View>
-      </View>
+      {/* Итог — только когда его есть за что писать: под конец месяца или за месяц,
+          который кончился с целями и без итога. В остальное время строки нет вовсе,
+          и это важнее, чем кажется: строка, которая висит всегда, перестаёт значить
+          «пора». */}
+      {duePeriod && (
+        <Pressable
+          onPress={() => navigation.navigate("MonthSummary", { period: duePeriod })}
+          accessibilityRole="button"
+          accessibilityLabel="Итог за месяц"
+          style={({ pressed }) => [styles.reviewRow, styles.reviewRowDue, pressed && { opacity: 0.7 }]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.reviewLabel, { color: colors.accent }]}>
+              Итог за {periodAccusative(duePeriod)}
+            </Text>
+            <Text style={styles.reviewHint}>
+              {duePeriod === thisMonth
+                ? "Месяц заканчивается. Что из задуманного вышло — пока помнится."
+                : `${periodTitle(duePeriod)} закончился, а итога нет.`}
+            </Text>
+          </View>
+          <Text style={styles.reviewChevron}>›</Text>
+        </Pressable>
+      )}
 
-      {/* Prompted rather than hidden in settings — a review nobody is
-          reminded of is a review nobody writes. */}
-      <Pressable
-        onPress={() => navigation.navigate("Review")}
-        accessibilityRole="button"
-        style={({ pressed }) => [styles.reviewRow, reviewDue && styles.reviewRowDue, pressed && { opacity: 0.7 }]}
-      >
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.reviewLabel, reviewDue && { color: colors.accent }]}>
-            {reviewDue ? "Пора на сверку за неделю" : "Сверка за неделю"}
-          </Text>
-          <Text style={styles.reviewHint}>
-            {reviewWritten
-              ? "На этой неделе записана — можно дописать"
-              : "Что работало, что нет, что меняешь. Раз в неделю, на холодную голову."}
-          </Text>
-        </View>
-        <Text style={styles.reviewChevron}>›</Text>
-      </Pressable>
+      {/* Цель видно всегда, а не по кнопке «цели»: цель, за которой надо куда-то идти,
+          вспоминают первого числа и тридцатого, а между ними — нет. */}
+      <GoalRow
+        label={`Цель за ${periodAccusative(thisMonth)}`}
+        goal={monthGoal}
+        empty={`Поставить цель на ${periodAccusative(thisMonth)}`}
+        emptyHint="Одна главная строка и несколько шагов. Пять минут один раз в месяц."
+        onPress={() => navigation.navigate("Goal", { period: thisMonth })}
+      />
+
+      <GoalRow
+        label="Цель за год"
+        goal={yearGoal}
+        empty={`Поставить цель на ${thisYear} год`}
+        emptyHint="То, ради чего всё остальное. Менять можно в любой момент."
+        onPress={() => navigation.navigate("Goal", { period: thisYear })}
+      />
     </ScrollView>
+  );
+}
+
+/**
+ * Одна строка цели: либо сама цель, либо приглашение её поставить.
+ *
+ * Пустая цель не прячется и не подсвечивается тревожным цветом: её отсутствие — это не
+ * провал, а просто «ещё не сел и не написал».
+ */
+function GoalRow({
+  label,
+  goal,
+  empty,
+  emptyHint,
+  onPress,
+}: {
+  label: string;
+  goal: PeriodGoal | null;
+  empty: string;
+  emptyHint: string;
+  onPress: () => void;
+}) {
+  const written = hasContent(goal);
+  const progress = goalProgress(goal);
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.reviewRow, pressed && { opacity: 0.7 }]}
+    >
+      <View style={{ flex: 1 }}>
+        <Text style={styles.reviewLabel}>{written ? label : empty}</Text>
+        <Text style={[styles.reviewHint, written && styles.goalText]}>
+          {written ? goal?.main || `${progress.total} ${plural(progress.total, ["шаг", "шага", "шагов"])}` : emptyHint}
+        </Text>
+        {written && progress.total > 0 && (
+          <Text style={styles.goalProgress}>
+            Отмечено {progress.done} из {progress.total}
+          </Text>
+        )}
+      </View>
+      <Text style={styles.reviewChevron}>›</Text>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  subtleSmall: { color: colors.textMuted, fontSize: 11 },
 
   celebration: {
     flexDirection: "row",
@@ -246,21 +293,6 @@ const styles = StyleSheet.create({
   },
   celebrationEmoji: { fontSize: 24 },
   celebrationText: { color: colors.text, fontSize: 12, flex: 1, lineHeight: 17 },
-
-  sessionsCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    marginTop: 10,
-  },
-  sessionsValue: { color: colors.blue, fontSize: 26, fontWeight: "700", letterSpacing: -0.5 },
-  spark: { flexDirection: "row", alignItems: "flex-end", gap: 5, width: 96, height: 28 },
-  sparkCol: { flex: 1, alignItems: "center", justifyContent: "flex-end", height: "100%" },
-  sparkBar: { width: "100%", borderRadius: 3, backgroundColor: colors.cardBorder },
 
   reviewRow: {
     flexDirection: "row",
@@ -276,5 +308,7 @@ const styles = StyleSheet.create({
   reviewLabel: { color: colors.text, fontSize: 14, fontWeight: "600" },
   reviewHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 3 },
   reviewChevron: { color: colors.textMuted, fontSize: 20 },
+  goalText: { color: colors.text, fontSize: 13 },
+  goalProgress: { color: colors.accentGreen, fontSize: 11, marginTop: 4 },
 
 });
