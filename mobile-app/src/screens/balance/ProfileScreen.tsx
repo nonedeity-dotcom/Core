@@ -4,7 +4,7 @@ import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { colors } from "../../theme/colors";
-import { todayKey } from "../../lib/date";
+import { daysBetween, formatDateShort, shiftDate, todayKey } from "../../lib/date";
 import { plural } from "../../lib/plural";
 import {
   ACTIVITY_FACTORS,
@@ -92,6 +92,9 @@ export default function BalanceProfileScreen() {
 
   const t = targets(draft);
   const filled = stored !== null && stored !== undefined;
+  // Срок держится датой, а правится неделями: «через сколько» — это то, чем человек думает,
+  // а дата — то, что переживёт завтрашний день и не съедет вместе с ним.
+  const targetWeeks = draft.targetDate ? Math.max(0, Math.round(daysBetween(todayKey(), draft.targetDate) / 7)) : 0;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
@@ -225,13 +228,86 @@ export default function BalanceProfileScreen() {
           ))}
         </View>
         <Text style={styles.rowHint}>
+          {/* Стояло «прибавляется 400 ккал» — ровное число для всех. Его давно нет: надбавка
+              считается из веса и целевого темпа, и для шестидесяти килограммов она совсем
+              не та, что для ста. */}
           {draft.goal === "keep"
             ? "Норма равна расходу."
-            : draft.goal === "gain"
-              ? "К расходу прибавляется 400 ккал."
-              : "От расхода отнимается 400 ккал."}
+            : `${goalShift(draft) > 0 ? "К расходу прибавляется" : "От расхода отнимается"} ${Math.abs(
+                goalShift(draft),
+              )} ккал — это ${Math.round(targetRate(draft).from * 100) / 100}…${
+                Math.round(targetRate(draft).to * 100) / 100
+              } кг в неделю.`}
         </Text>
       </View>
+
+      {/* Куда прийти — отдельно от того, в какую сторону двигать норму. «Набор» не знает,
+          до скольки, и без этого числа прогноз считать не из чего. */}
+      <Text style={[styles.sectionLabel, styles.spaced]}>Цель по весу</Text>
+      {draft.targetWeightKg === undefined ? (
+        <View style={styles.card}>
+          <Text style={styles.rowHint}>
+            Поставь вес, к которому идёшь, — и «Статистика» посчитает, сколько до него дней:
+            и по норме, и по тому, как ты ешь на самом деле.
+          </Text>
+          <Pressable
+            onPress={() =>
+              patch({
+                targetWeightKg:
+                  Math.round((draft.weightKg + (draft.goal === "lose" ? -5 : 5)) * 10) / 10,
+              })
+            }
+            accessibilityRole="button"
+            accessibilityLabel="Поставить цель по весу"
+            style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
+          >
+            <Text style={styles.primaryText}>Поставить цель</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <>
+          <Stepper
+            label="Хочу весить"
+            value={draft.targetWeightKg.toFixed(1)}
+            unit="кг"
+            step={0.5}
+            onStep={(d) =>
+              patch({ targetWeightKg: Math.round(((draft.targetWeightKg ?? draft.weightKg) + d) * 10) / 10 })
+            }
+            min={(draft.targetWeightKg ?? 0) <= LIMITS.weightKg.min}
+            max={(draft.targetWeightKg ?? 0) >= LIMITS.weightKg.max}
+          />
+          {/* Срок необязателен, и это не формальность: без него вопрос «когда дойду», с ним —
+              «сколько есть, чтобы успеть». Второй вопрос осмысленный только тогда, когда
+              дата взялась откуда-то из жизни, а не была выставлена наугад. */}
+          <Stepper
+            label="Срок"
+            value={targetWeeks === 0 ? "не задан" : `${targetWeeks}`}
+            unit={targetWeeks === 0 ? "" : plural(targetWeeks, ["неделя", "недели", "недель"])}
+            onStep={(d) => {
+              const weeks = Math.min(104, Math.max(0, targetWeeks + d));
+              patch(weeks === 0 ? { targetDate: undefined } : { targetDate: shiftDate(todayKey(), weeks * 7) });
+            }}
+            min={targetWeeks <= 0}
+            max={targetWeeks >= 104}
+          />
+          <View style={styles.card}>
+            <Text style={styles.rowHint}>
+              {draft.targetDate
+                ? `Это ${formatDateShort(draft.targetDate)}. Сколько под этот срок надо есть — на «Статистике».`
+                : "Без срока «Статистика» считает, когда дойдёшь. Поставь срок — посчитает и сколько под него есть."}
+            </Text>
+            <Pressable
+              onPress={() => patch({ targetWeightKg: undefined, targetDate: undefined })}
+              accessibilityRole="button"
+              accessibilityLabel="Убрать цель по весу"
+              style={({ pressed }) => [styles.clearBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.clearText}>Убрать цель</Text>
+            </Pressable>
+          </View>
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -320,6 +396,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: colors.accentGreenDark,
   },
+  clearBtn: { alignSelf: "flex-start", paddingVertical: 6 },
+  clearText: { color: colors.textMuted, fontSize: 12 },
   primaryText: { color: colors.bg, fontSize: 14, fontWeight: "600" },
   container: { flex: 1, backgroundColor: colors.bg },
   intro: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },

@@ -73,6 +73,20 @@ export interface Profile {
    */
   adjustKcal?: number;
   /**
+   * Куда хочешь прийти, килограммы. Нет — значит прогноза нет и считать нечего.
+   *
+   * Отдельно от цели «набор/похудение»: цель говорит, в какую сторону двигать норму, а это —
+   * где остановиться. Одно без другого не выводится: «набор» не знает, до скольки.
+   */
+  targetWeightKg?: number;
+  /**
+   * К какому дню, "yyyy-MM-dd". Необязательно.
+   *
+   * Со сроком вопрос переворачивается: не «когда дойду», а «сколько есть, чтобы успеть». Без
+   * срока приложение считает первое, со сроком — оба.
+   */
+  targetDate?: string;
+  /**
    * Когда поправку приняли в последний раз, "yyyy-MM-dd".
    *
    * Без этой даты поправку можно принять дважды подряд и уехать на четыреста килокалорий за
@@ -120,6 +134,12 @@ export function normalizeProfile(value: unknown): Profile | null {
     goal: v.goal === "gain" || v.goal === "lose" ? v.goal : "keep",
     // Границы шире одной поправки: их может накопиться несколько, но не до бесконечности —
     // норма, уехавшая на полторы тысячи, это уже не поправка, а сломанный профиль.
+    ...(typeof v.targetWeightKg === "number" && Number.isFinite(v.targetWeightKg)
+      ? { targetWeightKg: Math.round(clamp(v.targetWeightKg, LIMITS.weightKg.min, LIMITS.weightKg.max) * 10) / 10 }
+      : {}),
+    ...(typeof v.targetDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.targetDate)
+      ? { targetDate: v.targetDate }
+      : {}),
     ...(typeof v.adjustKcal === "number" && Number.isFinite(v.adjustKcal) && Math.round(v.adjustKcal) !== 0
       ? { adjustKcal: Math.round(clamp(v.adjustKcal, -1500, 1500)) }
       : {}),

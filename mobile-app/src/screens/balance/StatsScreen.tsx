@@ -4,13 +4,21 @@ import { api } from "../../api/client";
 import { colors } from "../../theme/colors";
 import { plural } from "../../lib/plural";
 import { useTodayKey } from "../../lib/useTodayKey";
-import { dateNDaysAgo, daysBetween, formatDateShort } from "../../lib/date";
+import { dateNDaysAgo, daysBetween, formatDateShort, shiftDate } from "../../lib/date";
 import { targets, type Profile } from "../../lib/balance/profile";
 import type { FoodEntry } from "../../lib/balance/food";
 import { periodStats, diaryStreak, DIARY_WINDOW_DAYS, type PeriodStats } from "../../lib/balance/stats";
 import { averageWater, formatWater, waterTarget, type WaterDay } from "../../lib/balance/water";
 import { weightTrend, latestWeight, type WeightEntry, type WeightTrend } from "../../lib/balance/weight";
 import { calibrate, MIN_DAYS, type CalibrationState } from "../../lib/balance/calibrate";
+import {
+  forecast,
+  maintenance,
+  ratePercentPerWeek,
+  rateVerdict,
+  requiredIntake,
+  type Forecast,
+} from "../../lib/balance/forecast";
 
 /**
  * Статистика: не «сколько я съел», а «сколько я ем обычно».
@@ -79,6 +87,11 @@ export default function StatsScreen() {
    * окне шум перевешивает любую настоящую прибавку. Три недели — то, на чём тренд уже
    * различим, и то, чего не жалко подождать один раз.
    */
+  // «По факту» считается по двум неделям: выходные и застолья в такое окно уже попадают,
+  // а то, как человек ел месяц назад, — ещё нет.
+  const FACT_DAYS = 14;
+  const factWindow = periodStats(entries, FACT_DAYS);
+
   const CAL_DAYS = 21;
   const calWindow = periodStats(entries, CAL_DAYS);
   const calTrend = weightTrend(weightLog, CAL_DAYS, today);
@@ -97,9 +110,18 @@ export default function StatsScreen() {
 
   // Вода тоже считается «есть что усреднять»: человек мог неделю отмечать стаканы и ни
   // разу не записать еду — показать ему пустой экран значило бы потерять то, что он вёл.
+  // Прогноз «по норме» дневника не требует — ему хватает профиля и целевого веса. Поэтому
+  // он живёт и на пустом экране: человек, поставивший цель и ещё ничего не записавший, —
+  // это ровно тот, кому «когда я дойду» интереснее всего.
+  const forecastCard =
+    profile && profile.targetWeightKg !== undefined ? (
+      <ForecastCard profile={profile} eaten={factWindow} today={today} />
+    ) : null;
+
   if (entries.length === 0 && weightLog.length === 0 && waterLog.length === 0) {
     return (
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        {forecastCard}
         <View style={styles.card}>
           <Text style={styles.hint}>
             Пока нечего усреднять. Запиши хотя бы один день в дневнике — средние появятся
@@ -125,6 +147,10 @@ export default function StatsScreen() {
       {calibration && (
         <Calibration state={calibration} onApply={(shift) => applyShift.mutate(shift)} busy={applyShift.isPending} />
       )}
+
+      {/* Прогноз стоит выше средних: средние отвечают «сколько я ем», а это — «и что из
+          этого выйдет», то есть ровно то, ради чего средние и смотрят. */}
+      {forecastCard}
 
       <Period title="За 7 дней" stats={week} target={target} trend={weekWeight} />
       <Period title="За 30 дней" stats={month} target={target} trend={monthWeight} />
@@ -181,6 +207,164 @@ export default function StatsScreen() {
         </Text>
       )}
     </ScrollView>
+  );
+}
+
+/** «75», а не «75.0»: половинки показываются, целые — нет. */
+const kg = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+
+/** Процент с запятой — так его пишут по-русски, и так его пишет остальной экран. */
+const pct = (n: number): string => `${(Math.round(Math.abs(n) * 100) / 100).toString().replace(".", ",")}%`;
+
+/** Меньше пяти записанных дней из четырнадцати — это не «как я ем», а несколько случайных дней. */
+const MIN_FACT_DAYS = 5;
+
+/**
+ * Сколько дней до нужного веса — по норме и по тому, как человек ест на самом деле.
+ *
+ * Два числа, и вся польза в разнице между ними. Норма говорит 2900, дневник — 2350; первый
+ * срок будет вдвое короче второго, и это единственное, что стоит знать про свой набор.
+ *
+ * Считается днём за днём, с пересчётом расхода по новому весу: чем больше весишь, тем больше
+ * тратишь, поэтому на постоянной еде набор тормозит и упирается в потолок. Когда цель за этим
+ * потолком, карточка не печатает число дней — их не будет, — а называет вес, на котором всё
+ * встанет.
+ */
+function ForecastCard({
+  profile,
+  eaten,
+  today,
+}: {
+  profile: Profile;
+  eaten: PeriodStats;
+  today: string;
+}) {
+  const goalKg = profile.targetWeightKg as number;
+  const spend = maintenance(profile);
+  const gap = Math.round((goalKg - profile.weightKg) * 10) / 10;
+  const plan = forecast({ profile, targetWeightKg: goalKg, intakeKcal: null });
+  const enoughFact = eaten.daysLogged >= MIN_FACT_DAYS && eaten.average.kcal > 0;
+  const fact = enoughFact
+    ? forecast({ profile, targetWeightKg: goalKg, intakeKcal: eaten.average.kcal })
+    : null;
+
+  const daysLeft = profile.targetDate ? daysBetween(today, profile.targetDate) : null;
+  const need = daysLeft !== null && daysLeft > 0 ? requiredIntake(profile, goalKg, daysLeft) : null;
+  const needRate = daysLeft !== null && daysLeft > 0 ? (gap / daysLeft) * 7 : 0;
+
+  const say = (f: Forecast): string => {
+    switch (f.kind) {
+      case "already":
+        return "Цель достигнута.";
+      case "reach":
+        return `${f.days} ${plural(f.days, ["день", "дня", "дней"])} — к ${formatDateShort(
+          shiftDate(today, f.days),
+        )}`;
+      case "stalls":
+        return `Не дойдёшь: остановишься на ${kg(f.plateauKg)} кг`;
+      case "wrong-way":
+        return "Вес пойдёт в другую сторону";
+    }
+  };
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.head}>
+        <Text style={styles.title}>{`До ${kg(goalKg)} кг`}</Text>
+        <Text style={styles.coverage}>{`${gap > 0 ? "+" : ""}${gap} кг от нынешнего`}</Text>
+      </View>
+
+      <Text style={styles.forecastLabel}>Если есть по норме</Text>
+      <Text style={styles.forecastValue}>
+        {/* При цели «поддержание» норма равна расходу, и вес по ней стоит. Это не «пойдёт в
+            другую сторону» — это «никуда не пойдёт», и сказать надо именно так, вместе с
+            тем, что с этим делать. */}
+        {plan.kind === "wrong-way" && profile.goal === "keep" ? "Вес останется прежним" : say(plan)}
+      </Text>
+      {plan.kind === "wrong-way" && profile.goal === "keep" && (
+        <Text style={styles.rest}>
+          Цель стоит на «поддержании», а на нём норма равна расходу. Поставь в профиле «набор
+          массы» или «похудение» — норма сдвинется, и появится срок.
+        </Text>
+      )}
+      {plan.kind === "reach" && (
+        <Text style={styles.rest}>
+          {`Это ${pct(ratePercentPerWeek(plan.rateKgPerWeek, profile.weightKg))} веса в неделю. ` +
+            "Норма растёт вместе с весом, поэтому темп не затухает — но её надо пересчитывать, обновляя вес в профиле."}
+        </Text>
+      )}
+
+      <Text style={[styles.forecastLabel, styles.forecastSecond]}>
+        {enoughFact ? `Если есть как сейчас — ${eaten.average.kcal} ккал` : "Если есть как сейчас"}
+      </Text>
+      {fact ? (
+        <>
+          <Text style={styles.forecastValue}>{say(fact)}</Text>
+          <Text style={styles.rest}>
+            {fact.kind === "stalls"
+              ? "Еда постоянная, а расход растёт вместе с весом — на этой еде он её догонит, и набор встанет. Чтобы идти дальше, есть придётся больше."
+              : fact.kind === "wrong-way"
+                ? `Ты съедаешь ${eaten.average.kcal}, а тратишь около ${spend} — на такой еде ${
+                    goalKg > profile.weightKg ? "вес не растёт" : "вес не падает"
+                  }. Среднее за ${eaten.daysLogged} ${plural(eaten.daysLogged, [
+                    "записанный день",
+                    "записанных дня",
+                    "записанных дней",
+                  ])} из ${eaten.days}.`
+                : `Среднее за ${eaten.daysLogged} ${plural(eaten.daysLogged, [
+                    "записанный день",
+                    "записанных дня",
+                    "записанных дней",
+                  ])} из ${eaten.days}.`}
+          </Text>
+        </>
+      ) : (
+        <Text style={styles.rest}>
+          {/* Две разные причины молчать, и путать их нельзя: «мало дней» лечится временем,
+              а «дни есть, а калорий ноль» значит, что записи без чисел, и ждать тут
+              бесполезно. */}
+          {eaten.daysLogged < MIN_FACT_DAYS
+            ? `Записано ${eaten.daysLogged} ${plural(eaten.daysLogged, [
+                "день",
+                "дня",
+                "дней",
+              ])} из ${eaten.days} — мало, чтобы считать по ним. Нужно хотя бы ${MIN_FACT_DAYS}.`
+            : "В записях за эти дни нет калорий — считать по ним нечего."}
+        </Text>
+      )}
+
+      {daysLeft !== null && (
+        <>
+          <Text style={[styles.forecastLabel, styles.forecastSecond]}>
+            {`Чтобы успеть к ${formatDateShort(profile.targetDate as string)}`}
+          </Text>
+          {daysLeft <= 0 ? (
+            <Text style={styles.forecastValue}>Срок уже прошёл</Text>
+          ) : need === null ? (
+            <Text style={styles.forecastValue}>Столько за такой срок не выйдет</Text>
+          ) : (
+            <>
+              <Text style={styles.forecastValue}>{`${need} ккал в день`}</Text>
+              <Text style={styles.rest}>
+                {`${daysLeft} ${plural(daysLeft, ["день", "дня", "дней"])} — это ${pct(
+                  ratePercentPerWeek(needRate, profile.weightKg),
+                )} веса в неделю. ` +
+                  (rateVerdict(profile, needRate) === "fast"
+                    ? "Быстрее здорового темпа: набранное таким темпом — в основном жир."
+                    : rateVerdict(profile, needRate) === "slow"
+                      ? "Медленнее обычного темпа — срок можно поставить ближе."
+                      : "Это в пределах здорового темпа.")}
+              </Text>
+            </>
+          )}
+        </>
+      )}
+
+      <Text style={styles.caveat}>
+        Прогноз считается от расхода, а расход — оценка: ошибка формулы в ±10% превращается в
+        недели. Числу верить можно тогда, когда весы с ним согласились.
+      </Text>
+    </View>
   );
 }
 
@@ -446,6 +630,10 @@ const styles = StyleSheet.create({
   figureUnit: { color: colors.textMuted, fontSize: 11 },
   figureDiff: { color: colors.textMuted, fontSize: 11, marginTop: 6 },
   rest: { color: colors.textMuted, fontSize: 12, marginTop: 14 },
+  forecastLabel: { color: colors.textMuted, fontSize: 11, marginTop: 14 },
+  forecastSecond: { marginTop: 18 },
+  forecastValue: { color: colors.text, fontSize: 17, fontWeight: "600", marginTop: 3, lineHeight: 23 },
+  caveat: { color: colors.textMuted, fontSize: 10, lineHeight: 15, marginTop: 18 },
   trend: { marginTop: 14, borderTopWidth: 1, borderTopColor: colors.cardBorder, paddingTop: 12 },
   trendLine: { color: colors.text, fontSize: 13, fontVariant: ["tabular-nums"] },
   trendHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 4 },
