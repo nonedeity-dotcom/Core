@@ -16,6 +16,8 @@ import { todayKey, tomorrowKey } from "../lib/date";
 import { habitGroup, itemGroup } from "../lib/habits";
 import { DEFAULT_DAY_RULE, normalizeDayRule, type DayRule } from "../lib/dayRule";
 import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skipRule";
+import { DEFAULT_DAY_OFF, normalizeDayOff, pruneDates, type DayOffRule } from "../lib/dayOff";
+import { STREAK_WINDOW_DAYS } from "../lib/streak";
 import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipLibrary";
 import { DEFAULT_LATE_RULE, normalizeLateRule, normalizeSchedule, type LateRule } from "../lib/habitSchedule";
 import { normalizeProfile, type Profile } from "../lib/balance/profile";
@@ -49,6 +51,7 @@ const KEYS = {
   nowSinceRepair: "nowsince-repair-v1",
   dayRule: "day-rule-v1",
   skipRule: "skip-rule-v1",
+  daysOff: "days-off-v1",
   habitFreezes: "habit-freezes-v1",
   tipPrefs: "tip-prefs-v1",
   lateRule: "late-rule-v1",
@@ -550,6 +553,20 @@ export const api = {
    */
   async getSkipRule(): Promise<SkipRule> {
     return normalizeSkipRule(await read<unknown>(KEYS.skipRule, DEFAULT_SKIP_RULE));
+  },
+  /**
+   * Выходные — дни, которые не рвут серию и не тратят шанс.
+   *
+   * Разовые даты подрезаются окном серии при каждой записи: список, который только растёт,
+   * однажды станет тысячей строк, ни одна из которых ни на что не влияет.
+   */
+  async getDaysOff(): Promise<DayOffRule> {
+    return normalizeDayOff(await read<unknown>(KEYS.daysOff, DEFAULT_DAY_OFF));
+  },
+  async setDaysOff(rule: DayOffRule): Promise<DayOffRule> {
+    const clean = pruneDates(normalizeDayOff(rule), STREAK_WINDOW_DAYS);
+    await write(KEYS.daysOff, clean);
+    return clean;
   },
   async setSkipRule(rule: SkipRule): Promise<{ ok: true }> {
     await write(KEYS.skipRule, normalizeSkipRule(rule));
@@ -1275,6 +1292,7 @@ export interface BackupData {
   dayRule: DayRule;
   /** The skip allowance. Absent from older files, which import as one shared skip a week. */
   skipRule: SkipRule;
+  daysOff: DayOffRule;
   /** Days each habit spent its own chance on, by habit id. Absent from older files. */
   habitFreezes: Record<string, string[]>;
   /** Edits to the reference. Absent from older files, which import as the untouched one. */
@@ -1338,7 +1356,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight, balanceWater, screenDays, screenApps, screenHours] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, reviews, tasks, limit, focusIntervals, dayRule, skipRule, daysOff, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight, balanceWater, screenDays, screenApps, screenHours] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -1354,6 +1372,7 @@ export async function exportData(): Promise<BackupData> {
       api.getFocusIntervals(),
       api.getDayRule(),
       api.getSkipRule(),
+      api.getDaysOff(),
       api.getHabitFreezes(),
       api.getTipPrefs(),
       api.getLateRule(),
@@ -1382,6 +1401,7 @@ export async function exportData(): Promise<BackupData> {
     focusIntervals,
     dayRule,
     skipRule,
+    daysOff,
     habitFreezes,
     tipPrefs,
     lateRule,
@@ -1415,6 +1435,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.focusIntervals, data.focusIntervals),
       write(KEYS.dayRule, normalizeDayRule(data.dayRule)),
       write(KEYS.skipRule, normalizeSkipRule(data.skipRule)),
+      write(KEYS.daysOff, normalizeDayOff(data.daysOff)),
       write(KEYS.habitFreezes, data.habitFreezes),
       write(KEYS.tipPrefs, normalizeTipPrefs(data.tipPrefs)),
       write(KEYS.lateRule, normalizeLateRule(data.lateRule)),

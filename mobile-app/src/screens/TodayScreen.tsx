@@ -8,6 +8,7 @@ import { confirmDestructive } from "../lib/confirm";
 import { useTodayKey } from "../lib/useTodayKey";
 import { useNowMinutes } from "../lib/useNowMinutes";
 import { DEFAULT_LATE_RULE, type LateRule } from "../lib/habitSchedule";
+import { dayOffReason, isDayOff } from "../lib/dayOff";
 import { plural } from "../lib/plural";
 import { useFoldSet } from "../lib/useFold";
 import { weekStart, weekDatesThrough } from "../lib/week";
@@ -88,7 +89,7 @@ export default function TodayScreen() {
   // The four months of marks each habit's own run is walked over, plus the chances it has
   // spent. Shared with the report through React Query's cache rather than fetched twice —
   // and this is also the one hook that grants a freeze, which is idempotent.
-  const { logs: streakLogs, freezes, habitFreezes, skipRule } = useStreak(today);
+  const { logs: streakLogs, freezes, habitFreezes, skipRule, daysOff } = useStreak(today);
 
   // How much of the pile closes a day is a setting; the header is the one place on this
   // screen that has to say what today is actually asking for.
@@ -254,6 +255,20 @@ export default function TodayScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 20 }}>
+      {/* Чек-лист в выходной не прячется: захочется — отметишь, но никто не просит.
+          Спрятать список значило бы решить за человека, что в выходной он ничего не
+          сделает, а это его дело, а не приложения. */}
+      {isDayOff(today, daysOff) && (
+        <View style={styles.dayOffCard}>
+          <Feather name="coffee" size={14} color={colors.accentGreen} />
+          <Text style={styles.dayOffText}>
+            {dayOffReason(today, daysOff) === "weekday"
+              ? "Сегодня выходной — постоянный. Серия не прервётся и шанс не потратится."
+              : "Сегодня выходной. Серия не прервётся и шанс не потратится."}
+          </Text>
+        </View>
+      )}
+
       <View style={styles.headerRow}>
         <Text style={styles.subtle}>
           {/* Only daily habits decide a day, so the count is over those. With nothing but
@@ -909,6 +924,17 @@ function TimeStepper({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  dayOffCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "rgba(143,184,154,0.12)",
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    marginBottom: 12,
+  },
+  dayOffText: { color: colors.accentGreen, fontSize: 12, lineHeight: 17, flex: 1 },
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   editToggle: {
     flexDirection: "row",

@@ -144,9 +144,9 @@ export function habitStanding(habit: Habit, logs: HabitLog[], input: StandingInp
   const streak = habitStreakDays(habit, logs, excused);
   if (streak === 0) return { bucket: "open", note: null };
 
-  // Choice B: in the shared mode the chance belongs to the *day*, not to this habit, so
-  // "у этой привычки не осталось шансов" would be the wrong sentence. Nothing is said.
-  if (rule.mode !== "perHabit" || rule.count <= 0) return { bucket: "open", note: null };
+  // Общий запас принадлежит дню, а не этой привычке, поэтому «у неё не осталось шансов»
+  // было бы не про него. Пока собственного запаса нет — под именем ничего не пишем.
+  if (rule.perHabit.count <= 0) return { bucket: "open", note: null };
 
   // Whether a miss today could be forgiven tomorrow morning — the same two conditions the
   // grant itself checks, read a day early.

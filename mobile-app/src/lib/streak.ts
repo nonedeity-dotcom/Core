@@ -1,6 +1,7 @@
 import { dateNDaysAgo } from "./date";
 import { DEFAULT_DAY_RULE, requiredForDay, type DayRule } from "./dayRule";
 import { DEFAULT_SKIP_RULE, periodBucket, type SkipRule } from "./skipRule";
+import { DEFAULT_DAY_OFF, isDayOff, type DayOffRule } from "./dayOff";
 import { habitsThatDecideTheDay, logCount, perDayTarget } from "./habits";
 import type { Habit, HabitLog } from "../types";
 
@@ -125,6 +126,7 @@ export function computeStreak(
   logs: HabitLog[],
   frozen: string[] = [],
   rule: DayRule = DEFAULT_DAY_RULE,
+  daysOff: DayOffRule = DEFAULT_DAY_OFF,
 ): number {
   // With nothing in the "now" pile there is nothing to be consistent about.
   if (habitsThatDecideTheDay(habits).length === 0) return 0;
@@ -143,6 +145,9 @@ export function computeStreak(
     // a lie about how many days were actually done; breaking on it is the cliff the freeze
     // exists to remove.
     else if (frozenDays.has(day)) continue;
+    // Выходной ведёт себя так же, как потраченный шанс: цепочку не рвёт и не удлиняет.
+    // Разница только в цене — за него ничего не платят.
+    else if (isDayOff(day, daysOff)) continue;
     else break;
   }
   return streak;
@@ -162,13 +167,14 @@ function skipsUsed(
   frozenDays: Set<string>,
   dayRule: DayRule,
   rule: SkipRule,
+  daysOff: DayOffRule,
   candidate: string,
   from: number,
 ): number {
-  const bucket = periodBucket(candidate, rule.period);
+  const bucket = periodBucket(candidate, rule.shared.period);
   if (bucket !== null) {
     let used = 0;
-    for (const day of frozenDays) if (periodBucket(day, rule.period) === bucket) used++;
+    for (const day of frozenDays) if (periodBucket(day, rule.shared.period) === bucket) used++;
     return used;
   }
 
@@ -179,6 +185,8 @@ function skipsUsed(
       used++;
       continue;
     }
+    // Выходной запаса не тратил и цепочку не обрывал — проходим мимо.
+    if (isDayOff(day, daysOff)) continue;
     // A day that actually held keeps the run going; one that failed unfrozen ended it, and
     // everything before it belongs to a chain that is already over.
     if (!dayCounts(habits, logs, day, dayRule)) break;
@@ -204,23 +212,38 @@ export function freezeCandidate(
   today: string,
   dayRule: DayRule = DEFAULT_DAY_RULE,
   rule: SkipRule = DEFAULT_SKIP_RULE,
+  daysOff: DayOffRule = DEFAULT_DAY_OFF,
 ): string | null {
   if (habits.length === 0) return null;
-  // Per-habit skips protect each habit's own streak instead; the day gets no cover at all.
-  if (rule.mode !== "shared" || rule.count <= 0) return null;
+  // Общий запас держит день; запас на каждую привычку — её собственную серию, и сюда он
+  // отношения не имеет. Раньше здесь стояло «режим не общий — выходим», и именно из-за
+  // этого день оставался без защиты у всех, кто выбрал шансы на привычки.
+  if (rule.shared.count <= 0) return null;
 
   const yesterday = dateNDaysAgo(1);
-  const beforeYesterday = dateNDaysAgo(2);
   if (dayCounts(habits, logs, yesterday, dayRule)) return null;
+  // Вчера было выходным — спасать нечего и платить не за что.
+  if (isDayOff(yesterday, daysOff)) return null;
 
   const frozenDays = new Set(frozen);
   if (frozenDays.has(yesterday)) return null;
-  // Two in a row is a real break — this is the rule the budget cannot buy its way past.
-  if (frozenDays.has(beforeYesterday)) return null;
-  // Nothing to save: the chain was already broken the day before.
-  if (!dayCounts(habits, logs, beforeYesterday, dayRule)) return null;
 
-  if (skipsUsed(habits, logs, frozenDays, dayRule, rule, yesterday, 2) >= rule.count) return null;
+  // Предыдущий день, который вообще о чём-то говорит: выходные пропускаем. Иначе
+  // постоянный выходной по воскресеньям означал бы, что понедельник никогда не прикрыть —
+  // «позавчера ничего не сделано», хотя позавчера и не требовалось.
+  let i = 2;
+  while (i < STREAK_WINDOW_DAYS && isDayOff(dateNDaysAgo(i), daysOff)) i++;
+  const previous = dateNDaysAgo(i);
+
+  // Two in a row is a real break — this is the rule the budget cannot buy its way past.
+  // Выходные в эту пару не считаются: отдых по расписанию промахом не является.
+  if (frozenDays.has(previous)) return null;
+  // Nothing to save: the chain was already broken the day before.
+  if (!dayCounts(habits, logs, previous, dayRule)) return null;
+
+  if (skipsUsed(habits, logs, frozenDays, dayRule, rule, daysOff, yesterday, i) >= rule.shared.count) {
+    return null;
+  }
 
   return yesterday;
 }

@@ -2,6 +2,7 @@ import { dateNDaysAgo } from "./date";
 import { habitTarget, logCount, perDayTarget } from "./habits";
 import { weekKey } from "./week";
 import { DEFAULT_SKIP_RULE, periodBucket, type SkipRule } from "./skipRule";
+import { DEFAULT_DAY_OFF, isDayOff, type DayOffRule } from "./dayOff";
 import type { Habit, HabitLog } from "../types";
 
 /** As far back as a single habit's history is walked — same window as the global streak. */
@@ -36,7 +37,12 @@ function doneOn(habit: Habit, logs: HabitLog[], date: string): boolean {
  * are set per habit — the days this habit spent its own chances on. Skipped rather than
  * counted, both ways: the day was forgiven, it was not done.
  */
-export function habitStreakDays(habit: Habit, logs: HabitLog[], frozen: string[] = []): number {
+export function habitStreakDays(
+  habit: Habit,
+  logs: HabitLog[],
+  frozen: string[] = [],
+  daysOff: DayOffRule = DEFAULT_DAY_OFF,
+): number {
   const frozenDays = new Set(frozen);
   let streak = 0;
   for (let i = 0; i < HABIT_WINDOW_DAYS; i++) {
@@ -45,6 +51,8 @@ export function habitStreakDays(habit: Habit, logs: HabitLog[], frozen: string[]
     // Today still being open shouldn't break yesterday's run.
     else if (i === 0) continue;
     else if (frozenDays.has(day)) continue;
+    // Выходной держит и собственную серию привычки: день объявлен нерабочим целиком.
+    else if (isDayOff(day, daysOff)) continue;
     else break;
   }
   return streak;
@@ -167,10 +175,10 @@ function skipsUsedFor(
   rule: SkipRule,
   offset: number,
 ): number {
-  const bucket = periodBucket(dateNDaysAgo(offset), rule.period);
+  const bucket = periodBucket(dateNDaysAgo(offset), rule.perHabit.period);
   let used = 0;
   if (bucket !== null) {
-    for (const day of ownDays) if (periodBucket(day, rule.period) === bucket) used++;
+    for (const day of ownDays) if (periodBucket(day, rule.perHabit.period) === bucket) used++;
     return used;
   }
   // "За всю цепочку": walk back to the day this habit's run actually ended, counting the
@@ -190,8 +198,9 @@ function skipsUsedFor(
 /**
  * How many of its own chances this habit still has for *today* — what the report shows.
  *
- * Zero whenever chances are not per habit: a shared day off forgives the day, not one habit,
- * so "this habit has none left" would be the wrong sentence to put under its name.
+ * Ноль, когда запас на привычки выключен: тогда у привычки собственных шансов нет, и
+ * писать под её именем «шансов не осталось» было бы неправдой — общий запас, если он
+ * включён, прощает день, а не эту привычку.
  */
 export function habitSkipsLeft(
   habit: Habit,
@@ -200,10 +209,10 @@ export function habitSkipsLeft(
   own: string[],
   rule: SkipRule = DEFAULT_SKIP_RULE,
 ): number {
-  if (rule.mode !== "perHabit" || rule.count <= 0) return 0;
+  if (rule.perHabit.count <= 0) return 0;
   if (habitTarget(habit).kind === "weekly") return 0;
   const used = skipsUsedFor(habit, logs, new Set(excused), new Set(own), rule, 0);
-  return Math.max(0, rule.count - used);
+  return Math.max(0, rule.perHabit.count - used);
 }
 
 /**
@@ -228,20 +237,29 @@ export function habitFreezeCandidate(
   excused: string[],
   own: string[],
   rule: SkipRule = DEFAULT_SKIP_RULE,
+  daysOff: DayOffRule = DEFAULT_DAY_OFF,
 ): string | null {
-  if (rule.mode !== "perHabit" || rule.count <= 0) return null;
+  if (rule.perHabit.count <= 0) return null;
   if (habitTarget(habit).kind === "weekly") return null;
 
   const yesterday = dateNDaysAgo(1);
-  const beforeYesterday = dateNDaysAgo(2);
   if (doneOn(habit, logs, yesterday)) return null;
+  // Выходной привычку тоже освобождает, и шанса на него не тратится.
+  if (isDayOff(yesterday, daysOff)) return null;
 
   const excusedDays = new Set(excused);
   const ownDays = new Set(own);
-  if (excusedDays.has(yesterday) || excusedDays.has(beforeYesterday)) return null;
-  // Nothing to save: this habit's run had already ended.
-  if (!doneOn(habit, logs, beforeYesterday)) return null;
+  if (excusedDays.has(yesterday)) return null;
 
-  const used = skipsUsedFor(habit, logs, excusedDays, ownDays, rule, 1);
-  return used >= rule.count ? null : yesterday;
+  // Ближайший назад день, в который привычка вообще что-то была должна.
+  let i = 2;
+  while (i < HABIT_WINDOW_DAYS && isDayOff(dateNDaysAgo(i), daysOff)) i++;
+  const previous = dateNDaysAgo(i);
+
+  if (excusedDays.has(previous)) return null;
+  // Nothing to save: this habit's run had already ended.
+  if (!doneOn(habit, logs, previous)) return null;
+
+  const used = skipsUsedFor(habit, logs, excusedDays, ownDays, rule, i - 1);
+  return used >= rule.perHabit.count ? null : yesterday;
 }

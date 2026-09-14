@@ -19,10 +19,21 @@ import {
   DEFAULT_SKIP_RULE,
   MAX_SKIPS,
   describeSkipRule,
-  type SkipMode,
+  type SkipBudget,
   type SkipPeriod,
   type SkipRule,
 } from "../lib/skipRule";
+import { dateNDaysAgo, todayKey } from "../lib/date";
+import {
+  DEFAULT_DAY_OFF,
+  WEEKDAY_FULL,
+  WEEKDAY_LABELS,
+  dayOffReason,
+  describeDayOff,
+  toggleDate,
+  toggleWeekday,
+  type DayOffRule,
+} from "../lib/dayOff";
 import type { Habit } from "../types";
 
 /**
@@ -165,20 +176,100 @@ function DayRuleCard({
  * always break, whatever budget is left: a second day off is not a slip, and a chain that
  * survives an open-ended gap has stopped measuring anything.
  */
-function SkipRuleCard({ rule, onChange }: { rule: SkipRule; onChange: (rule: SkipRule) => void }) {
-  const modes: { kind: SkipMode; title: string }[] = [
-    { kind: "shared", title: "Общие" },
-    { kind: "perHabit", title: "По привычкам" },
-  ];
+function BudgetRow({
+  title,
+  hint,
+  budget,
+  onChange,
+}: {
+  title: string;
+  hint: string;
+  budget: SkipBudget;
+  onChange: (b: SkipBudget) => void;
+}) {
   const periods: { kind: SkipPeriod; title: string }[] = [
     { kind: "week", title: "В неделю" },
     { kind: "month", title: "В месяц" },
     { kind: "streak", title: "На цепочку" },
   ];
-
   const step = (delta: number) =>
-    onChange({ ...rule, count: Math.min(MAX_SKIPS, Math.max(0, rule.count + delta)) });
+    onChange({ ...budget, count: Math.min(MAX_SKIPS, Math.max(0, budget.count + delta)) });
 
+  return (
+    <>
+      <Text style={styles.cardLabel}>{title}</Text>
+      <Text style={styles.rowHint}>{hint}</Text>
+
+      <View style={styles.stepper}>
+        <Pressable
+          onPress={() => step(-1)}
+          accessibilityRole="button"
+          accessibilityLabel={`Меньше: ${title}`}
+          style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
+        >
+          <Text style={styles.stepBtnText}>−</Text>
+        </Pressable>
+        <Text style={styles.limitValue}>
+          {budget.count === 0
+            ? "выкл"
+            : `${budget.count} ${plural(budget.count, ["шанс", "шанса", "шансов"])}`}
+        </Text>
+        <Pressable
+          onPress={() => step(1)}
+          accessibilityRole="button"
+          accessibilityLabel={`Больше: ${title}`}
+          style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
+        >
+          <Text style={styles.stepBtnText}>+</Text>
+        </Pressable>
+      </View>
+
+      {/* Период прячется у выключенного запаса: настраивать, как пополняется ноль,
+          нечего, и две мёртвые строки на экране только сбивают. */}
+      {budget.count > 0 && (
+        <>
+          <View style={styles.chipRow}>
+            {periods.map((p) => (
+              <Pressable
+                key={p.kind}
+                onPress={() => onChange({ ...budget, period: p.kind })}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: budget.period === p.kind }}
+                accessibilityLabel={`${title}: ${p.title}`}
+                style={({ pressed }) => [
+                  styles.chip,
+                  budget.period === p.kind && styles.chipOn,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={[styles.chipText, budget.period === p.kind && styles.chipTextOn]}>
+                  {p.title}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={styles.rowHint}>
+            {budget.period === "week"
+              ? "Обнуляется каждый понедельник. Непотраченные не копятся."
+              : budget.period === "month"
+                ? "Обнуляется 1-го числа. Можно истратить всё за одну плохую неделю."
+                : "Не пополняется, пока цепочка идёт. Снова выдаются, когда она оборвалась и началась заново."}
+          </Text>
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * Два запаса шансов, и они работают одновременно.
+ *
+ * Раньше это был выбор «или-или», и в нём была дыра: поставив шансы на привычки, человек
+ * оставлял общий день без защиты вовсе. День, в который не сделано ничего, рвал общую серию,
+ * хотя шансы каждой привычки были не тронуты. Два разных вопроса — «уцелел ли день» и
+ * «уцелела ли привычка» — решались одним переключателем, и один ответ всегда терялся.
+ */
+function SkipRuleCard({ rule, onChange }: { rule: SkipRule; onChange: (rule: SkipRule) => void }) {
   return (
     <View style={styles.limitCard}>
       <View>
@@ -186,74 +277,117 @@ function SkipRuleCard({ rule, onChange }: { rule: SkipRule; onChange: (rule: Ski
         <Text style={styles.rowHint}>{describeSkipRule(rule)}</Text>
       </View>
 
-      <Text style={styles.cardLabel}>Что держат</Text>
-      <View style={styles.chipRow}>
-        {modes.map((m) => (
-          <Pressable
-            key={m.kind}
-            onPress={() => onChange({ ...rule, mode: m.kind })}
-            accessibilityRole="radio"
-            accessibilityState={{ selected: rule.mode === m.kind }}
-            style={({ pressed }) => [styles.chip, rule.mode === m.kind && styles.chipOn, pressed && styles.pressed]}
-          >
-            <Text style={[styles.chipText, rule.mode === m.kind && styles.chipTextOn]}>{m.title}</Text>
-          </Pressable>
-        ))}
-      </View>
-      <Text style={styles.rowHint}>
-        {rule.mode === "shared"
-          ? "Пропущенный день не рвёт общую серию. Серии отдельных привычек он всё равно держит — день прощён целиком."
-          : "Каждая привычка тратит свои шансы на свою серию в её отчёте. Общая серия при этом не защищена ничем."}
-      </Text>
+      <BudgetRow
+        title="Общий — держит день"
+        hint="Не сделал ничего за день — общая серия уцелела. Прощается день целиком, вместе со всеми привычками в нём."
+        budget={rule.shared}
+        onChange={(shared) => onChange({ ...rule, shared })}
+      />
 
-      <Text style={styles.cardLabel}>Откуда берутся</Text>
-      <View style={styles.chipRow}>
-        {periods.map((p) => (
-          <Pressable
-            key={p.kind}
-            onPress={() => onChange({ ...rule, period: p.kind })}
-            accessibilityRole="radio"
-            accessibilityState={{ selected: rule.period === p.kind }}
-            style={({ pressed }) => [styles.chip, rule.period === p.kind && styles.chipOn, pressed && styles.pressed]}
-          >
-            <Text style={[styles.chipText, rule.period === p.kind && styles.chipTextOn]}>{p.title}</Text>
-          </Pressable>
-        ))}
-      </View>
-      <Text style={styles.rowHint}>
-        {rule.period === "week"
-          ? "Обнуляется каждый понедельник. Непотраченные не копятся."
-          : rule.period === "month"
-            ? "Обнуляется 1-го числа. Можно истратить всё за одну плохую неделю."
-            : "Не пополняется, пока цепочка идёт. Снова выдаются, когда она оборвалась и началась заново."}
-      </Text>
-
-      <View style={styles.stepper}>
-        <Pressable
-          onPress={() => step(-1)}
-          accessibilityRole="button"
-          accessibilityLabel="Меньше шансов"
-          style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
-        >
-          <Text style={styles.stepBtnText}>−</Text>
-        </Pressable>
-        <Text style={styles.limitValue}>
-          {rule.count === 0 ? "выкл" : `${rule.count} ${plural(rule.count, ["шанс", "шанса", "шансов"])}`}
-        </Text>
-        <Pressable
-          onPress={() => step(1)}
-          accessibilityRole="button"
-          accessibilityLabel="Больше шансов"
-          style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
-        >
-          <Text style={styles.stepBtnText}>+</Text>
-        </Pressable>
-      </View>
+      <BudgetRow
+        title="На каждую привычку — держит её"
+        hint="У каждой привычки свой запас на её собственную серию. Пропустил одну, но день закрыл остальными — её серия уцелела."
+        budget={rule.perHabit}
+        onChange={(perHabit) => onChange({ ...rule, perHabit })}
+      />
 
       <Text style={styles.rowHint}>
         Два пропуска подряд рвут цепочку в любом случае — сколько бы шансов ни оставалось.
         Шанс тратится только на вчерашний день и только в тот момент, когда он закрылся:
         задним числом ничего не спасается.
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * Выходные — день, который не рвёт серию и не тратит шанс.
+ *
+ * Третья вещь после «сделал» и «пропустил». Пропуск — промах, за него платят шансом. Выходной
+ * объявлен заранее, платить за него нечем, и подряд их может быть сколько угодно: отпуск не
+ * обязан укладываться в один день.
+ *
+ * В серию он не идёт — она перешагивает его и считает дальше. Иначе постоянный выходной по
+ * воскресеньям растил бы число сам по себе, ничего не измеряя.
+ */
+function DaysOffCard({
+  rule,
+  today,
+  onChange,
+}: {
+  rule: DayOffRule;
+  today: string;
+  onChange: (rule: DayOffRule) => void;
+}) {
+  const yesterday = dateNDaysAgo(1);
+  const markable: { date: string; title: string }[] = [
+    { date: yesterday, title: "Вчера" },
+    { date: today, title: "Сегодня" },
+    { date: dateNDaysAgo(-1), title: "Завтра" },
+  ];
+
+  return (
+    <View style={styles.limitCard}>
+      <View>
+        <Text style={styles.rowLabel}>Выходные</Text>
+        <Text style={styles.rowHint}>{describeDayOff(rule)}</Text>
+      </View>
+
+      <Text style={styles.cardLabel}>Каждую неделю</Text>
+      <View style={styles.chipRow}>
+        {WEEKDAY_LABELS.map((label, i) => {
+          const day = i + 1;
+          const on = rule.weekdays.includes(day);
+          return (
+            <Pressable
+              key={label}
+              onPress={() => onChange(toggleWeekday(rule, day))}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: on }}
+              accessibilityLabel={`Постоянный выходной: ${WEEKDAY_FULL[i]}`}
+              style={({ pressed }) => [styles.dayChip, on && styles.chipOn, pressed && styles.pressed]}
+            >
+              <Text style={[styles.chipText, on && styles.chipTextOn]}>{label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text style={styles.rowHint}>
+        Постоянный выходной действует всегда, без отметок. Серия его перешагивает: в счёт он
+        не идёт, но и не рвёт.
+      </Text>
+
+      <Text style={styles.cardLabel}>Отдельный день</Text>
+      <View style={styles.chipRow}>
+        {markable.map((m) => {
+          const reason = dayOffReason(m.date, rule);
+          // Постоянный выходной этой кнопкой не снять — она ставит и снимает только
+          // разовые. Показать «убрать» там, где нажатие ничего не уберёт, значит соврать.
+          const locked = reason === "weekday";
+          return (
+            <Pressable
+              key={m.date}
+              onPress={() => !locked && onChange(toggleDate(rule, m.date))}
+              disabled={locked}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: reason !== null, disabled: locked }}
+              accessibilityLabel={`Выходной: ${m.title.toLowerCase()}`}
+              style={({ pressed }) => [
+                styles.chip,
+                reason !== null && styles.chipOn,
+                locked && styles.dimmed,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={[styles.chipText, reason !== null && styles.chipTextOn]}>{m.title}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text style={styles.rowHint}>
+        Дальше вчерашнего дня назад нельзя. Выходной планируют, а не подбирают задним числом
+        под уже случившийся провал: иначе серию можно переписать в любой момент, и она
+        перестаёт что-либо значить. Вчера оставлено потому, что отметить вечером забывают.
       </Text>
     </View>
   );
@@ -331,6 +465,10 @@ export default function AdminScreen() {
     queryKey: ["dayRule"],
     queryFn: () => api.getDayRule(),
   });
+  const { data: daysOff = DEFAULT_DAY_OFF } = useQuery<DayOffRule>({
+    queryKey: ["daysOff"],
+    queryFn: () => api.getDaysOff(),
+  });
   const { data: skipRule = DEFAULT_SKIP_RULE } = useQuery<SkipRule>({
     queryKey: ["skipRule"],
     queryFn: () => api.getSkipRule(),
@@ -354,6 +492,15 @@ export default function AdminScreen() {
       invalidate();
     },
   });
+  const setDaysOff = useMutation({
+    mutationFn: (rule: DayOffRule) => api.setDaysOff(rule),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["daysOff"] });
+      // Серия считается по выходным — её надо пересчитать сразу, а не при следующем заходе.
+      qc.invalidateQueries({ queryKey: ["freezes"] });
+    },
+  });
+
   const setSkipRule = useMutation({
     mutationFn: (rule: SkipRule) => api.setSkipRule(rule),
     onSuccess: () => {
@@ -381,6 +528,8 @@ export default function AdminScreen() {
 
       <Text style={[styles.sectionLabel, styles.spaced]}>Пропуски</Text>
       <SkipRuleCard rule={skipRule} onChange={(r) => setSkipRule.mutate(r)} />
+
+      <DaysOffCard rule={daysOff} today={todayKey()} onChange={(r) => setDaysOff.mutate(r)} />
 
       <Text style={[styles.sectionLabel, styles.spaced]}>Время выполнения</Text>
       <LateRuleCard rule={lateRule} onChange={(r) => setLateRule.mutate(r)} />
@@ -427,6 +576,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   stepBtnText: { color: colors.text, fontSize: 20, fontWeight: "600" },
+  dayChip: {
+    minWidth: 40,
+    alignItems: "center",
+    backgroundColor: colors.card,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  dimmed: { opacity: 0.45 },
   limitValue: {
     color: colors.text,
     fontSize: 18,
