@@ -19,6 +19,15 @@ export interface GoalItem {
   id: string;
   text: string;
   done: boolean;
+  /**
+   * Сколько раз это надо сделать за период. Нет — значит шаг обычный, на одну галочку.
+   *
+   * «Сходить в зал 12 раз» галочкой не меряется: весь месяц он выглядит невыполненным, а
+   * тридцатого разом закрывается. С числом видно 7 из 12 — то есть видно, что шаг идёт.
+   */
+  target?: number;
+  /** Сколько уже сделано. Осмысленно только вместе с target. */
+  count?: number;
 }
 
 export interface PeriodGoal {
@@ -143,18 +152,46 @@ export function emptyGoal(period: string, today: string): PeriodGoal {
   };
 }
 
-export function newItem(text: string): GoalItem {
-  return { id: uid(), text: text.trim(), done: false };
+export function newItem(text: string, target?: number): GoalItem {
+  const item: GoalItem = { id: uid(), text: text.trim(), done: false };
+  return target !== undefined && target > 1 ? { ...item, target: Math.round(target), count: 0 } : item;
 }
 
+/** Сколько раз шаг просят сделать. Обычный шаг — один. */
+export const itemTarget = (item: GoalItem): number =>
+  item.target !== undefined && item.target > 1 ? item.target : 1;
+
+/** Сколько сделано. У обычного шага это его галочка. */
+export const itemCount = (item: GoalItem): number =>
+  item.target !== undefined && item.target > 1 ? Math.max(0, item.count ?? 0) : item.done ? 1 : 0;
+
+/**
+ * Закрыт ли шаг.
+ *
+ * Одна проверка на оба вида, потому что «сколько закрыто» спрашивают в пяти местах, и пять
+ * раз написать `done || count >= target` — это пять мест, где однажды напишут по-разному.
+ */
+export const itemDone = (item: GoalItem): boolean => itemCount(item) >= itemTarget(item);
+
+/** Больше сотни раз за месяц — это уже не шаг, а привычка, и ей есть отдельный раздел. */
+export const MAX_ITEM_TARGET = 99;
+
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
+const posInt = (v: unknown, hi: number): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(0, Math.round(v))) : null;
 
 function normalizeItem(raw: unknown): GoalItem | null {
   if (typeof raw !== "object" || raw === null) return null;
   const o = raw as Record<string, unknown>;
   const text = str(o.text).trim();
   if (!text) return null;
-  return { id: str(o.id) || uid(), text, done: o.done === true };
+  const item: GoalItem = { id: str(o.id) || uid(), text, done: o.done === true };
+  const target = posInt(o.target, MAX_ITEM_TARGET);
+  // Единица и ноль — это обычный шаг: хранить у него счётчик значит завести второй способ
+  // сказать то же самое, и однажды они разойдутся.
+  if (target === null || target <= 1) return item;
+  return { ...item, target, count: Math.min(target, posInt(o.count, MAX_ITEM_TARGET) ?? 0) };
 }
 
 /** Всё, что пришло из хранилища или из копии, — до той формы, на которую рассчитаны экраны. */
@@ -196,7 +233,7 @@ export const findGoal = (goals: PeriodGoal[], period: string): PeriodGoal | null
 /** Сколько пунктов отмечено. Главная строка сюда не входит: у неё нет галочки. */
 export function goalProgress(goal: PeriodGoal | null): { done: number; total: number } {
   if (!goal) return { done: 0, total: 0 };
-  return { done: goal.items.filter((i) => i.done).length, total: goal.items.length };
+  return { done: goal.items.filter(itemDone).length, total: goal.items.length };
 }
 
 /** Есть ли вообще что показывать: пустая запись — это то же самое, что её отсутствие. */
@@ -234,10 +271,124 @@ export function summaryDue(goals: PeriodGoal[], today: string, leadDays = SUMMAR
  */
 export function carryItems(goal: PeriodGoal | null): GoalItem[] {
   if (!goal) return [];
-  return goal.items.filter((i) => !i.done).map((i) => newItem(i.text));
+  return goal.items.filter((i) => !itemDone(i)).map((i) => newItem(i.text, i.target));
+}
+
+/**
+ * Весь прошлый месяц заново — и выполненное тоже.
+ *
+ * Не то же самое, что перенос хвостов. «Двенадцать тренировок» повторяются каждый месяц
+ * именно потому, что в прошлом их закрыли; переносить только провалы значило бы каждый раз
+ * заводить удавшееся руками.
+ */
+export function repeatItems(goal: PeriodGoal | null): GoalItem[] {
+  if (!goal) return [];
+  return goal.items.map((i) => newItem(i.text, i.target));
 }
 
 /** Запись с изменённым пунктом. Всё остальное не трогается. */
 export function toggleItem(goal: PeriodGoal, id: string): PeriodGoal {
-  return { ...goal, items: goal.items.map((i) => (i.id === id ? { ...i, done: !i.done } : i)) };
+  return {
+    ...goal,
+    items: goal.items.map((i) => {
+      if (i.id !== id) return i;
+      // У шага со счётчиком нажатие только добавляет и упирается в цель. Обнулять его
+      // нажатием нельзя: один промах пальцем стёр бы двенадцать походов в зал. Убавляется
+      // он отдельной кнопкой — см. stepItem.
+      if (i.target !== undefined && i.target > 1) {
+        return { ...i, count: Math.min(i.target, itemCount(i) + 1) };
+      }
+      return { ...i, done: !i.done };
+    }),
+  };
+}
+
+/**
+ * Счётчик шага на единицу вверх или вниз.
+ *
+ * Отдельно от нажатия по строке, потому что убавление должно быть намеренным: «12 из 12»,
+ * стёртые случайным касанием, — это месяц работы, который нечем восстановить.
+ */
+export function stepItem(goal: PeriodGoal, id: string, delta: number): PeriodGoal {
+  return {
+    ...goal,
+    items: goal.items.map((i) =>
+      i.id === id && i.target !== undefined && i.target > 1
+        ? { ...i, count: Math.min(i.target, Math.max(0, itemCount(i) + delta)) }
+        : i,
+    ),
+  };
+}
+
+/** Новое имя шага. Пустое имя не сохраняется: шаг без текста — это удалённый шаг. */
+export function renameItem(goal: PeriodGoal, id: string, text: string): PeriodGoal {
+  const clean = text.trim();
+  if (!clean) return goal;
+  return { ...goal, items: goal.items.map((i) => (i.id === id ? { ...i, text: clean } : i)) };
+}
+
+/**
+ * Состояние месяца в полоске года.
+ *
+ * Четыре, и различать их важнее, чем кажется. «Пусто» — цели не ставили, и упрекать не за
+ * что. «Идёт» — цель есть, месяц не кончился. «Закрыт» — итог написан. «Долг» — месяц
+ * кончился с целями и без итога, и это единственное состояние, которое чего-то просит.
+ */
+export type MonthState = "empty" | "planned" | "closed" | "due";
+
+export interface MonthCell {
+  period: string;
+  /** 1…12 — для подписи. */
+  month: number;
+  state: MonthState;
+  /** Тот месяц, который идёт сейчас. */
+  current: boolean;
+  /** Отмечено шагов и всего — для подписи под клеткой. */
+  done: number;
+  total: number;
+}
+
+/** Двенадцать ключей месяцев года: «2026» → «2026-01» … «2026-12». */
+export function yearMonths(year: string): string[] {
+  return Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
+}
+
+/** Год целиком — то, из чего рисуется полоска из двенадцати клеток. */
+export function yearCells(goals: PeriodGoal[], year: string, today: string): MonthCell[] {
+  const now = monthKey(today);
+  return yearMonths(year).map((period, i) => {
+    const goal = findGoal(goals, period);
+    const p = goalProgress(goal);
+    const over = period < now;
+    const state: MonthState = summaryWritten(goal)
+      ? "closed"
+      : !hasContent(goal)
+        ? "empty"
+        : over
+          ? "due"
+          : "planned";
+    return { period, month: i + 1, state, current: period === now, done: p.done, total: p.total };
+  });
+}
+
+/**
+ * Подпись под одной кнопкой «Цель» на «Отчёте».
+ *
+ * Кнопка одна, а сказать ей надо разное: обычно — как идёт этот месяц, под конец — что итог
+ * ещё не написан, а если цели нет вовсе — позвать её поставить. Строка одна и та же, и
+ * именно поэтому она должна меняться: второй строки, чтобы досказать, здесь нет.
+ */
+export function goalSubtitle(goals: PeriodGoal[], today: string): string {
+  const current = monthKey(today);
+  const due = summaryDue(goals, today);
+  if (due !== null && due !== current) return `${periodTitle(due)} кончился, а итога нет`;
+  const goal = findGoal(goals, current);
+  if (!hasContent(goal)) return `Поставить цель на ${periodAccusative(current)}`;
+  if (due === current) return `${periodAccusative(current)} кончается — итога нет`;
+  const p = goalProgress(goal);
+  const left = daysLeftInMonth(today);
+  const tail = left === 0 ? "последний день" : `осталось ${left} дн.`;
+  return p.total > 0
+    ? `${periodAccusative(current)} · отмечено ${p.done} из ${p.total} · ${tail}`
+    : `${periodAccusative(current)} · ${tail}`;
 }

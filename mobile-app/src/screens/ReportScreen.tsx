@@ -17,17 +17,7 @@ import { weekDatesThrough } from "../lib/week";
 import StreakRing from "../components/StreakRing";
 import PhaseBar from "../components/PhaseBar";
 import HistoryCalendar from "../components/HistoryCalendar";
-import {
-  findGoal,
-  goalProgress,
-  hasContent,
-  monthKey,
-  periodAccusative,
-  periodTitle,
-  summaryDue,
-  yearKey,
-  type PeriodGoal,
-} from "../lib/goals";
+import { goalSubtitle, summaryDue, type PeriodGoal } from "../lib/goals";
 import type { Habit, HabitLog, ItemGroup } from "../types";
 
 export default function ReportScreen({
@@ -79,13 +69,11 @@ export default function ReportScreen({
 
   const hasHistory = streakLogs.some(countsFor);
 
-  // Цели: месяц и год всегда на виду — цель, которую не видно, не работает. Итог
-  // появляется только тогда, когда его есть за что писать.
-  const thisMonth = monthKey(today);
-  const thisYear = yearKey(today);
-  const monthGoal = findGoal(goals, thisMonth);
-  const yearGoal = findGoal(goals, thisYear);
-  const duePeriod = summaryDue(goals, today);
+  // Одна дверь вместо трёх. Год, месяцы и итог живут за ней, а сама строка меняет подпись
+  // по обстановке: обычно говорит, как идёт месяц, под конец — что итога нет. Строка одна,
+  // и именно поэтому ей приходится успевать сказать разное.
+  const subtitle = goalSubtitle(goals, today);
+  const goalUrgent = summaryDue(goals, today) !== null;
 
   // Also where the weekly freeze is granted — see useStreak.
   const { streak, freezes, habitFreezes, skipRule, daysOff } = useStreak(today);
@@ -189,93 +177,26 @@ export default function ReportScreen({
         </Pressable>
       )}
 
-      {/* Итог — только когда его есть за что писать: под конец месяца или за месяц,
-          который кончился с целями и без итога. В остальное время строки нет вовсе,
-          и это важнее, чем кажется: строка, которая висит всегда, перестаёт значить
-          «пора». */}
-      {duePeriod && (
-        <Pressable
-          onPress={() => navigation.navigate("MonthSummary", { period: duePeriod })}
-          accessibilityRole="button"
-          accessibilityLabel="Итог за месяц"
-          style={({ pressed }) => [styles.reviewRow, styles.reviewRowDue, pressed && { opacity: 0.7 }]}
-        >
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.reviewLabel, { color: colors.accent }]}>
-              Итог за {periodAccusative(duePeriod)}
-            </Text>
-            <Text style={styles.reviewHint}>
-              {duePeriod === thisMonth
-                ? "Месяц заканчивается. Что из задуманного вышло — пока помнится."
-                : `${periodTitle(duePeriod)} закончился, а итога нет.`}
-            </Text>
-          </View>
-          <Text style={styles.reviewChevron}>›</Text>
-        </Pressable>
-      )}
+      {/* Цель видна всегда, а не по кнопке где-то в настройках: цель, за которой надо
+          куда-то идти, вспоминают первого числа и тридцатого, а между ними — нет. */}
+      <Pressable
+        onPress={() => navigation.navigate("Goals")}
+        accessibilityRole="button"
+        accessibilityLabel="Цель"
+        style={({ pressed }) => [
+          styles.reviewRow,
+          goalUrgent && styles.reviewRowDue,
+          pressed && { opacity: 0.7 },
+        ]}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.reviewLabel, goalUrgent && { color: colors.accent }]}>Цель</Text>
+          <Text style={styles.reviewHint}>{subtitle}</Text>
+        </View>
+        <Text style={styles.reviewChevron}>›</Text>
+      </Pressable>
 
-      {/* Цель видно всегда, а не по кнопке «цели»: цель, за которой надо куда-то идти,
-          вспоминают первого числа и тридцатого, а между ними — нет. */}
-      <GoalRow
-        label={`Цель за ${periodAccusative(thisMonth)}`}
-        goal={monthGoal}
-        empty={`Поставить цель на ${periodAccusative(thisMonth)}`}
-        emptyHint="Одна главная строка и несколько шагов. Пять минут один раз в месяц."
-        onPress={() => navigation.navigate("Goal", { period: thisMonth })}
-      />
-
-      <GoalRow
-        label="Цель за год"
-        goal={yearGoal}
-        empty={`Поставить цель на ${thisYear} год`}
-        emptyHint="То, ради чего всё остальное. Менять можно в любой момент."
-        onPress={() => navigation.navigate("Goal", { period: thisYear })}
-      />
     </ScrollView>
-  );
-}
-
-/**
- * Одна строка цели: либо сама цель, либо приглашение её поставить.
- *
- * Пустая цель не прячется и не подсвечивается тревожным цветом: её отсутствие — это не
- * провал, а просто «ещё не сел и не написал».
- */
-function GoalRow({
-  label,
-  goal,
-  empty,
-  emptyHint,
-  onPress,
-}: {
-  label: string;
-  goal: PeriodGoal | null;
-  empty: string;
-  emptyHint: string;
-  onPress: () => void;
-}) {
-  const written = hasContent(goal);
-  const progress = goalProgress(goal);
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => [styles.reviewRow, pressed && { opacity: 0.7 }]}
-    >
-      <View style={{ flex: 1 }}>
-        <Text style={styles.reviewLabel}>{written ? label : empty}</Text>
-        <Text style={[styles.reviewHint, written && styles.goalText]}>
-          {written ? goal?.main || `${progress.total} ${plural(progress.total, ["шаг", "шага", "шагов"])}` : emptyHint}
-        </Text>
-        {written && progress.total > 0 && (
-          <Text style={styles.goalProgress}>
-            Отмечено {progress.done} из {progress.total}
-          </Text>
-        )}
-      </View>
-      <Text style={styles.reviewChevron}>›</Text>
-    </Pressable>
   );
 }
 

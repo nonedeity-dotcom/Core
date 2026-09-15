@@ -20,8 +20,8 @@ import HeaderRefresh from "../components/HeaderRefresh";
 import PhasesScreen from "../screens/PhasesScreen";
 import HabitReportScreen from "../screens/HabitReportScreen";
 import HabitsReportScreen from "../screens/HabitsReportScreen";
+import GoalsScreen, { goalsScreenTitle } from "../screens/GoalsScreen";
 import GoalScreen, { goalScreenTitle } from "../screens/GoalScreen";
-import MonthSummaryScreen, { summaryScreenTitle } from "../screens/MonthSummaryScreen";
 import BalanceProfileScreen from "../screens/balance/ProfileScreen";
 import DiaryScreen from "../screens/balance/DiaryScreen";
 import AddFoodScreen from "../screens/balance/AddFoodScreen";
@@ -258,17 +258,14 @@ export default function RootTabs() {
             return { title: `Уведомления · ${CHANNEL_LABELS[channel]}` };
           }}
         />
-        {/* Заголовок называет период: экран один на месяц и на год, и «Цель» без имени
-            оставляла бы вопрос, чья именно. */}
+        {/* Год с двенадцатью месяцами — одна дверь, за которой и цели, и итоги. */}
+        <Stack.Screen name="Goals" component={GoalsScreen} options={{ title: goalsScreenTitle() }} />
+        {/* Заголовок называет месяц: экран открывается с любой клетки года, и «Цель» без
+            имени оставляла бы вопрос, чья именно. */}
         <Stack.Screen
           name="Goal"
           component={GoalScreen}
           options={({ route }) => ({ title: goalScreenTitle((route.params as { period: string }).period) })}
-        />
-        <Stack.Screen
-          name="MonthSummary"
-          component={MonthSummaryScreen}
-          options={({ route }) => ({ title: summaryScreenTitle((route.params as { period: string }).period) })}
         />
       </Stack.Navigator>
 
