@@ -18,6 +18,7 @@ import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skip
 import { DEFAULT_DAY_OFF, normalizeDayOff, pruneDates, type DayOffRule } from "../lib/dayOff";
 import { normalizeGoals, type PeriodGoal } from "../lib/goals";
 import { DEFAULT_LEVEL_RULE, normalizeLevelRule, type HabitLevel, type LevelRule } from "../lib/level";
+import { DEFAULT_GAME_STATS, normalizeGameStats, type GameStats } from "../lib/games/stats";
 import { STREAK_WINDOW_DAYS } from "../lib/streak";
 import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipLibrary";
 import { DEFAULT_LATE_RULE, normalizeLateRule, normalizeSchedule, type LateRule } from "../lib/habitSchedule";
@@ -53,6 +54,7 @@ const KEYS = {
   dayRule: "day-rule-v1",
   skipRule: "skip-rule-v1",
   levelRule: "level-rule-v1",
+  gameStats: "game-stats-v1",
   daysOff: "days-off-v1",
   habitFreezes: "habit-freezes-v1",
   tipPrefs: "tip-prefs-v1",
@@ -567,6 +569,21 @@ export const api = {
   async setDayRule(rule: DayRule): Promise<{ ok: true }> {
     await write(KEYS.dayRule, normalizeDayRule(rule));
     return { ok: true as const };
+  },
+
+  /**
+   * Что игры про себя помнят: решённые поля и рекорды времени.
+   *
+   * Отдельным ключом, а не внутри чего-нибудь: игра к привычкам, еде и экрану отношения не
+   * имеет и ни на одно число в них не влияет.
+   */
+  async getGameStats(): Promise<GameStats> {
+    return normalizeGameStats(await read<unknown>(KEYS.gameStats, DEFAULT_GAME_STATS));
+  },
+  async setGameStats(stats: GameStats): Promise<GameStats> {
+    const clean = normalizeGameStats(stats);
+    await write(KEYS.gameStats, clean);
+    return clean;
   },
 
   /**

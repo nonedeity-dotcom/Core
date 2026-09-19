@@ -20,6 +20,7 @@ import { hasUsageAccess } from "../../modules/creker-usage";
 import { syncUsage } from "../integrations/usageSync";
 import RotatingTip from "../components/RotatingTip";
 import type { Section } from "../navigation/SectionMenu";
+import type { GameStats } from "../lib/games/stats";
 
 /**
  * Главная — один вопрос: как идёт сегодняшний день.
@@ -34,6 +35,8 @@ import type { Section } from "../navigation/SectionMenu";
  * закрываться за три секунды.
  */
 export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => void }) {
+  const { data: gameStats } = useQuery<GameStats>({ queryKey: ["gameStats"], queryFn: () => api.getGameStats() });
+  const solvedGames = gameStats?.wordsearch.solved ?? 0;
   const qc = useQueryClient();
   const today = useTodayKey();
 
@@ -188,6 +191,25 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
         }
       />
 
+      {/* Игры — узкой строкой, а не карточкой в ряд с тремя.
+          Те три отвечают числом про сегодняшний день: сколько привычек, сколько съедено,
+          сколько экрана. У игр такого числа нет и быть не должно — «собрано 12 полей» это не
+          про сегодня. Поставить их карточкой значило бы сказать, что играть надо было. */}
+      <Pressable
+        onPress={() => onOpen("games")}
+        accessibilityRole="button"
+        accessibilityLabel="Игры"
+        style={({ pressed }) => [styles.gamesRow, pressed && { opacity: 0.7 }]}
+      >
+        <Feather name="grid" size={15} color={colors.textMuted} />
+        <Text style={styles.gamesText}>
+          {solvedGames > 0
+            ? `Игры · собрано ${solvedGames} ${plural(solvedGames, ["поле", "поля", "полей"])}`
+            : "Игры · размяться головой на перерыве"}
+        </Text>
+        <Text style={styles.gamesChevron}>›</Text>
+      </Pressable>
+
       {/* Подсказка живёт здесь, и только здесь: главную открывают каждый раз, и это
           единственное на экране, что не является числом про тебя. */}
       <RotatingTip />
@@ -337,5 +359,17 @@ const styles = StyleSheet.create({
   hint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 3 },
   // Вторая строка светлая, а не серая: это не пояснение к числу выше, а своё число.
   extra: { color: colors.text, fontSize: 12, lineHeight: 16, marginTop: 4, fontVariant: ["tabular-nums"] },
+  gamesRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: colors.card,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    marginTop: 12,
+  },
+  gamesText: { color: colors.textMuted, fontSize: 12, flex: 1 },
+  gamesChevron: { color: colors.textMuted, fontSize: 18 },
   footnote: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 14 },
 });

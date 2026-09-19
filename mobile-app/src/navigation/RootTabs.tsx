@@ -29,6 +29,8 @@ import BalanceStatsScreen from "../screens/balance/StatsScreen";
 import UsageScreen from "../screens/screen/UsageScreen";
 import AppUsageScreen from "../screens/screen/AppUsageScreen";
 import HomeScreen from "../screens/HomeScreen";
+import GamesScreen from "../screens/games/GamesScreen";
+import WordSearchScreen from "../screens/games/WordSearchScreen";
 import SectionMenu, { type Section } from "./SectionMenu";
 import { CHANNEL_LABELS, type ReminderChannel } from "../notifications/reminders";
 
@@ -120,6 +122,20 @@ function BalanceTabs() {
  * раздел вёл себя как остальные два, а второго экрана в нём нет — приложение открывается
  * поверх, из списка.
  */
+/**
+ * «Игры» — раздел на перерыв.
+ *
+ * Как и «Экран», одна вкладка без панели внизу: игры открываются поверх, из списка. Панель с
+ * одной кнопкой — это полоска, которая ничего не переключает.
+ */
+function GameTabs() {
+  return (
+    <Tab.Navigator screenOptions={{ headerShown: false, tabBarStyle: { display: "none" } }}>
+      <Tab.Screen name="Игры" component={GamesScreen} />
+    </Tab.Navigator>
+  );
+}
+
 function ScreenTabs() {
   return (
     <Tab.Navigator
@@ -225,6 +241,8 @@ export default function RootTabs() {
               <Tabs />
             ) : section === "balance" ? (
               <BalanceTabs />
+            ) : section === "games" ? (
+              <GameTabs />
             ) : (
               <ScreenTabs />
             )
@@ -260,6 +278,7 @@ export default function RootTabs() {
         />
         {/* Год с двенадцатью месяцами — одна дверь, за которой и цели, и итоги. */}
         <Stack.Screen name="Goals" component={GoalsScreen} options={{ title: goalsScreenTitle() }} />
+        <Stack.Screen name="WordSearch" component={WordSearchScreen} options={{ title: "Найди слова" }} />
         {/* Заголовок называет месяц: экран открывается с любой клетки года, и «Цель» без
             имени оставляла бы вопрос, чья именно. */}
         <Stack.Screen
