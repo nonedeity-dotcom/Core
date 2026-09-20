@@ -71,6 +71,21 @@ export const TURNS: Record<Difficulty, number> = { easy: 0, normal: 2, hard: 4 }
  */
 export const CROSSINGS: Record<Difficulty, boolean> = { easy: false, normal: false, hard: true };
 
+/**
+ * Забивается ли поле словами целиком, без единой случайной буквы.
+ *
+ * Когда случайных букв нет, найденные слова закрашивают поле, и то, что осталось белым, —
+ * это ровно последнее слово. Оно выдаёт себя само, и конец партии перестаёт быть вычёсыванием
+ * поля по клеточке. На лёгком и среднем это то, что нужно.
+ *
+ * На сложном — нет: там случайные буквы и есть главная помеха, а поле 12×12, забитое
+ * словами без остатка, ещё и складывается далеко не всегда.
+ */
+export const FULL_FILL: Record<Difficulty, boolean> = { easy: true, normal: true, hard: false };
+
+/** Короче трёх букв слов в темах нет — по этому числу и судят, заполнима ли дырка. */
+const MIN_WORD = 3;
+
 /** Сколько слов прячется. Больше — не сложнее, а дольше: поле просто забивается плотнее. */
 export const WORD_COUNTS: Record<Difficulty, number> = { easy: 6, normal: 8, hard: 10 };
 
@@ -177,12 +192,22 @@ function carve(
   maxTurns: number,
   crossings: boolean,
   rnd: Rnd,
+  /**
+   * Запас шагов вглубь.
+   *
+   * Удачная укладка находится быстро — она возвращается на первом же подошедшем пути.
+   * Неудачная стоит дорого: чтобы честно сказать «сюда это слово не встанет», надо обойти
+   * всё дерево, а оно растёт как четыре в степени длины слова. На почти заполненном поле
+   * такие отказы идут сотнями подряд, и без запаса одно поле 10×10 считалось дольше минуты.
+   */
+  budget = { left: 800 },
 ): Cell[] | null {
   const used = new Set<string>();
   const path: Cell[] = [];
 
   const step = (index: number, dir: Dir | null, turnsLeft: number): boolean => {
     if (index === word.length) return true;
+    if (budget.left-- <= 0) return false;
     const cell = index === 0 ? start : { row: 0, col: 0 };
     if (index === 0) {
       if (!free(grid, cell, word[0], used, crossings)) return false;
@@ -238,12 +263,151 @@ function carve(
  * пропускается — поле с семью словами вместо восьми играется нормально, а поле, собранное
  * наполовину и зависшее, не играется вовсе.
  */
+/**
+ * Размеры пустых кусков поля — по сторонам клеток, потому что и слова ходят только так.
+ *
+ * Клетки здесь считаются числами, а не парами и не строками вида «3:7». Это не украшение:
+ * проверка гоняется тысячи раз за одно поле, и на строковых ключах она одна съедала секунды —
+ * миллионы коротких строк, каждую из которых надо создать и тут же выбросить.
+ *
+ * `stopAt` обрывает обход, как только нашёлся кусок меньше нужного: дальше считать незачем,
+ * ответ уже известен.
+ */
+function regionSizes(grid: string[][], stopAt = 0): number[] {
+  const size = grid.length;
+  const seen = new Uint8Array(size * size);
+  const stack = new Int32Array(size * size);
+  const sizes: number[] = [];
+  for (let start = 0; start < size * size; start++) {
+    if (seen[start] || grid[(start / size) | 0][start % size] !== "") continue;
+    let top = 0;
+    stack[top++] = start;
+    seen[start] = 1;
+    let count = 0;
+    while (top > 0) {
+      const index = stack[--top];
+      const r = (index / size) | 0;
+      const c = index % size;
+      count++;
+      if (c + 1 < size && !seen[index + 1] && grid[r][c + 1] === "") { seen[index + 1] = 1; stack[top++] = index + 1; }
+      if (c > 0 && !seen[index - 1] && grid[r][c - 1] === "") { seen[index - 1] = 1; stack[top++] = index - 1; }
+      if (r + 1 < size && !seen[index + size] && grid[r + 1][c] === "") { seen[index + size] = 1; stack[top++] = index + size; }
+      if (r > 0 && !seen[index - size] && grid[r - 1][c] === "") { seen[index - size] = 1; stack[top++] = index - size; }
+    }
+    sizes.push(count);
+    if (stopAt > 0 && count < stopAt) return sizes;
+  }
+  return sizes;
+}
+
+/**
+ * Поле, забитое словами без остатка.
+ *
+ * Перебор с откатом по той же схеме, что и укладка одного слова, только на этаж выше: берём
+ * самую верхнюю левую пустую клетку и пробуем начать с неё какое-нибудь слово. Не вышло —
+ * пробуем следующее; кончились слова — откатываемся и переигрываем предыдущее.
+ *
+ * Всё держится на одной отсечке: после каждой укладки пустота не должна распадаться на куски
+ * меньше трёх клеток. Дырка в одну-две клетки не заполнима ничем, и без этой проверки перебор
+ * находил её только на самом дне, перебрав до того тысячи заведомо мёртвых веток.
+ *
+ * Запас шагов ограничен, и это не перестраховка: восьмёрка на восемь ложится почти всегда, а
+ * вот редкая неудачная тема или размер могут не сойтись вовсе. Не сошлось — зовущий кладёт
+ * обычное поле со случайными буквами, и человек этого даже не заметит.
+ */
+function packFull(
+  grid: string[][],
+  words: string[],
+  difficulty: Difficulty,
+  rnd: Rnd,
+  budget = { left: 800 },
+): Placed[] | null {
+  const size = grid.length;
+  const dirs = DIRECTIONS[difficulty];
+  const turns = TURNS[difficulty];
+  const used = new Set<string>();
+  const placed: Placed[] = [];
+
+  const firstEmpty = (): Cell | null => {
+    for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (grid[r][c] === "") return { row: r, col: c };
+    return null;
+  };
+
+  const step = (): boolean => {
+    const start = firstEmpty();
+    if (!start) return true;
+    // Запас тратится и здесь, а не только на поиск пути. Без этого дерево самой упаковки
+    // росло даром: удачная укладка стоит несколько шагов, откат — ноль, и перебор успевал
+    // обойти миллионы веток, не потратив запаса. Одно поле 10×10 считалось шестнадцать
+    // секунд и всё-таки сходилось — на телефоне это застывший экран.
+    if (budget.left-- <= 0) return false;
+
+    /*
+     * Слова отбираются по размеру дырки, а не перебираются все подряд, и это разница между
+     * «считает полсекунды» и «не досчитывает вовсе». В кусок из пяти клеток слово на семь
+     * букв не влезет никогда, а слово на четыре оставит за собой одну клетку, которую уже
+     * ничем не закрыть. Пробовать их обоих — чистая трата перебора.
+     *
+     * Длинные идут первыми: чем крупнее кусок, тем меньше после него обрывков.
+     */
+    const room = regionSizes(grid)[0];
+    const fitting = shuffled(
+      words.filter((w) => !used.has(w) && w.length <= room && (room - w.length === 0 || room - w.length >= MIN_WORD)),
+      rnd,
+    ).sort((a, b) => b.length - a.length);
+
+    for (const word of fitting) {
+      // Поворотов столько, сколько позволяет сложность: здесь они не для красоты, а для того,
+      // чтобы слово могло обойти уже занятое и не оставить за собой дырку.
+      const cells = carve(grid, word, start, dirs, turns, false, rnd);
+      if (!cells) continue;
+      cells.forEach((cell, i) => {
+        grid[cell.row][cell.col] = word[i];
+      });
+      if (regionSizes(grid, MIN_WORD).every((n) => n >= MIN_WORD)) {
+        used.add(word);
+        placed.push({ word, cells });
+        if (step()) return true;
+        used.delete(word);
+        placed.pop();
+      }
+      cells.forEach((cell) => {
+        grid[cell.row][cell.col] = "";
+      });
+      if (budget.left <= 0) return false;
+    }
+    return false;
+  };
+
+  return step() ? placed : null;
+}
+
 export function makePuzzle(words: string[], difficulty: Difficulty, rnd: Rnd): Puzzle {
   const size = SIZES[difficulty];
   const dirs = DIRECTIONS[difficulty];
   const grid: string[][] = Array.from({ length: size }, () => Array.from({ length: size }, () => ""));
 
-  const usable = words.filter((w) => w.length >= 3 && w.length <= size);
+  const usable = words.filter((w) => w.length >= MIN_WORD && w.length <= size);
+
+  if (FULL_FILL[difficulty]) {
+    /*
+     * Три попытки с чистого листа вместо одной длинной.
+     *
+     * Упаковка проваливается почти всегда из-за неудачного слова в самом начале: оно легло
+     * поперёк поля, и дальше уже ничего не сходится, сколько ни перебирай хвост. Начать
+     * заново с другим жребием дешевле, чем доказывать, что из этого начала выхода нет, — и
+     * помогает заметно чаще. Три попытки по восемьсот шагов вытягивают столько же, сколько
+     * одна на две с половиной тысячи, и укладываются в полтораста миллисекунд.
+     */
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const packed = packFull(grid, usable, difficulty, rnd);
+      if (packed) return { size, difficulty, grid, words: packed };
+      // Сетка могла остаться исписанной откатами не до конца — чистим перед следующей
+      // попыткой и перед обычной укладкой.
+      for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) grid[r][c] = "";
+    }
+  }
+
   const chosen = shuffled(usable, rnd)
     .slice(0, WORD_COUNTS[difficulty] * 3)
     .sort((a, b) => b.length - a.length)
