@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, Pressable, ScrollView, StyleSheet, type LayoutChangeEvent } from "react-native";
+import { View, Text, Pressable, ScrollView, StatusBar, StyleSheet, type LayoutChangeEvent } from "react-native";
 import Svg, { Polyline } from "react-native-svg";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Feather } from "@expo/vector-icons";
@@ -35,7 +35,11 @@ const DIFFICULTIES: Difficulty[] = ["easy", "normal", "hard"];
  * умеет поворачивать и складываться в «П» или зигзаг, а у такой фигуры концы ничего не
  * говорят о середине. Диагоналей нет ни у слов, ни у пути — только по сторонам клеток.
  */
-export default function WordSearchScreen() {
+export default function WordSearchScreen({
+  navigation,
+}: {
+  navigation: { goBack: () => void; setOptions: (options: { headerShown: boolean }) => void };
+}) {
   const qc = useQueryClient();
   const [theme, setTheme] = useState<WordTheme>(WORD_THEMES[0]);
   const [difficulty, setDifficulty] = useState<Difficulty>("normal");
@@ -85,6 +89,18 @@ export default function WordSearchScreen() {
     return () => clearInterval(id);
   }, [playing, timed, won]);
 
+  /*
+   * Во время партии шапка навигации убирается.
+   *
+   * Поле — квадрат, и всё, что забирает высоту, забирает его сторону: шапка в полсотни
+   * точек на телефоне превращается в заметно более мелкие буквы. Своя строка сверху уже, и
+   * стрелка «назад» в ней та же самая.
+   */
+  useEffect(() => {
+    navigation.setOptions({ headerShown: !playing });
+    return () => navigation.setOptions({ headerShown: true });
+  }, [navigation, playing]);
+
   useEffect(() => {
     if (!just) return;
     const id = setTimeout(() => setJust(null), 2200);
@@ -119,6 +135,20 @@ export default function WordSearchScreen() {
   const cellSize = board > 0 ? board / puzzle.size : 0;
 
   /**
+   * Сторона поля — меньшая из сторон свободного места.
+   *
+   * Поле квадратное, и раньше оно считалось по ширине: на высоком экране под ним оставалась
+   * пустая треть, а на низком не помещались кнопки. Теперь берётся то, что меньше, и поле
+   * занимает всё, что ему оставили, не больше и не меньше.
+   */
+  const onSpaceLayout = (e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    const side = Math.floor(Math.min(width, height));
+    if (side > 0 && side !== board) setBoard(side);
+    measure();
+  };
+
+  /**
    * Где поле лежит на экране — в координатах окна.
    *
    * Считать клетку из `locationX` нельзя, и это выяснилось на проверке: как только палец
@@ -134,11 +164,6 @@ export default function WordSearchScreen() {
   const measure = () => boardRef.current?.measureInWindow((x, y) => {
     origin.current = { x, y };
   });
-  const onBoardLayout = (e: LayoutChangeEvent) => {
-    setBoard(e.nativeEvent.layout.width);
-    measure();
-  };
-
   const cellAt = (pageX: number, pageY: number): Cell | null => {
     if (cellSize <= 0) return null;
     const col = Math.floor((pageX - origin.current.x) / cellSize);
@@ -253,13 +278,18 @@ export default function WordSearchScreen() {
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      onScroll={measure}
-      scrollEventThrottle={16}
-    >
+    <View style={[styles.container, styles.play]}>
+      {/* Своя строка вместо шапки: стрелка та же, а высоты забирает вдвое меньше. */}
       <View style={styles.statusRow}>
+        <Pressable
+          onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Назад"
+          hitSlop={12}
+          style={({ pressed }) => pressed && styles.dimmed}
+        >
+          <Feather name="arrow-left" size={20} color={colors.textMuted} />
+        </Pressable>
         <Text style={[styles.status, just && styles.statusFound]}>
           {won
             ? "Поле собрано"
@@ -270,17 +300,22 @@ export default function WordSearchScreen() {
         {timed && <Text style={styles.clock}>{formatSeconds(seconds)}</Text>}
       </View>
 
+      {/* Всё, что осталось между строкой сверху и кнопками снизу, отдаётся полю. */}
+      <View style={styles.space} onLayout={onSpaceLayout}>
       <View
-        style={styles.board}
+        style={[styles.board, { width: board, height: board }]}
         accessibilityLabel="Поле"
-        onLayout={onBoardLayout}
+        /* Меряется тогда, когда поле уже получило свой размер и место. Раньше замер шёл из
+           раскладки внешнего блока — то есть до того, как поле внутри него встало, — и
+           палец попадал не в те клетки: путь строился, а слова не находились. */
+        onLayout={measure}
         onStartShouldSetResponder={() => !won}
         onMoveShouldSetResponder={() => !won}
-        /* Поле не отдаёт жест прокрутке.
-           Без этого выделение обрывалось на второй клетке: палец идёт вниз по столбцу, список
-           под полем прокручивается, и ScrollView забирает жест себе — а поле получает
-           «прервано» и честно засчитывает те две буквы, которые успело. Выглядело как «слово
-           не находится», причём через раз. */
+        /* Поле не отдаёт жест никому.
+           Осталось с тех пор, когда под полем был прокручиваемый список: палец шёл вниз по
+           столбцу, список ехал, прокрутка забирала жест себе — а поле получало «прервано» и
+           честно засчитывало те две буквы, которые успело. Списка больше нет, но строка
+           остаётся: отдавать жест посреди слова не за чем и некому. */
         onResponderTerminationRequest={() => false}
         ref={boardRef}
         onResponderGrant={(e) => {
@@ -332,13 +367,15 @@ export default function WordSearchScreen() {
           <View key={r} style={styles.boardRow}>
             {row.map((letter, c) => (
               <View key={`${r}:${c}`} style={[styles.cell, { width: cellSize, height: cellSize }]}>
-                <Text style={[styles.letter, cellSize > 0 && { fontSize: Math.min(20, cellSize * 0.5) }]}>
+                <Text style={[styles.letter, cellSize > 0 && { fontSize: Math.min(30, cellSize * 0.5) }]}>
                   {letter}
                 </Text>
               </View>
             ))}
           </View>
         ))}
+      </View>
+
       </View>
 
       {won && (
@@ -359,7 +396,7 @@ export default function WordSearchScreen() {
           onPress={start}
           accessibilityRole="button"
           accessibilityLabel="Новое поле"
-          style={({ pressed }) => [styles.primary, styles.flex, pressed && styles.dimmed]}
+          style={({ pressed }) => [styles.primary, styles.primaryFlat, styles.flex, pressed && styles.dimmed]}
         >
           <Text style={styles.primaryText}>Новое поле</Text>
         </Pressable>
@@ -372,7 +409,7 @@ export default function WordSearchScreen() {
           <Text style={styles.secondaryText}>Сменить</Text>
         </Pressable>
       </View>
-    </ScrollView>
+    </View>
   );
 }
 
@@ -428,8 +465,17 @@ const styles = StyleSheet.create({
   chipText: { color: colors.textMuted, fontSize: 13 },
   chipTextOn: { color: colors.accentGreen, fontWeight: "600" },
 
-  statusRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
-  status: { color: colors.text, fontSize: 14, fontWeight: "600" },
+  /*
+   * Отступ сверху — под строку состояния Android.
+   *
+   * Шапки навигации на время игры нет, а значит, нет и того, кто отодвигал содержимое от
+   * часов и значка батареи. `StatusBar.currentHeight` берётся напрямую: провайдера
+   * безопасных зон в приложении нет, а на Android это ровно то же число.
+   */
+  play: { paddingTop: (StatusBar.currentHeight ?? 0) + 8, paddingHorizontal: 12, paddingBottom: 12 },
+  space: { flex: 1, alignItems: "center", justifyContent: "center", marginVertical: 10 },
+  statusRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  status: { color: colors.text, fontSize: 14, fontWeight: "600", flex: 1 },
   statusFound: { color: colors.accentGreen },
   clock: { color: colors.textMuted, fontSize: 14, fontVariant: ["tabular-nums"] },
 
@@ -453,20 +499,20 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    marginTop: 18,
+    marginBottom: 10,
   },
   wonText: { color: colors.text, fontSize: 13, flex: 1 },
 
-  actions: { flexDirection: "row", gap: 10, marginTop: 18 },
+  actions: { flexDirection: "row", gap: 10 },
   flex: { flex: 1 },
   primary: { backgroundColor: colors.accent, borderRadius: 14, paddingVertical: 13, alignItems: "center", marginTop: 18 },
+  primaryFlat: { marginTop: 0 },
   primaryText: { color: colors.bg, fontSize: 14, fontWeight: "600" },
   secondary: {
     borderRadius: 14,
     paddingVertical: 13,
     paddingHorizontal: 18,
     alignItems: "center",
-    marginTop: 18,
     borderWidth: 1,
     borderColor: colors.cardBorder,
   },
