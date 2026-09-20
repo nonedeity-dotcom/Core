@@ -537,11 +537,18 @@ function corner(from: Cell, to: Cell, first: "row" | "col"): Cell[] | null {
  * быть таким же. Угол пробуется в обе стороны: одна из них может упереться в клетку, которая
  * в этом слове уже занята.
  *
+ * Закрытые клетки — те, где уже лежит найденное слово, — путь не пропускают вовсе: ни как
+ * цель, ни как середину достроенного угла. Закрывать их или нет, решает сложность. Там, где
+ * слова делят буквы, закрывать нельзя: через найденную букву проходит ещё не найденное
+ * слово, и запрет сделал бы его недостижимым. Там, где не делят, проводить пальцем по уже
+ * разгаданному незачем — это только путает.
+ *
  * Всё остальное — клетка за краем, путь, наступающий сам на себя, — просто игнорируется.
  * Путь замирает и ждёт, а не ломается.
  */
-export function extendPath(path: Cell[], cell: Cell): Cell[] {
-  if (path.length === 0) return [cell];
+export function extendPath(path: Cell[], cell: Cell, blocked?: (cell: Cell) => boolean): Cell[] {
+  const shut = (c: Cell) => blocked !== undefined && blocked(c);
+  if (path.length === 0) return shut(cell) ? [] : [cell];
   const last = path[path.length - 1];
   if (sameCell(last, cell)) return path;
 
@@ -550,7 +557,7 @@ export function extendPath(path: Cell[], cell: Cell): Cell[] {
   for (const first of ["row", "col"] as const) {
     const route = adjacent(last, cell) ? [cell] : corner(last, cell, first);
     if (!route) continue;
-    if (route.some((step) => path.some((c) => sameCell(c, step)))) continue;
+    if (route.some((step) => shut(step) || path.some((c) => sameCell(c, step)))) continue;
     return [...path, ...route];
   }
   return path;

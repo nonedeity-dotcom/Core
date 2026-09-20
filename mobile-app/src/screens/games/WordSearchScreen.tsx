@@ -9,6 +9,7 @@ import { plural } from "../../lib/plural";
 import { todayKey } from "../../lib/date";
 import { WORD_THEMES, type WordTheme } from "../../content/wordThemes";
 import {
+  CROSSINGS,
   DIFFICULTY_HINTS,
   DIFFICULTY_LABELS,
   WORD_COLORS,
@@ -101,6 +102,16 @@ export default function WordSearchScreen() {
   };
 
   const foundWords = found.map((f) => f.word);
+  /*
+   * Клетки, через которые палец не пройдёт.
+   *
+   * Только там, где слова не делят буквы. На сложном делят, и закрывать найденное нельзя:
+   * через его букву проходит ещё не найденное слово, и запрет сделал бы его недостижимым.
+   */
+  const closed = CROSSINGS[difficulty]
+    ? null
+    : new Set(found.flatMap((f) => f.cells.map((c) => `${c.row}:${c.col}`)));
+  const isClosed = (c: Cell) => closed !== null && closed.has(`${c.row}:${c.col}`);
 
   // Ширина поля меряется по факту: клетка — это ширина, делённая на размер, и считать её из
   // ширины экрана значило бы гадать про отступы.
@@ -274,13 +285,13 @@ export default function WordSearchScreen() {
         ref={boardRef}
         onResponderGrant={(e) => {
           const cell = cellAt(e.nativeEvent.pageX, e.nativeEvent.pageY);
-          setPath(cell ? [cell] : []);
+          setPath(cell ? extendPath([], cell, isClosed) : []);
         }}
         onResponderMove={(e) => {
           const cell = cellAt(e.nativeEvent.pageX, e.nativeEvent.pageY);
           // Палец за краем поля — путь просто замирает и ждёт, а не рвётся.
           if (!cell) return;
-          const next = extendPath(pathRef.current, cell);
+          const next = extendPath(pathRef.current, cell, isClosed);
           if (next !== pathRef.current) setPath(next);
         }}
         onResponderRelease={release}
