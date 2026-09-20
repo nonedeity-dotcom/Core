@@ -17,30 +17,32 @@ export interface Dir {
   dc: number;
 }
 
-/** Куда могут идти слова. Чем сложнее, тем больше направлений — и назад тоже. */
+/**
+ * Куда могут идти слова. Только по клеткам, без диагоналей.
+ *
+ * Диагонали убраны совсем и намеренно. Слово, которое поворачивает, и слово, которое идёт
+ * наискось, — это разные вещи: первое складывается в «П», «Г», зигзаг, и его видно как
+ * фигуру; второе просто косая линия, и вместе с поворотами оно превращает поле в кашу, где
+ * не понять, куда слово пошло дальше.
+ */
 export const DIRECTIONS: Record<Difficulty, Dir[]> = {
-  // Только вправо и вниз: так читают, и искать почти не приходится — это и есть «лёгкий».
+  // Вправо и вниз: так читают, и искать почти не приходится — это и есть «лёгкий».
   easy: [
     { dr: 0, dc: 1 },
     { dr: 1, dc: 0 },
   ],
-  // Плюс две диагонали вниз.
+  // Все четыре стороны: слово может пойти и влево, и вверх.
   normal: [
     { dr: 0, dc: 1 },
     { dr: 1, dc: 0 },
-    { dr: 1, dc: 1 },
-    { dr: 1, dc: -1 },
+    { dr: 0, dc: -1 },
+    { dr: -1, dc: 0 },
   ],
-  // Все восемь: слово может идти справа налево и снизу вверх.
   hard: [
     { dr: 0, dc: 1 },
     { dr: 1, dc: 0 },
-    { dr: 1, dc: 1 },
-    { dr: 1, dc: -1 },
     { dr: 0, dc: -1 },
     { dr: -1, dc: 0 },
-    { dr: -1, dc: -1 },
-    { dr: -1, dc: 1 },
   ],
 };
 
@@ -50,10 +52,11 @@ export const SIZES: Record<Difficulty, number> = { easy: 8, normal: 10, hard: 12
  * Сколько раз слово может повернуть.
  *
  * Прямое слово — это путь с нулём поворотов, поэтому отдельного случая для него нет: вся
- * разница между лёгким и сложным здесь, в одном числе. Больше трёх поворотов на восьми
- * буквах превращает слово в клубок, который не столько ищут, сколько распутывают.
+ * разница между лёгким и сложным здесь, в одном числе. Два поворота — это уже «П» или
+ * зигзаг; четыре — змейка. Больше не нужно: слово перестаёт быть фигурой и становится
+ * клубком, который не столько ищут, сколько распутывают.
  */
-export const TURNS: Record<Difficulty, number> = { easy: 0, normal: 1, hard: 3 };
+export const TURNS: Record<Difficulty, number> = { easy: 0, normal: 2, hard: 4 };
 
 /** Сколько слов прячется. Больше — не сложнее, а дольше: поле просто забивается плотнее. */
 export const WORD_COUNTS: Record<Difficulty, number> = { easy: 6, normal: 8, hard: 10 };
@@ -79,8 +82,8 @@ export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
 
 export const DIFFICULTY_HINTS: Record<Difficulty, string> = {
   easy: "8×8, слова прямые — вправо и вниз",
-  normal: "10×10, диагонали и один поворот",
-  hard: "12×12, любая сторона и до трёх поворотов",
+  normal: "10×10, любая сторона и до двух поворотов — «П», «Г»",
+  hard: "12×12, до четырёх поворотов — слово вьётся змейкой",
 };
 
 export interface Cell {
@@ -172,11 +175,21 @@ function carve(
     }
 
     const previous = path[path.length - 1];
-    // Идти прямо всегда можно; поворачивать — пока есть запас поворотов. Прямое направление
-    // пробуется первым, и это не мелочь: без него поворот случался почти на каждой букве, и
-    // все слова на поле выходили кручёными. Ровное слово рядом с кручёным — это разнообразие,
-    // а поле, где всё вьётся, просто утомляет.
-    const options = turnsLeft > 0 ? [dir as Dir, ...shuffled(dirs, rnd)] : [dir as Dir];
+    /*
+     * Идти прямо всегда можно; поворачивать — пока есть запас.
+     *
+     * Что пробовать первым, решает жребий, и он взвешен: чем больше поворотов осталось
+     * потратить и чем меньше букв впереди, тем вероятнее повернуть прямо сейчас. Без этого
+     * запас так и оставался неистраченным — прямое направление пробовалось первым и почти
+     * всегда проходило, так что слово с разрешёнными четырьмя поворотами укладывалось
+     * ровной палкой. «П» при этом не выпадала почти никогда, а она и есть то, ради чего
+     * повороты заводились.
+     */
+    const lettersLeft = Math.max(1, word.length - index);
+    const wantTurn = turnsLeft > 0 && rnd() < turnsLeft / lettersLeft;
+    const others = shuffled(dirs, rnd).filter((d) => !dir || d.dr !== dir.dr || d.dc !== dir.dc);
+    const options =
+      turnsLeft <= 0 ? [dir as Dir] : wantTurn ? [...others, dir as Dir] : [dir as Dir, ...others];
     for (const option of options) {
       const turned = !dir || option.dr !== dir.dr || option.dc !== dir.dc;
       if (turned && turnsLeft <= 0) continue;
@@ -243,25 +256,6 @@ export function makePuzzle(words: string[], difficulty: Difficulty, rnd: Rnd): P
   return { size, difficulty, grid, words: placed };
 }
 
-/**
- * Клетки от первой до последней — если между ними прямая.
- *
- * Пальцу больше не хватает двух концов: слово может повернуть, и путь приходится вести по
- * буквам. Но прямая всё равно нужна — ею затыкаются дыры, когда палец едет быстрее, чем
- * приходят события, и перескакивает через клетку.
- */
-export function lineBetween(from: Cell, to: Cell): Cell[] | null {
-  const dr = to.row - from.row;
-  const dc = to.col - from.col;
-  if (dr === 0 && dc === 0) return [from];
-  const straight = dr === 0 || dc === 0 || Math.abs(dr) === Math.abs(dc);
-  if (!straight) return null;
-  const steps = Math.max(Math.abs(dr), Math.abs(dc));
-  const stepR = Math.sign(dr);
-  const stepC = Math.sign(dc);
-  return Array.from({ length: steps + 1 }, (_, i) => ({ row: from.row + stepR * i, col: from.col + stepC * i }));
-}
-
 export const sameCell = (a: Cell, b: Cell): boolean => a.row === b.row && a.col === b.col;
 
 /** Буквы вдоль выделения, в порядке ведения пальца. */
@@ -313,12 +307,35 @@ export function seeded(seed: number): Rnd {
   };
 }
 
-/** Соседняя ли клетка — по-королевски, считая диагонали. */
-export const adjacent = (a: Cell, b: Cell): boolean => {
-  const dr = Math.abs(a.row - b.row);
-  const dc = Math.abs(a.col - b.col);
-  return dr <= 1 && dc <= 1 && dr + dc > 0;
-};
+/** Соседняя ли клетка — по стороне. Диагональ соседством не считается: слова так не ходят. */
+export const adjacent = (a: Cell, b: Cell): boolean =>
+  Math.abs(a.row - b.row) + Math.abs(a.col - b.col) === 1;
+
+/**
+ * Дорога от одной клетки к другой углом: сперва по строке, потом по столбцу (или наоборот).
+ *
+ * Нужна затем, что палец ходит по диагонали, а слова — нет. Перевёл палец на клетку наискось —
+ * и без этого путь бы встал: соседней она не считается, прямой между ними нет. Угол достраивает
+ * недостающую клетку сам, и ведение остаётся непрерывным, каким оно и было на самом деле.
+ */
+function corner(from: Cell, to: Cell, first: "row" | "col"): Cell[] | null {
+  const out: Cell[] = [];
+  let cursor = from;
+  const stepTo = (target: Cell) => {
+    while (cursor.row !== target.row || cursor.col !== target.col) {
+      cursor = {
+        row: cursor.row + Math.sign(target.row - cursor.row),
+        col: cursor.col + Math.sign(target.col - cursor.col),
+      };
+      out.push(cursor);
+      if (out.length > 64) return false;
+    }
+    return true;
+  };
+  const bend = first === "row" ? { row: from.row, col: to.col } : { row: to.row, col: from.col };
+  if (!stepTo(bend) || !stepTo(to)) return null;
+  return out;
+}
 
 /**
  * Путь, дополненный новой клеткой, — или прежний, если она не годится.
@@ -328,11 +345,13 @@ export const adjacent = (a: Cell, b: Cell): boolean => {
  * Возврат на предпоследнюю клетку стирает последнюю. Иначе исправить промах можно было бы
  * только отпустив палец и начав слово заново — а промахиваются на повороте постоянно.
  *
- * Прыжок через клетку заполняется прямой. Палец едет быстрее, чем приходят события, и
- * пропуск середины не должен рвать путь: человек вёл непрерывно, и путь должен быть таким же.
+ * Разрыв достраивается углом. Палец едет быстрее, чем приходят события, и срезает повороты
+ * наискось; ни то, ни другое не должно рвать путь — человек вёл непрерывно, и путь должен
+ * быть таким же. Угол пробуется в обе стороны: одна из них может упереться в клетку, которая
+ * в этом слове уже занята.
  *
- * Всё остальное — клетка не рядом, уже занята в этом же пути, за краем — просто
- * игнорируется. Путь замирает и ждёт, а не ломается.
+ * Всё остальное — клетка за краем, путь, наступающий сам на себя, — просто игнорируется.
+ * Путь замирает и ждёт, а не ломается.
  */
 export function extendPath(path: Cell[], cell: Cell): Cell[] {
   if (path.length === 0) return [cell];
@@ -341,13 +360,11 @@ export function extendPath(path: Cell[], cell: Cell): Cell[] {
 
   if (path.length >= 2 && sameCell(path[path.length - 2], cell)) return path.slice(0, -1);
 
-  const line = adjacent(last, cell) ? [last, cell] : lineBetween(last, cell);
-  if (!line) return path;
-
-  const out = [...path];
-  for (const step of line.slice(1)) {
-    if (out.some((c) => sameCell(c, step))) return path;
-    out.push(step);
+  for (const first of ["row", "col"] as const) {
+    const route = adjacent(last, cell) ? [cell] : corner(last, cell, first);
+    if (!route) continue;
+    if (route.some((step) => path.some((c) => sameCell(c, step)))) continue;
+    return [...path, ...route];
   }
-  return out;
+  return path;
 }
