@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, Pressable, ScrollView, StyleSheet, type LayoutChangeEvent } from "react-native";
+import Svg, { Polyline } from "react-native-svg";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Feather } from "@expo/vector-icons";
 import { api } from "../../api/client";
@@ -10,14 +11,13 @@ import { WORD_THEMES, type WordTheme } from "../../content/wordThemes";
 import {
   DIFFICULTY_HINTS,
   DIFFICULTY_LABELS,
+  WORD_COLORS,
   allFound,
+  extendPath,
   findMatch,
-  lineBetween,
   makePuzzle,
-  sameCell,
   type Cell,
   type Difficulty,
-  type Puzzle,
 } from "../../lib/games/wordsearch";
 import { formatSeconds, recordKey, withSolved, type GameStats } from "../../lib/games/stats";
 
@@ -53,24 +53,27 @@ export default function WordSearchScreen() {
   // слово положили, — а это, как выяснилось, не всегда одно и то же.
   const [found, setFound] = useState<{ word: string; cells: Cell[] }[]>([]);
   /**
-   * Концы выделения живут в ссылках, а состояние — только для отрисовки.
+   * Путь пальца живёт в ссылке, а состояние — только для отрисовки.
    *
    * События движения приходят пачкой и быстрее, чем React успевает перерисовать: несколько
-   * первых видели `from` ещё пустым — тем, каким он был до нажатия, — и молча ничего не
+   * первых видели путь ещё пустым — таким, каким он был до нажатия, — и молча ничего не
    * делали. Палец при этом уже ехал по буквам. Выглядело как «провёл слово, а оно не
    * засчиталось», и каждый раз не то же самое, потому что зависело от того, успел ли кадр.
    */
-  const fromRef = useRef<Cell | null>(null);
-  const toRef = useRef<Cell | null>(null);
-  const [from, setFrom] = useState<Cell | null>(null);
-  const [to, setTo] = useState<Cell | null>(null);
-  const setEnds = (a: Cell | null, b: Cell | null) => {
-    fromRef.current = a;
-    toRef.current = b;
-    setFrom(a);
-    setTo(b);
+  const pathRef = useRef<Cell[]>([]);
+  const [path, setPathState] = useState<Cell[]>([]);
+  const setPath = (next: Cell[]) => {
+    pathRef.current = next;
+    setPathState(next);
   };
   const [seconds, setSeconds] = useState(0);
+  /**
+   * Последнее найденное слово, на пару секунд.
+   *
+   * Список под полем убран, и без него нечем сказать, что именно засчиталось: полоса
+   * появилась, а какое слово — догадывайся. Одна строка вместо списка из десяти.
+   */
+  const [just, setJust] = useState<string | null>(null);
   const [won, setWon] = useState<{ record: boolean } | null>(null);
 
   // Секундомер идёт, пока поле не собрано. Без времени он просто не заводится — на экране
@@ -81,19 +84,23 @@ export default function WordSearchScreen() {
     return () => clearInterval(id);
   }, [playing, timed, won]);
 
+  useEffect(() => {
+    if (!just) return;
+    const id = setTimeout(() => setJust(null), 2200);
+    return () => clearTimeout(id);
+  }, [just]);
+
   const start = () => {
     setSeed(Math.floor(Math.random() * 2 ** 31));
     setFound([]);
     setSeconds(0);
     setWon(null);
-    setEnds(null, null);
+    setJust(null);
+    setPath([]);
     setPlaying(true);
   };
 
-  const selection = from && to ? lineBetween(from, to) : null;
-  const selected = new Set((selection ?? []).map((c) => `${c.row}:${c.col}`));
   const foundWords = found.map((f) => f.word);
-  const foundCells = new Set(found.flatMap((f) => f.cells.map((c) => `${c.row}:${c.col}`)));
 
   // Ширина поля меряется по факту: клетка — это ширина, делённая на размер, и считать её из
   // ширины экрана значило бы гадать про отступы.
@@ -138,13 +145,13 @@ export default function WordSearchScreen() {
    * причём каждый раз разное.
    */
   const release = () => {
-    const line =
-      fromRef.current && toRef.current ? lineBetween(fromRef.current, toRef.current) : null;
-    setEnds(null, null);
-    if (!line) return;
+    const line = pathRef.current;
+    setPath([]);
+    if (line.length < 2) return;
     const hit = findMatch(puzzle, line);
     if (!hit) return;
     setFound((prev) => (prev.some((f) => f.word === hit) ? prev : [...prev, { word: hit, cells: line }]));
+    setJust(hit);
   };
 
   // Конец поля проверяется отдельно, а не внутри обновления списка: внутри пришлось бы
@@ -169,8 +176,9 @@ export default function WordSearchScreen() {
     return (
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <Text style={styles.intro}>
-          В поле спрятаны слова по выбранной теме. Веди пальцем от первой буквы к последней —
-          по строке, столбцу или диагонали. В любую сторону: справа налево тоже считается.
+          В поле спрятаны слова по выбранной теме — какие именно, не сказано, тема и есть
+          подсказка. Веди пальцем по буквам: слово может идти прямо, а может повернуть по
+          дороге. В любую сторону — справа налево и снизу вверх тоже считается.
         </Text>
 
         <Text style={styles.label}>Тема</Text>
@@ -241,10 +249,12 @@ export default function WordSearchScreen() {
       scrollEventThrottle={16}
     >
       <View style={styles.statusRow}>
-        <Text style={styles.status}>
+        <Text style={[styles.status, just && styles.statusFound]}>
           {won
             ? "Поле собрано"
-            : `Осталось ${left} ${plural(left, ["слово", "слова", "слов"])}`}
+            : just
+              ? just
+              : `Осталось ${left} ${plural(left, ["слово", "слова", "слов"])}`}
         </Text>
         {timed && <Text style={styles.clock}>{formatSeconds(seconds)}</Text>}
       </View>
@@ -264,62 +274,60 @@ export default function WordSearchScreen() {
         ref={boardRef}
         onResponderGrant={(e) => {
           const cell = cellAt(e.nativeEvent.pageX, e.nativeEvent.pageY);
-          setEnds(cell, cell);
+          setPath(cell ? [cell] : []);
         }}
         onResponderMove={(e) => {
           const cell = cellAt(e.nativeEvent.pageX, e.nativeEvent.pageY);
-          const start = fromRef.current;
-          // Держим прошлое положение, пока палец за краем или на кривой: иначе выделение
-          // мигает и рвётся на каждом дрожании руки.
-          if (!cell || !start) return;
-          if (toRef.current && sameCell(cell, toRef.current)) return;
-          if (!lineBetween(start, cell)) return;
-          setEnds(start, cell);
+          // Палец за краем поля — путь просто замирает и ждёт, а не рвётся.
+          if (!cell) return;
+          const next = extendPath(pathRef.current, cell);
+          if (next !== pathRef.current) setPath(next);
         }}
         onResponderRelease={release}
         onResponderTerminate={release}
       >
+        {/* Полосы рисуются под буквами: каждое найденное слово — своя, своего цвета, и
+            повороты видно вместе с ней. Заливка клеток, которая была раньше, сливала два
+            соседних слова в одно пятно. */}
+        {cellSize > 0 && (
+          <Svg width={board} height={board} style={StyleSheet.absoluteFill} pointerEvents="none">
+            {found.map((f, i) => (
+              <Polyline
+                key={f.word}
+                points={points(f.cells, cellSize)}
+                stroke={WORD_COLORS[i % WORD_COLORS.length]}
+                strokeWidth={cellSize * 0.74}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+                opacity={0.45}
+              />
+            ))}
+            {path.length > 1 && (
+              <Polyline
+                points={points(path, cellSize)}
+                stroke={colors.text}
+                strokeWidth={cellSize * 0.74}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+                opacity={0.22}
+              />
+            )}
+          </Svg>
+        )}
+
         {puzzle.grid.map((row, r) => (
           <View key={r} style={styles.boardRow}>
-            {row.map((letter, c) => {
-              const key = `${r}:${c}`;
-              const isFound = foundCells.has(key);
-              const isSelected = selected.has(key);
-              return (
-                <View
-                  key={key}
-                  style={[
-                    styles.cell,
-                    { width: cellSize, height: cellSize },
-                    isFound && styles.cellFound,
-                    isSelected && styles.cellSelected,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.letter,
-                      cellSize > 0 && { fontSize: Math.min(20, cellSize * 0.5) },
-                      (isFound || isSelected) && styles.letterOn,
-                    ]}
-                  >
-                    {letter}
-                  </Text>
-                </View>
-              );
-            })}
+            {row.map((letter, c) => (
+              <View key={`${r}:${c}`} style={[styles.cell, { width: cellSize, height: cellSize }]}>
+                <Text style={[styles.letter, cellSize > 0 && { fontSize: Math.min(20, cellSize * 0.5) }]}>
+                  {letter}
+                </Text>
+              </View>
+            ))}
           </View>
         ))}
-      </View>
-
-      <View style={styles.wordList}>
-        {puzzle.words.map((p) => {
-          const done = foundWords.includes(p.word);
-          return (
-            <Text key={p.word} style={[styles.word, done && styles.wordDone]}>
-              {p.word}
-            </Text>
-          );
-        })}
       </View>
 
       {won && (
@@ -370,6 +378,11 @@ function Chip({ on, onPress, children }: { on: boolean; onPress: () => void; chi
   );
 }
 
+/** Центры клеток пути — в том виде, в каком их ждёт Polyline. */
+function points(cells: Cell[], cellSize: number): string {
+  return cells.map((c) => `${c.col * cellSize + cellSize / 2},${c.row * cellSize + cellSize / 2}`).join(" ");
+}
+
 /** Тот же генератор, что и в модуле, — завёрнут здесь, чтобы экран не знал про его внутренности. */
 function seedRnd(seed: number): () => number {
   let s = seed >>> 0 || 1;
@@ -406,6 +419,7 @@ const styles = StyleSheet.create({
 
   statusRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
   status: { color: colors.text, fontSize: 14, fontWeight: "600" },
+  statusFound: { color: colors.accentGreen },
   clock: { color: colors.textMuted, fontSize: 14, fontVariant: ["tabular-nums"] },
 
   board: {
@@ -418,14 +432,7 @@ const styles = StyleSheet.create({
   },
   boardRow: { flexDirection: "row" },
   cell: { alignItems: "center", justifyContent: "center" },
-  cellFound: { backgroundColor: "rgba(143,184,154,0.28)" },
-  cellSelected: { backgroundColor: colors.accent },
   letter: { color: colors.text, fontWeight: "600" },
-  letterOn: { color: colors.bg },
-
-  wordList: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 16 },
-  word: { color: colors.text, fontSize: 13 },
-  wordDone: { color: colors.textMuted, textDecorationLine: "line-through" },
 
   wonCard: {
     flexDirection: "row",

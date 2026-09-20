@@ -46,8 +46,30 @@ export const DIRECTIONS: Record<Difficulty, Dir[]> = {
 
 export const SIZES: Record<Difficulty, number> = { easy: 8, normal: 10, hard: 12 };
 
+/**
+ * Сколько раз слово может повернуть.
+ *
+ * Прямое слово — это путь с нулём поворотов, поэтому отдельного случая для него нет: вся
+ * разница между лёгким и сложным здесь, в одном числе. Больше трёх поворотов на восьми
+ * буквах превращает слово в клубок, который не столько ищут, сколько распутывают.
+ */
+export const TURNS: Record<Difficulty, number> = { easy: 0, normal: 1, hard: 3 };
+
 /** Сколько слов прячется. Больше — не сложнее, а дольше: поле просто забивается плотнее. */
 export const WORD_COUNTS: Record<Difficulty, number> = { easy: 6, normal: 8, hard: 10 };
+
+/**
+ * Цвета найденных слов.
+ *
+ * Шесть, и они перебираются по кругу. Раньше все найденные клетки красились одинаково, и два
+ * слова, лежащие рядом или пересекающиеся, сливались в одно пятно: видно, что найдено, но не
+ * видно, что именно. Теперь каждое слово — своя полоса своего цвета, и повороты читаются
+ * вместе с ней.
+ *
+ * Это единственное место в приложении, где цветов больше двух, и это осознанно: здесь они не
+ * значат «внимание» и «в порядке», а просто отличают одно от другого.
+ */
+export const WORD_COLORS = ["#e08a55", "#8fb89a", "#5c8fd6", "#c58ac8", "#d6c35c", "#6fc3c0"];
 
 export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
   easy: "Лёгкий",
@@ -56,9 +78,9 @@ export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
 };
 
 export const DIFFICULTY_HINTS: Record<Difficulty, string> = {
-  easy: "8×8, слова только вправо и вниз",
-  normal: "10×10, добавляются диагонали",
-  hard: "12×12, слова могут идти задом наперёд",
+  easy: "8×8, слова прямые — вправо и вниз",
+  normal: "10×10, диагонали и один поворот",
+  hard: "12×12, любая сторона и до трёх поворотов",
 };
 
 export interface Cell {
@@ -102,24 +124,74 @@ const shuffled = <T,>(items: T[], rnd: Rnd): T[] => {
 
 const inside = (size: number, row: number, col: number) => row >= 0 && col >= 0 && row < size && col < size;
 
+/** Можно ли поставить эту букву в эту клетку: пусто или ровно она же. */
+function free(grid: string[][], cell: Cell, letter: string, used: Set<string>): boolean {
+  if (!inside(grid.length, cell.row, cell.col)) return false;
+  // Дважды через одну клетку слово не проходит: путь, пересекающий сам себя, пальцем не
+  // провести — на второй раз он читается как возврат назад.
+  if (used.has(`${cell.row}:${cell.col}`)) return false;
+  const there = grid[cell.row][cell.col];
+  return there === "" || there === letter;
+}
+
 /**
- * Куда встанет слово из этой клетки в эту сторону — или никуда.
+ * Путь под слово: прямые куски, между ними повороты.
  *
- * Пересечения разрешены и нужны: слово, легшее поверх чужой буквы, которая с ним совпала,
- * связывает поле и делает его интереснее. Не совпала — значит здесь не встанет.
+ * Перебор с откатом, а не «выбрать направление и идти»: после поворота дорога может
+ * упереться, и тогда единственный выход — вернуться на букву назад и повернуть иначе.
+ * Слово из восьми букв с тремя поворотами почти никогда не ложится с первого раза.
+ *
+ * Пересечения с уже лежащими словами разрешены и нужны: слово, легшее поверх чужой буквы,
+ * которая с ним совпала, связывает поле. Не совпала — здесь не встанет.
  */
-function fit(grid: string[][], word: string, row: number, col: number, dir: Dir): Cell[] | null {
-  const size = grid.length;
-  const cells: Cell[] = [];
-  for (let i = 0; i < word.length; i++) {
-    const r = row + dir.dr * i;
-    const c = col + dir.dc * i;
-    if (!inside(size, r, c)) return null;
-    const there = grid[r][c];
-    if (there !== "" && there !== word[i]) return null;
-    cells.push({ row: r, col: c });
-  }
-  return cells;
+function carve(
+  grid: string[][],
+  word: string,
+  start: Cell,
+  dirs: Dir[],
+  maxTurns: number,
+  rnd: Rnd,
+): Cell[] | null {
+  const used = new Set<string>();
+  const path: Cell[] = [];
+
+  const step = (index: number, dir: Dir | null, turnsLeft: number): boolean => {
+    if (index === word.length) return true;
+    const cell = index === 0 ? start : { row: 0, col: 0 };
+    if (index === 0) {
+      if (!free(grid, cell, word[0], used)) return false;
+      used.add(`${cell.row}:${cell.col}`);
+      path.push(cell);
+      // Первый шаг направления ещё не имеет — его выбирает следующая буква.
+      for (const next of shuffled(dirs, rnd)) {
+        if (step(1, next, turnsLeft)) return true;
+      }
+      used.delete(`${cell.row}:${cell.col}`);
+      path.pop();
+      return false;
+    }
+
+    const previous = path[path.length - 1];
+    // Идти прямо всегда можно; поворачивать — пока есть запас поворотов. Прямое направление
+    // пробуется первым, и это не мелочь: без него поворот случался почти на каждой букве, и
+    // все слова на поле выходили кручёными. Ровное слово рядом с кручёным — это разнообразие,
+    // а поле, где всё вьётся, просто утомляет.
+    const options = turnsLeft > 0 ? [dir as Dir, ...shuffled(dirs, rnd)] : [dir as Dir];
+    for (const option of options) {
+      const turned = !dir || option.dr !== dir.dr || option.dc !== dir.dc;
+      if (turned && turnsLeft <= 0) continue;
+      const next = { row: previous.row + option.dr, col: previous.col + option.dc };
+      if (!free(grid, next, word[index], used)) continue;
+      used.add(`${next.row}:${next.col}`);
+      path.push(next);
+      if (step(index + 1, option, turnsLeft - (turned ? 1 : 0))) return true;
+      used.delete(`${next.row}:${next.col}`);
+      path.pop();
+    }
+    return false;
+  };
+
+  return step(0, null, maxTurns) ? [...path] : null;
 }
 
 /**
@@ -142,14 +214,17 @@ export function makePuzzle(words: string[], difficulty: Difficulty, rnd: Rnd): P
     .slice(0, WORD_COUNTS[difficulty]);
 
   const placed: Placed[] = [];
+  const turns = TURNS[difficulty];
   for (const word of chosen) {
-    // Двести попыток на слово: случайная клетка, случайное направление. Перебирать всё поле
-    // подряд было бы честнее и заметно медленнее, а разницы на таких размерах нет.
-    for (let attempt = 0; attempt < 200; attempt++) {
-      const dir = dirs[Math.floor(rnd() * dirs.length)];
-      const row = Math.floor(rnd() * size);
-      const col = Math.floor(rnd() * size);
-      const cells = fit(grid, word, row, col, dir);
+    // Запас поворотов у каждого слова свой, от нуля до предела сложности: иначе «до трёх
+    // поворотов» на деле означало бы «ровно столько, сколько влезет», и прямых слов на поле
+    // не осталось бы вовсе.
+    const budget = Math.floor(rnd() * (turns + 1));
+    // Сто попыток на слово: случайная клетка старта, дальше путь ищется перебором. Обходить
+    // всё поле подряд было бы честнее и заметно дольше, а разницы на таких размерах нет.
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const start = { row: Math.floor(rnd() * size), col: Math.floor(rnd() * size) };
+      const cells = carve(grid, word, start, dirs, budget, rnd);
       if (!cells) continue;
       cells.forEach((cell, i) => {
         grid[cell.row][cell.col] = word[i];
@@ -169,11 +244,11 @@ export function makePuzzle(words: string[], difficulty: Difficulty, rnd: Rnd): P
 }
 
 /**
- * Клетки от первой до последней — но только если между ними прямая.
+ * Клетки от первой до последней — если между ними прямая.
  *
- * Слово в этой игре всегда лежит по прямой, поэтому палец не надо вести по буквам: хватает
- * того, с какой клетки начал и над какой сейчас. Всё, что не строка, не столбец и не
- * диагональ, — не выделение, а случайное движение пальца, и отвечать на него нечем.
+ * Пальцу больше не хватает двух концов: слово может повернуть, и путь приходится вести по
+ * буквам. Но прямая всё равно нужна — ею затыкаются дыры, когда палец едет быстрее, чем
+ * приходят события, и перескакивает через клетку.
  */
 export function lineBetween(from: Cell, to: Cell): Cell[] | null {
   const dr = to.row - from.row;
@@ -236,4 +311,43 @@ export function seeded(seed: number): Rnd {
     s >>>= 0;
     return s / 4294967296;
   };
+}
+
+/** Соседняя ли клетка — по-королевски, считая диагонали. */
+export const adjacent = (a: Cell, b: Cell): boolean => {
+  const dr = Math.abs(a.row - b.row);
+  const dc = Math.abs(a.col - b.col);
+  return dr <= 1 && dc <= 1 && dr + dc > 0;
+};
+
+/**
+ * Путь, дополненный новой клеткой, — или прежний, если она не годится.
+ *
+ * Здесь три правила, и каждое взято из того, как палец ведут на самом деле.
+ *
+ * Возврат на предпоследнюю клетку стирает последнюю. Иначе исправить промах можно было бы
+ * только отпустив палец и начав слово заново — а промахиваются на повороте постоянно.
+ *
+ * Прыжок через клетку заполняется прямой. Палец едет быстрее, чем приходят события, и
+ * пропуск середины не должен рвать путь: человек вёл непрерывно, и путь должен быть таким же.
+ *
+ * Всё остальное — клетка не рядом, уже занята в этом же пути, за краем — просто
+ * игнорируется. Путь замирает и ждёт, а не ломается.
+ */
+export function extendPath(path: Cell[], cell: Cell): Cell[] {
+  if (path.length === 0) return [cell];
+  const last = path[path.length - 1];
+  if (sameCell(last, cell)) return path;
+
+  if (path.length >= 2 && sameCell(path[path.length - 2], cell)) return path.slice(0, -1);
+
+  const line = adjacent(last, cell) ? [last, cell] : lineBetween(last, cell);
+  if (!line) return path;
+
+  const out = [...path];
+  for (const step of line.slice(1)) {
+    if (out.some((c) => sameCell(c, step))) return path;
+    out.push(step);
+  }
+  return out;
 }
