@@ -58,6 +58,19 @@ export const SIZES: Record<Difficulty, number> = { easy: 8, normal: 10, hard: 12
  */
 export const TURNS: Record<Difficulty, number> = { easy: 0, normal: 2, hard: 4 };
 
+/**
+ * Можно ли двум словам делить одну букву.
+ *
+ * Пересечение — отдельная и немалая трудность: буква принадлежит сразу двум словам, и глаз,
+ * дойдя до неё, перестаёт понимать, какое из них он читает. На поле с поворотами это
+ * особенно заметно — не видно, куда слово свернуло, а куда просто ушло чужое.
+ *
+ * Поэтому на лёгком и среднем слова лежат каждое само по себе и только соприкасаются
+ * боками, а делить буквы им нельзя. На сложном — можно, и это ровно та разница, которая
+ * делает сложный сложным, помимо размера.
+ */
+export const CROSSINGS: Record<Difficulty, boolean> = { easy: false, normal: false, hard: true };
+
 /** Сколько слов прячется. Больше — не сложнее, а дольше: поле просто забивается плотнее. */
 export const WORD_COUNTS: Record<Difficulty, number> = { easy: 6, normal: 8, hard: 10 };
 
@@ -83,7 +96,7 @@ export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
 export const DIFFICULTY_HINTS: Record<Difficulty, string> = {
   easy: "8×8, слова прямые — вправо и вниз",
   normal: "10×10, любая сторона и до двух поворотов — «П», «Г»",
-  hard: "12×12, до четырёх поворотов — слово вьётся змейкой",
+  hard: "12×12, до четырёх поворотов, слова делят буквы",
 };
 
 export interface Cell {
@@ -127,14 +140,23 @@ const shuffled = <T,>(items: T[], rnd: Rnd): T[] => {
 
 const inside = (size: number, row: number, col: number) => row >= 0 && col >= 0 && row < size && col < size;
 
-/** Можно ли поставить эту букву в эту клетку: пусто или ровно она же. */
-function free(grid: string[][], cell: Cell, letter: string, used: Set<string>): boolean {
+/** Можно ли поставить эту букву в эту клетку. */
+function free(
+  grid: string[][],
+  cell: Cell,
+  letter: string,
+  used: Set<string>,
+  crossings: boolean,
+): boolean {
   if (!inside(grid.length, cell.row, cell.col)) return false;
-  // Дважды через одну клетку слово не проходит: путь, пересекающий сам себя, пальцем не
-  // провести — на второй раз он читается как возврат назад.
+  // Дважды через одну клетку слово не проходит — и это правило своё, не про пересечения:
+  // путь, наступающий сам на себя, пальцем не провести, на второй раз он читается как
+  // возврат назад.
   if (used.has(`${cell.row}:${cell.col}`)) return false;
   const there = grid[cell.row][cell.col];
-  return there === "" || there === letter;
+  if (there === "") return true;
+  // Занятая клетка годится, только если буква та же и пересечения вообще разрешены.
+  return crossings && there === letter;
 }
 
 /**
@@ -144,8 +166,8 @@ function free(grid: string[][], cell: Cell, letter: string, used: Set<string>): 
  * упереться, и тогда единственный выход — вернуться на букву назад и повернуть иначе.
  * Слово из восьми букв с тремя поворотами почти никогда не ложится с первого раза.
  *
- * Пересечения с уже лежащими словами разрешены и нужны: слово, легшее поверх чужой буквы,
- * которая с ним совпала, связывает поле. Не совпала — здесь не встанет.
+ * Пересечения — по сложности: на лёгком и среднем клетка должна быть пустой, на сложном
+ * годится и занятая, если буква та же.
  */
 function carve(
   grid: string[][],
@@ -153,6 +175,7 @@ function carve(
   start: Cell,
   dirs: Dir[],
   maxTurns: number,
+  crossings: boolean,
   rnd: Rnd,
 ): Cell[] | null {
   const used = new Set<string>();
@@ -162,7 +185,7 @@ function carve(
     if (index === word.length) return true;
     const cell = index === 0 ? start : { row: 0, col: 0 };
     if (index === 0) {
-      if (!free(grid, cell, word[0], used)) return false;
+      if (!free(grid, cell, word[0], used, crossings)) return false;
       used.add(`${cell.row}:${cell.col}`);
       path.push(cell);
       // Первый шаг направления ещё не имеет — его выбирает следующая буква.
@@ -194,7 +217,7 @@ function carve(
       const turned = !dir || option.dr !== dir.dr || option.dc !== dir.dc;
       if (turned && turnsLeft <= 0) continue;
       const next = { row: previous.row + option.dr, col: previous.col + option.dc };
-      if (!free(grid, next, word[index], used)) continue;
+      if (!free(grid, next, word[index], used, crossings)) continue;
       used.add(`${next.row}:${next.col}`);
       path.push(next);
       if (step(index + 1, option, turnsLeft - (turned ? 1 : 0))) return true;
@@ -237,7 +260,7 @@ export function makePuzzle(words: string[], difficulty: Difficulty, rnd: Rnd): P
     // всё поле подряд было бы честнее и заметно дольше, а разницы на таких размерах нет.
     for (let attempt = 0; attempt < 100; attempt++) {
       const start = { row: Math.floor(rnd() * size), col: Math.floor(rnd() * size) };
-      const cells = carve(grid, word, start, dirs, budget, rnd);
+      const cells = carve(grid, word, start, dirs, budget, CROSSINGS[difficulty], rnd);
       if (!cells) continue;
       cells.forEach((cell, i) => {
         grid[cell.row][cell.col] = word[i];
