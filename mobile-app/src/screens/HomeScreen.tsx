@@ -21,6 +21,8 @@ import { syncUsage } from "../integrations/usageSync";
 import RotatingTip from "../components/RotatingTip";
 import type { Section } from "../navigation/SectionMenu";
 import type { GameStats } from "../lib/games/stats";
+import type { Purse } from "../lib/rewards/currency";
+import { titleName } from "../lib/rewards/catalog";
 
 /**
  * Главная — один вопрос: как идёт сегодняшний день.
@@ -37,6 +39,12 @@ import type { GameStats } from "../lib/games/stats";
 export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => void }) {
   const { data: gameStats } = useQuery<GameStats>({ queryKey: ["gameStats"], queryFn: () => api.getGameStats() });
   const solvedGames = gameStats?.wordsearch.solved ?? 0;
+  /*
+   * Кошелёк — только чтение. Начисляет его «Награды», и переносить это на Главную нельзя:
+   * пересчёт за четыреста дней при каждом открытии приложения того не стоит.
+   */
+  const { data: purse } = useQuery<Purse>({ queryKey: ["purse"], queryFn: () => api.getPurse() });
+  const worn = titleName(purse?.equipped.title ?? "");
   const qc = useQueryClient();
   const today = useTodayKey();
 
@@ -210,6 +218,27 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
         <Text style={styles.gamesChevron}>›</Text>
       </Pressable>
 
+      {/* Награды — такой же узкой строкой и сразу под играми: это про то же самое, только
+          не «чем заняться», а «что за это дали». Числом про сегодня они тоже не отвечают. */}
+      <Pressable
+        onPress={() => onOpen("rewards")}
+        accessibilityRole="button"
+        accessibilityLabel="Награды"
+        style={({ pressed }) => [styles.gamesRow, styles.tightRow, pressed && { opacity: 0.7 }]}
+      >
+        <Feather name="award" size={15} color={colors.textMuted} />
+        <Text style={styles.gamesText}>
+          {purse
+            ? `${worn !== "" ? `${worn} · ` : ""}${purse.wallet.sparks} ${plural(purse.wallet.sparks, [
+                "искра",
+                "искры",
+                "искр",
+              ])} · ${purse.wallet.cores} ${plural(purse.wallet.cores, ["ядро", "ядра", "ядер"])}`
+            : "Награды · искры, ядра и титулы"}
+        </Text>
+        <Text style={styles.gamesChevron}>›</Text>
+      </Pressable>
+
       {/* Подсказка живёт здесь, и только здесь: главную открывают каждый раз, и это
           единственное на экране, что не является числом про тебя. */}
       <RotatingTip />
@@ -369,6 +398,8 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     marginTop: 12,
   },
+  // Вторая строка подряд стоит ближе: две узкие строки — это один блок, а не два.
+  tightRow: { marginTop: 8 },
   gamesText: { color: colors.textMuted, fontSize: 12, flex: 1 },
   gamesChevron: { color: colors.textMuted, fontSize: 18 },
   footnote: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 14 },

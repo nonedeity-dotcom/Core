@@ -2,7 +2,7 @@ import { View, Text, Pressable, Modal, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
 
-export type Section = "home" | "sterzhen" | "balance" | "screen" | "games";
+export type Section = "home" | "sterzhen" | "balance" | "screen" | "games" | "rewards";
 
 /**
  * Меню разделов — то, что открывается кнопкой «три линии» слева в шапке.
@@ -32,8 +32,9 @@ export default function SectionMenu({
     { id: "sterzhen", title: "Sterzhen", hint: "Привычки, фокус, энергия", icon: "check-square" },
     { id: "balance", title: "CaloriX", hint: "Калории и белок за день", icon: "pie-chart" },
     { id: "screen", title: "Creker", hint: "Сколько времени и в чём", icon: "smartphone" },
-    // Последним и намеренно: это не про день, а про перерыв в нём.
+    // Последними и намеренно: это не про день, а про перерыв в нём и про то, что за него дали.
     { id: "games", title: "Игры", hint: "Размяться головой на перерыве", icon: "grid" },
+    { id: "rewards", title: "Награды", hint: "Искры, ядра, магазин и титулы", icon: "award" },
   ];
 
   return (

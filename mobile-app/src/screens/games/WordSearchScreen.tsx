@@ -12,7 +12,6 @@ import {
   CROSSINGS,
   DIFFICULTY_HINTS,
   DIFFICULTY_LABELS,
-  WORD_COLORS,
   allFound,
   extendPath,
   findMatch,
@@ -20,7 +19,9 @@ import {
   type Cell,
   type Difficulty,
 } from "../../lib/games/wordsearch";
-import { formatSeconds, recordKey, withSolved, type GameStats } from "../../lib/games/stats";
+import { emptyWordSearch, formatSeconds, recordKey, withSolved, type GameStats } from "../../lib/games/stats";
+import { spend, type Purse } from "../../lib/rewards/currency";
+import { HINT_PRICES, paletteColors } from "../../lib/rewards/catalog";
 
 const DIFFICULTIES: Difficulty[] = ["easy", "normal", "hard"];
 
@@ -48,6 +49,18 @@ export default function WordSearchScreen({
   const [playing, setPlaying] = useState(false);
 
   const { data: stats } = useQuery<GameStats>({ queryKey: ["gameStats"], queryFn: () => api.getGameStats() });
+  /*
+   * Кошелёк читается здесь же, а не через useRewards.
+   *
+   * Тот пересчитывает начисления по всей истории — четыреста дней привычек, сессий и целей.
+   * Игре нужно ровно два числа и возможность списать, и тащить ради них весь пересчёт в
+   * экран, который и так считает поле, незачем.
+   */
+  const { data: purse } = useQuery<Purse>({ queryKey: ["purse"], queryFn: () => api.getPurse() });
+  const pay = useMutation({
+    mutationFn: (next: Purse) => api.setPurse(next),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["purse"] }),
+  });
   const save = useMutation({
     mutationFn: (next: GameStats) => api.setGameStats(next),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["gameStats"] }),
@@ -80,6 +93,14 @@ export default function WordSearchScreen({
    */
   const [just, setJust] = useState<string | null>(null);
   const [won, setWon] = useState<{ record: boolean } | null>(null);
+  /**
+   * Открытые подсказкой буквы и то, что подсказка вообще была.
+   *
+   * Второе живёт отдельно от первого, потому что «открыть слово» букв не открывает, а
+   * рекорд отменяет так же. Забыть про это значило бы продавать лучшее время за искры.
+   */
+  const [hints, setHints] = useState<Cell[]>([]);
+  const [hinted, setHinted] = useState(false);
 
   // Секундомер идёт, пока поле не собрано. Без времени он просто не заводится — на экране
   // тогда нет ни часов, ни причины торопиться.
@@ -114,8 +135,13 @@ export default function WordSearchScreen({
     setWon(null);
     setJust(null);
     setPath([]);
+    setHints([]);
+    setHinted(false);
     setPlaying(true);
   };
+
+  // Набор цветов — тот, что надет в «Наградах». Снятый или неизвестный даёт обычный.
+  const palette = paletteColors(purse?.equipped.palette ?? "");
 
   const foundWords = found.map((f) => f.word);
   /*
@@ -199,11 +225,51 @@ export default function WordSearchScreen({
   }, [found, playing, won, puzzle]);
 
   const finish = () => {
-    const base = stats ?? { wordsearch: { solved: 0, best: {}, lastAt: "" } };
-    const result = withSolved(base, theme.id, difficulty, timed ? seconds : null, todayKey());
+    const base = stats ?? { wordsearch: emptyWordSearch() };
+    // Подсказка снимает время с зачёта, но не само поле: собранное собрано.
+    const result = withSolved(base, theme.id, difficulty, timed && !hinted ? seconds : null, todayKey());
     setWon({ record: result.record });
     save.mutate(result.stats);
   };
+
+  /**
+   * Подсказки за искры.
+   *
+   * Слова, которые ещё не нашли, известны экрану с самого начала — поле собиралось здесь
+   * же. Поэтому подсказка не «вычисляется», а выбирается: её вся работа — списать искры и
+   * показать то, что и так лежит в памяти.
+   *
+   * Списание идёт первым и через `spend`: он возвращает `null`, когда не хватает, и
+   * показать букву, не заплатив за неё, отсюда невозможно.
+   */
+  const unfound = puzzle.words.filter((w) => !foundWords.includes(w.word));
+  const sparks = purse?.wallet.sparks ?? 0;
+
+  const hintLetter = () => {
+    if (!purse || unfound.length === 0) return;
+    const shown = new Set(hints.map((c) => `${c.row}:${c.col}`));
+    const target = unfound[Math.floor(Math.random() * unfound.length)];
+    const rest = target.cells.filter((c) => !shown.has(`${c.row}:${c.col}`));
+    if (rest.length === 0) return;
+    const next = spend(purse, { sparks: HINT_PRICES.letter });
+    if (!next) return;
+    pay.mutate(next);
+    setHints((prev) => [...prev, rest[Math.floor(Math.random() * rest.length)]]);
+    setHinted(true);
+  };
+
+  const hintWord = () => {
+    if (!purse || unfound.length === 0) return;
+    const next = spend(purse, { sparks: HINT_PRICES.word });
+    if (!next) return;
+    pay.mutate(next);
+    const target = unfound[Math.floor(Math.random() * unfound.length)];
+    setFound((prev) => (prev.some((f) => f.word === target.word) ? prev : [...prev, target]));
+    setJust(target.word);
+    setHinted(true);
+  };
+
+  const isHinted = (c: Cell) => hints.some((h) => h.row === c.row && h.col === c.col);
 
   const best = stats?.wordsearch.best[recordKey(theme.id, difficulty)];
   const left = puzzle.words.length - found.length;
@@ -341,7 +407,7 @@ export default function WordSearchScreen({
               <Polyline
                 key={f.word}
                 points={points(f.cells, cellSize)}
-                stroke={WORD_COLORS[i % WORD_COLORS.length]}
+                stroke={palette[i % palette.length]}
                 strokeWidth={cellSize * 0.74}
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -366,7 +432,14 @@ export default function WordSearchScreen({
         {puzzle.grid.map((row, r) => (
           <View key={r} style={styles.boardRow}>
             {row.map((letter, c) => (
-              <View key={`${r}:${c}`} style={[styles.cell, { width: cellSize, height: cellSize }]}>
+              <View
+                key={`${r}:${c}`}
+                style={[
+                  styles.cell,
+                  { width: cellSize, height: cellSize },
+                  isHinted({ row: r, col: c }) && styles.cellHint,
+                ]}
+              >
                 <Text style={[styles.letter, cellSize > 0 && { fontSize: Math.min(30, cellSize * 0.5) }]}>
                   {letter}
                 </Text>
@@ -382,14 +455,39 @@ export default function WordSearchScreen({
         <View style={styles.wonCard}>
           <Feather name="check-circle" size={18} color={colors.accentGreen} />
           <Text style={styles.wonText}>
-            {timed
-              ? won.record
-                ? `Новый рекорд — ${formatSeconds(seconds)}!`
-                : `За ${formatSeconds(seconds)}${best !== undefined ? `, рекорд ${formatSeconds(best)}` : ""}`
-              : "Все слова найдены."}
+            {!timed
+              ? "Все слова найдены."
+              : hinted
+                ? `За ${formatSeconds(seconds)} — но с подсказкой, и в рекорд это не пошло.`
+                : won.record
+                  ? `Новый рекорд — ${formatSeconds(seconds)}!`
+                  : `За ${formatSeconds(seconds)}${best !== undefined ? `, рекорд ${formatSeconds(best)}` : ""}`}
           </Text>
         </View>
       )}
+
+      {/* Подсказки только пока поле не собрано: платить за букву в собранном поле не за что. */}
+      {!won && (
+        <View style={styles.hintRow}>
+          <HintButton
+            label="Буква"
+            price={HINT_PRICES.letter}
+            enough={sparks >= HINT_PRICES.letter}
+            onPress={hintLetter}
+          />
+          <HintButton
+            label="Слово"
+            price={HINT_PRICES.word}
+            enough={sparks >= HINT_PRICES.word}
+            onPress={hintWord}
+          />
+          <View style={styles.purse}>
+            <Feather name="zap" size={13} color={colors.accent} />
+            <Text style={styles.purseText}>{sparks}</Text>
+          </View>
+        </View>
+      )}
+      {hinted && !won && <Text style={styles.hintNote}>С подсказкой время в рекорд не пойдёт.</Text>}
 
       <View style={styles.actions}>
         <Pressable
@@ -410,6 +508,33 @@ export default function WordSearchScreen({
         </Pressable>
       </View>
     </View>
+  );
+}
+
+/** Кнопка подсказки: что даёт и сколько стоит — обе надписи на ней, а не в другом месте. */
+function HintButton({
+  label,
+  price,
+  enough,
+  onPress,
+}: {
+  label: string;
+  price: number;
+  enough: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={!enough}
+      accessibilityRole="button"
+      accessibilityLabel={`Подсказка: ${label.toLowerCase()} за ${price}`}
+      style={({ pressed }) => [styles.hintButton, !enough && styles.hintButtonOff, pressed && styles.dimmed]}
+    >
+      <Text style={[styles.hintButtonText, !enough && styles.hintButtonTextOff]}>{label}</Text>
+      <Feather name="zap" size={11} color={enough ? colors.accent : colors.textMuted} />
+      <Text style={[styles.hintPrice, !enough && styles.hintButtonTextOff]}>{price}</Text>
+    </Pressable>
   );
 }
 
@@ -489,6 +614,8 @@ const styles = StyleSheet.create({
   },
   boardRow: { flexDirection: "row" },
   cell: { alignItems: "center", justifyContent: "center" },
+  // Рамка, а не заливка: заливка спорила бы с полосами найденных слов за ту же клетку.
+  cellHint: { borderWidth: 2, borderColor: colors.accent, borderRadius: 8 },
   letter: { color: colors.text, fontWeight: "600" },
 
   wonCard: {
@@ -502,6 +629,26 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   wonText: { color: colors.text, fontSize: 13, flex: 1 },
+
+  hintRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  hintButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.card,
+  },
+  hintButtonOff: { opacity: 0.5 },
+  hintButtonText: { color: colors.text, fontSize: 12, fontWeight: "600" },
+  hintButtonTextOff: { color: colors.textMuted },
+  hintPrice: { color: colors.accent, fontSize: 12, fontWeight: "600" },
+  purse: { flexDirection: "row", alignItems: "center", gap: 4, marginLeft: "auto" },
+  purseText: { color: colors.textMuted, fontSize: 12 },
+  hintNote: { color: colors.textMuted, fontSize: 11, marginBottom: 8 },
 
   actions: { flexDirection: "row", gap: 10 },
   flex: { flex: 1 },

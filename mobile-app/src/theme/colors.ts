@@ -35,14 +35,26 @@ export const colors = {
  * полупрозрачная, а не сплошная: метка уровня стоит рядом с названием и не должна спорить
  * с ним за взгляд.
  */
+/*
+ * Тёплый оттенок здесь берётся через геттер, а не значением.
+ *
+ * Акцент выбирается в «Наградах» и подставляется в `colors` один раз при запуске — но эти
+ * два списка собираются раньше, в момент загрузки самого файла. Записанное значением
+ * осталось бы родным оранжевым, и метка «сложно» оказалась бы единственным местом, не
+ * заметившим смену цвета.
+ */
 export const levelTint: Record<"hard" | "medium" | "easy", string> = {
-  hard: "rgba(224,138,85,0.16)",
+  get hard() {
+    return withAlpha(colors.accent, 0.16);
+  },
   medium: "rgba(139,143,152,0.16)",
   easy: "rgba(143,184,154,0.16)",
 };
 
 export const levelInk: Record<"hard" | "medium" | "easy", string> = {
-  hard: colors.accent,
+  get hard() {
+    return colors.accent;
+  },
   medium: colors.textMuted,
   easy: colors.accentGreen,
 };

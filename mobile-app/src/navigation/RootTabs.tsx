@@ -31,6 +31,7 @@ import AppUsageScreen from "../screens/screen/AppUsageScreen";
 import HomeScreen from "../screens/HomeScreen";
 import GamesScreen from "../screens/games/GamesScreen";
 import WordSearchScreen from "../screens/games/WordSearchScreen";
+import RewardsScreen from "../screens/rewards/RewardsScreen";
 import SectionMenu, { type Section } from "./SectionMenu";
 import { CHANNEL_LABELS, type ReminderChannel } from "../notifications/reminders";
 
@@ -132,6 +133,20 @@ function GameTabs() {
   return (
     <Tab.Navigator screenOptions={{ headerShown: false, tabBarStyle: { display: "none" } }}>
       <Tab.Screen name="Игры" component={GamesScreen} />
+    </Tab.Navigator>
+  );
+}
+
+/**
+ * «Награды» — кошелёк, магазин и титулы.
+ *
+ * Тоже одна вкладка без панели: внутри экрана и так три переключателя, и четвёртая полоска
+ * внизу была бы вторым рядом вкладок над тем же самым.
+ */
+function RewardTabs() {
+  return (
+    <Tab.Navigator screenOptions={{ headerShown: false, tabBarStyle: { display: "none" } }}>
+      <Tab.Screen name="Награды" component={RewardsScreen} />
     </Tab.Navigator>
   );
 }
@@ -243,6 +258,8 @@ export default function RootTabs() {
               <BalanceTabs />
             ) : section === "games" ? (
               <GameTabs />
+            ) : section === "rewards" ? (
+              <RewardTabs />
             ) : (
               <ScreenTabs />
             )

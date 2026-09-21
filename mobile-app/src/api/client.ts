@@ -19,6 +19,7 @@ import { DEFAULT_DAY_OFF, normalizeDayOff, pruneDates, type DayOffRule } from ".
 import { normalizeGoals, type PeriodGoal } from "../lib/goals";
 import { DEFAULT_LEVEL_RULE, normalizeLevelRule, type HabitLevel, type LevelRule } from "../lib/level";
 import { DEFAULT_GAME_STATS, normalizeGameStats, type GameStats } from "../lib/games/stats";
+import { EMPTY_PURSE, normalizePurse, type Purse } from "../lib/rewards/currency";
 import { STREAK_WINDOW_DAYS } from "../lib/streak";
 import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipLibrary";
 import { DEFAULT_LATE_RULE, normalizeLateRule, normalizeSchedule, type LateRule } from "../lib/habitSchedule";
@@ -55,6 +56,7 @@ const KEYS = {
   skipRule: "skip-rule-v1",
   levelRule: "level-rule-v1",
   gameStats: "game-stats-v1",
+  purse: "rewards-purse-v1",
   daysOff: "days-off-v1",
   habitFreezes: "habit-freezes-v1",
   tipPrefs: "tip-prefs-v1",
@@ -569,6 +571,23 @@ export const api = {
   async setDayRule(rule: DayRule): Promise<{ ok: true }> {
     await write(KEYS.dayRule, normalizeDayRule(rule));
     return { ok: true as const };
+  },
+
+  /**
+   * Кошелёк: сколько искр и ядер, что уже оплачено и что куплено.
+   *
+   * Ключи оплаченного лежат здесь же, а не отдельно: кошелёк и список оплаченного меняются
+   * всегда вместе, и разнести их по двум записям значит однажды записать одну без другой.
+   */
+  async getPurse(): Promise<Purse> {
+    return normalizePurse(await read<unknown>(KEYS.purse, EMPTY_PURSE));
+  },
+  async setPurse(purse: Purse): Promise<Purse> {
+    return withKeyLock(KEYS.purse, async () => {
+      const clean = normalizePurse(purse);
+      await write(KEYS.purse, clean);
+      return clean;
+    });
   },
 
   /**

@@ -14,6 +14,13 @@ import type { Difficulty } from "./wordsearch";
 export interface WordSearchStats {
   /** Сколько полей собрано до конца. */
   solved: number;
+  /**
+   * Сколько из них по каждой сложности.
+   *
+   * Общего счёта не хватило, когда за поля стали начислять монеты: поле 12×12 стоит вчетверо
+   * дороже восьмёрки, а по одному числу их не различить.
+   */
+  byDifficulty: Record<Difficulty, number>;
   /** Лучшее время в секундах по ключу «тема:сложность». */
   best: Record<string, number>;
   /** Дата последней игры, "yyyy-MM-dd" — для строки на Главной. */
@@ -24,8 +31,21 @@ export interface GameStats {
   wordsearch: WordSearchStats;
 }
 
-export const EMPTY_WORD_SEARCH: WordSearchStats = { solved: 0, best: {}, lastAt: "" };
-export const DEFAULT_GAME_STATS: GameStats = { wordsearch: { ...EMPTY_WORD_SEARCH, best: {} } };
+const emptyByDifficulty = (): Record<Difficulty, number> => ({ easy: 0, normal: 0, hard: 0 });
+
+export const EMPTY_WORD_SEARCH: WordSearchStats = {
+  solved: 0,
+  byDifficulty: emptyByDifficulty(),
+  best: {},
+  lastAt: "",
+};
+export const emptyWordSearch = (): WordSearchStats => ({
+  solved: 0,
+  byDifficulty: emptyByDifficulty(),
+  best: {},
+  lastAt: "",
+});
+export const DEFAULT_GAME_STATS: GameStats = { wordsearch: emptyWordSearch() };
 
 /** Ключ рекорда. Тема и сложность вместе: одно поле 12×12 не сравнивают с полем 8×8. */
 export const recordKey = (themeId: string, difficulty: Difficulty): string => `${themeId}:${difficulty}`;
@@ -33,9 +53,9 @@ export const recordKey = (themeId: string, difficulty: Difficulty): string => `$
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : 0);
 
 export function normalizeGameStats(raw: unknown): GameStats {
-  if (typeof raw !== "object" || raw === null) return { wordsearch: { ...EMPTY_WORD_SEARCH, best: {} } };
+  if (typeof raw !== "object" || raw === null) return { wordsearch: emptyWordSearch() };
   const o = (raw as Record<string, unknown>).wordsearch;
-  if (typeof o !== "object" || o === null) return { wordsearch: { ...EMPTY_WORD_SEARCH, best: {} } };
+  if (typeof o !== "object" || o === null) return { wordsearch: emptyWordSearch() };
   const w = o as Record<string, unknown>;
   const best: Record<string, number> = {};
   if (typeof w.best === "object" && w.best !== null) {
@@ -45,9 +65,18 @@ export function normalizeGameStats(raw: unknown): GameStats {
       if (seconds > 0) best[key] = seconds;
     }
   }
+  const counts = (typeof w.byDifficulty === "object" && w.byDifficulty !== null
+    ? w.byDifficulty
+    : {}) as Record<string, unknown>;
+  const byDifficulty: Record<Difficulty, number> = {
+    easy: num(counts.easy),
+    normal: num(counts.normal),
+    hard: num(counts.hard),
+  };
   return {
     wordsearch: {
       solved: num(w.solved),
+      byDifficulty,
       best,
       lastAt: typeof w.lastAt === "string" && /^\d{4}-\d{2}-\d{2}$/.test(w.lastAt) ? w.lastAt : "",
     },
@@ -74,6 +103,10 @@ export function withSolved(
     stats: {
       wordsearch: {
         solved: stats.wordsearch.solved + 1,
+        byDifficulty: {
+          ...stats.wordsearch.byDifficulty,
+          [difficulty]: (stats.wordsearch.byDifficulty[difficulty] ?? 0) + 1,
+        },
         best: record ? { ...stats.wordsearch.best, [key]: seconds as number } : { ...stats.wordsearch.best },
         lastAt: today,
       },
