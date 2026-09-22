@@ -46,7 +46,12 @@ import {
   perDayTarget,
   weeklyProgress,
 } from "../lib/habits";
-import { syncScreenTimeHabit } from "../integrations/screenTime";
+import { syncScreenHabits } from "../integrations/screenTime";
+import { TOTAL_APP, isTotal, type ScreenRule } from "../lib/screenTime";
+import { shiftDate } from "../lib/date";
+import { totalsByApp } from "../lib/screen/usage";
+import { formatMinutes } from "../lib/stats";
+import type { AppDay } from "../lib/screen/usage";
 import type { Habit, HabitLog, HabitSchedule, HabitTarget, ItemGroup } from "../types";
 
 /**
@@ -54,6 +59,20 @@ import type { Habit, HabitLog, HabitSchedule, HabitTarget, ItemGroup } from "../
  * for the split is that a list of ten things you eventually want is not a list of ten things
  * you are doing, and judging today against the whole list makes the list unusable.
  */
+/**
+ * Из скольких приложений выбирать и за какой срок их считать.
+ *
+ * Месяц и два десятка: выбирают из своих, а своих столько и есть. Полный список
+ * установленного — это полсотни строк, из которых сорок восемь человек не открывал.
+ */
+const APP_PICKER_DAYS = 30;
+const APP_PICKER_LIMIT = 20;
+
+/** Лимит экранной привычки: шаг, начальное значение и потолок. */
+const SCREEN_LIMIT_STEP_MIN = 30;
+const DEFAULT_SCREEN_HABIT_LIMIT_MIN = 120;
+const MAX_SCREEN_HABIT_LIMIT_MIN = 16 * 60;
+
 const GROUPS: { id: ItemGroup; title: string; blurb: string }[] = [
   { id: "now", title: "Ввожу сейчас", blurb: "по ним засчитывается день — держи этот список коротким" },
   { id: "extra", title: "Дополнительно", blurb: "можно отмечать, на зачёт дня не влияет" },
@@ -79,6 +98,8 @@ export default function TodayScreen() {
   const [editLevel, setEditLevel] = useState<HabitLevel>(DEFAULT_LEVEL);
   const [editTarget, setEditTarget] = useState<HabitTarget>({ kind: "daily", count: 1 });
   const [editSchedule, setEditSchedule] = useState<HabitSchedule | null>(null);
+  /** Правило «считать из Creker». null — привычка отмечается руками, как все остальные. */
+  const [editScreen, setEditScreen] = useState<ScreenRule | null>(null);
   const [newLabel, setNewLabel] = useState("");
   const [adding, setAdding] = useState(false);
   // One per group, and closed again the moment you leave the tab.
@@ -88,6 +109,45 @@ export default function TodayScreen() {
     queryKey: ["habits"],
     queryFn: () => api.getHabits() as Promise<Habit[]>,
   });
+
+  /*
+   * Список приложений для выбора — из того, чем человек пользовался за месяц.
+   *
+   * Не все установленные и не алфавит: выбирают из своих, а своих обычно два десятка. То,
+   * что ни разу не открывалось, в такой привычке и не нужно — ограничивать нечего.
+   */
+  const { data: appRows = [] } = useQuery<AppDay[]>({
+    queryKey: ["screenApps", "picker", today],
+    queryFn: () => api.getScreenApps(shiftDate(today, -APP_PICKER_DAYS), today),
+    enabled: editingId !== null,
+  });
+  const appChoices = totalsByApp(appRows).slice(0, APP_PICKER_LIMIT);
+
+  /*
+   * Сколько уже потрачено сегодня — для строки «1 ч 12 мин из 5 ч».
+   *
+   * Читается один раз на весь экран и раскладывается по привычкам здесь: запрос на каждую
+   * строку означал бы пять чтений одной и той же таблицы ради пяти разных её кусков.
+   */
+  const watching = habits.filter((h) => h.auto === "screentime" && h.screen);
+  const { data: todayScreen } = useQuery<{ total: number | null; byApp: Record<string, number> }>({
+    queryKey: ["screenToday", today],
+    queryFn: async () => {
+      const [days, apps] = await Promise.all([api.getScreenDays(today, today), api.getScreenApps(today, today)]);
+      const day = days.find((d) => d.date === today);
+      const byApp: Record<string, number> = {};
+      for (const a of apps) byApp[a.packageName] = (byApp[a.packageName] ?? 0) + a.usageMillis;
+      return { total: day ? day.screenMillis : null, byApp };
+    },
+    enabled: watching.length > 0,
+  });
+
+  /** Минуты за сегодня по правилу привычки. `null` — за день ещё ничего не намерено. */
+  const usedFor = (rule: ScreenRule): number | null => {
+    if (!todayScreen || todayScreen.total === null) return null;
+    const millis = isTotal(rule) ? todayScreen.total : (todayScreen.byApp[rule.app] ?? 0);
+    return Math.round(millis / 60_000);
+  };
 
   const { data: logs = [] } = useQuery<HabitLog[]>({
     queryKey: ["habitLog", today],
@@ -116,13 +176,25 @@ export default function TodayScreen() {
 
   const invalidateHabits = () => qc.invalidateQueries({ queryKey: ["habits"] });
 
+  /*
+   * Пересчёт идёт и тогда, когда правило только что поменяли.
+   *
+   * Сначала он смотрел лишь на число привычек и на дату — и привычка, которой прямо сейчас
+   * включили «считать из Creker», оставалась неотмеченной до следующего захода на вкладку.
+   * Выглядело это как «включил, и ничего не произошло», хотя данные за день уже лежали
+   * рядом. Поэтому в зависимостях слепок самих правил, а не их количество.
+   */
+  const screenStamp = habits
+    .map((h) => (h.auto === "screentime" && h.screen ? `${h.id}:${h.screen.app}:${h.screen.limitMin}` : ""))
+    .join("|");
+
   useEffect(() => {
     if (habits.length === 0) return;
-    syncScreenTimeHabit(habits, today).then((synced) => {
-      if (synced) qc.invalidateQueries({ queryKey: ["habitLog"] });
+    syncScreenHabits(habits, today).then((ticked) => {
+      if (ticked > 0) qc.invalidateQueries({ queryKey: ["habitLog"] });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [habits.length, today]);
+  }, [habits.length, today, screenStamp]);
 
   /**
    * One tap: one step up, stopping at the target. It never steps back — that was the whole
@@ -177,6 +249,7 @@ export default function TodayScreen() {
       level: HabitLevel;
       target: HabitTarget;
       schedule: HabitSchedule | null;
+      screen: ScreenRule | null;
     }) =>
       api.updateHabit(data.id, {
         label: data.label,
@@ -185,6 +258,7 @@ export default function TodayScreen() {
         level: data.level,
         target: data.target,
         schedule: data.schedule,
+        screen: data.screen,
       }),
     onSuccess: () => {
       setEditingId(null);
@@ -222,6 +296,7 @@ export default function TodayScreen() {
     setEditLevel(habitLevel(h));
     setEditTarget(habitTarget(h));
     setEditSchedule(h.schedule ?? null);
+    setEditScreen(h.screen ?? null);
   };
 
   const saveEdit = () => {
@@ -235,6 +310,7 @@ export default function TodayScreen() {
         level: editLevel,
         target: editTarget,
         schedule: editSchedule,
+        screen: editScreen,
       });
     } else setEditingId(null);
   };
@@ -378,6 +454,9 @@ export default function TodayScreen() {
               onTarget={setEditTarget}
               schedule={editSchedule}
               onSchedule={setEditSchedule}
+              screen={editScreen}
+              onScreen={setEditScreen}
+              apps={appChoices}
               onSave={saveEdit}
               onCancel={() => setEditingId(null)}
             />
@@ -392,6 +471,7 @@ export default function TodayScreen() {
               count={logCount(logs.find((l) => l.habitId === h.id))}
               minimalDone={!!logs.find((l) => l.habitId === h.id)?.minimal}
               week={weeklyProgress(h, weekLogs, weekDates)}
+              used={h.screen ? usedFor(h.screen) : null}
               onBump={(minimal) => bump.mutate({ habit: h, minimal })}
               onEdit={() => startEdit(h)}
               onArchive={() => confirmArchive(h)}
@@ -473,6 +553,7 @@ export default function TodayScreen() {
 /** One habit as it looks on an ordinary day. */
 function HabitRow({
   habit,
+  used,
   group,
   editing,
   standing,
@@ -486,6 +567,8 @@ function HabitRow({
   onReset,
 }: {
   habit: Habit;
+  /** Сколько минут уже потрачено сегодня на то, за чем следит привычка. */
+  used: number | null;
   group: ItemGroup;
   editing: boolean;
   /**
@@ -581,6 +664,17 @@ function HabitRow({
               )}
             </View>
             {!!habit.hint && <Text style={styles.hint}>{habit.hint}</Text>}
+            {/* Экранная привычка отвечает числом, а не галочкой: галочка говорит «пока да»,
+                а число — сколько именно и сколько ещё осталось. */}
+            {habit.screen && (
+              <Text style={[styles.progress, used !== null && used > habit.screen.limitMin && styles.overLimit]}>
+                {used === null
+                  ? `Creker ещё не считал сегодня · не больше ${formatMinutes(habit.screen.limitMin)}`
+                  : `${formatMinutes(used)} из ${formatMinutes(habit.screen.limitMin)}${
+                      used > habit.screen.limitMin ? " — превышено" : ""
+                    }`}
+              </Text>
+            )}
             {/* What is owed, and how much of it is behind you. */}
             {tickable && perDay > 1 && (
               <Text style={styles.progress}>
@@ -715,6 +809,9 @@ function HabitEditor({
   onTarget,
   schedule,
   onSchedule,
+  screen,
+  onScreen,
+  apps,
   onSave,
   onCancel,
 }: {
@@ -731,6 +828,11 @@ function HabitEditor({
   /** null when the habit can be done whenever, which is the default and usually the answer. */
   schedule: HabitSchedule | null;
   onSchedule: (v: HabitSchedule | null) => void;
+  /** null — привычка отмечается руками. Иначе за неё отвечает Creker. */
+  screen: ScreenRule | null;
+  onScreen: (v: ScreenRule | null) => void;
+  /** Приложения, которыми человек пользовался за последний месяц, — из чего выбирать. */
+  apps: { packageName: string; label: string }[];
   onSave: () => void;
   onCancel: () => void;
 }) {
@@ -844,7 +946,115 @@ function HabitEditor({
       </Text>
 
       <ScheduleFields target={target} schedule={schedule} onSchedule={onSchedule} />
+      <ScreenFields screen={screen} onScreen={onScreen} apps={apps} />
     </View>
+  );
+}
+
+/**
+ * «Не больше пяти часов в тиктоке» — привычка, которую отмечает не человек, а Creker.
+ *
+ * Смысл в том, что такую привычку честно отметить самому почти нельзя: никто не помнит,
+ * сколько просидел, и в конце дня отмечается не факт, а самоощущение. Здесь же за неё
+ * отвечает то, что считало без спроса и без жалости.
+ *
+ * Выключено по умолчанию и сложено: у большинства привычек с экраном нет ничего общего, а
+ * форма, которая спрашивает про лимит, подталкивает его выдумать.
+ */
+function ScreenFields({
+  screen,
+  onScreen,
+  apps,
+}: {
+  screen: ScreenRule | null;
+  onScreen: (v: ScreenRule | null) => void;
+  apps: { packageName: string; label: string }[];
+}) {
+  const on = screen !== null;
+  const limit = screen?.limitMin ?? DEFAULT_SCREEN_HABIT_LIMIT_MIN;
+
+  const pick = (app: string, label: string) => onScreen({ app, label, limitMin: limit });
+  // Шаг в полчаса: лимит в «4 ч 17 мин» — ложная точность, которую всё равно никто не
+  // выдержит глазами.
+  const step = (delta: number) =>
+    onScreen({
+      ...(screen as ScreenRule),
+      limitMin: Math.min(MAX_SCREEN_HABIT_LIMIT_MIN, Math.max(SCREEN_LIMIT_STEP_MIN, limit + delta * SCREEN_LIMIT_STEP_MIN)),
+    });
+
+  return (
+    <>
+      <Pressable
+        onPress={() =>
+          onScreen(on ? null : { app: TOTAL_APP, label: "Всё экранное время", limitMin: DEFAULT_SCREEN_HABIT_LIMIT_MIN })
+        }
+        accessibilityRole="switch"
+        accessibilityState={{ checked: on }}
+        style={({ pressed }) => [styles.screenToggle, pressed && styles.dimmed]}
+      >
+        <Feather name={on ? "check-square" : "square"} size={14} color={on ? colors.accentGreen : colors.textMuted} />
+        <Text style={[styles.editLabel, styles.screenToggleText, on && styles.screenToggleTextOn]}>
+          Считать из Creker
+        </Text>
+      </Pressable>
+
+      {on && (
+        <>
+          <Text style={styles.editHint}>
+            Отмечается сама: уложился в лимит — день засчитан, превысил — нет. Отметить
+            руками всё равно можно, и рука главнее — свою отметку Creker не перебьёт.
+          </Text>
+
+          <Text style={styles.editLabel}>За чем следить</Text>
+          <View style={styles.chipRow}>
+            <Pressable
+              onPress={() => pick(TOTAL_APP, "Всё экранное время")}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: isTotal(screen as ScreenRule) }}
+              style={({ pressed }) => [
+                styles.chip,
+                isTotal(screen as ScreenRule) && styles.chipOn,
+                pressed && styles.dimmed,
+              ]}
+            >
+              <Text style={[styles.chipText, isTotal(screen as ScreenRule) && styles.chipTextOn]}>Всё время</Text>
+            </Pressable>
+            {apps.map((a) => {
+              const chosen = screen?.app === a.packageName;
+              return (
+                <Pressable
+                  key={a.packageName}
+                  onPress={() => pick(a.packageName, a.label)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: chosen }}
+                  style={({ pressed }) => [styles.chip, chosen && styles.chipOn, pressed && styles.dimmed]}
+                >
+                  <Text style={[styles.chipText, chosen && styles.chipTextOn]}>{a.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {apps.length === 0 && (
+            <Text style={styles.editHint}>
+              Приложений в списке нет: Creker ещё ничего не перенёс. Пока можно взять всё
+              экранное время, а приложения появятся после первой синхронизации в «Creker».
+            </Text>
+          )}
+
+          <Text style={styles.editLabel}>Не больше</Text>
+          <View style={styles.stepRow}>
+            <Pressable onPress={() => step(-1)} accessibilityLabel="Уменьшить лимит" style={styles.stepBtn}>
+              <Feather name="minus" size={14} color={colors.textMuted} />
+            </Pressable>
+            <Text style={styles.limitValue}>{formatMinutes(limit)}</Text>
+            <Pressable onPress={() => step(1)} accessibilityLabel="Увеличить лимит" style={styles.stepBtn}>
+              <Feather name="plus" size={14} color={colors.textMuted} />
+            </Pressable>
+            <Text style={styles.editHint}>{`в день · ${screen?.label ?? "всё экранное время"}`}</Text>
+          </View>
+        </>
+      )}
+    </>
   );
 }
 
@@ -1154,6 +1364,23 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   timeRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  // Экранная привычка: переключатель, подсказка и шаг лимита.
+  screenToggle: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, paddingVertical: 4 },
+  screenToggleText: { marginTop: 0 },
+  screenToggleTextOn: { color: colors.accentGreen, fontWeight: "600" },
+  editHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 4, flexShrink: 1 },
+  // Тёплый — «сюда внимание», и превышенный лимит ровно такой случай.
+  overLimit: { color: colors.accent },
+  stepRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
+  // Своя ширина, а не общая от счётчика раз: «2 ч 30 мин» в восемнадцать точек не влезает.
+  limitValue: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "600",
+    fontVariant: ["tabular-nums"],
+    minWidth: 78,
+    textAlign: "center",
+  },
   timeLabel: { color: colors.textMuted, fontSize: 12, minWidth: 20 },
   timeValue: {
     color: colors.text,

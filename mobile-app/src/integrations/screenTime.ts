@@ -1,45 +1,95 @@
 import { getCrekerAppUsage, getCrekerScreenTime } from "../../modules/creker-usage";
 import { api } from "../api/client";
 import { perDayTarget } from "../lib/habits";
-import { decideScreenTimeHabit } from "../lib/screenTime";
+import { decideUsage, isTotal, type ScreenRule } from "../lib/screenTime";
 import { dateNDaysAgo, todayKey } from "../lib/date";
 import { normalizeAppDay, normalizeScreenDay, relabel } from "../lib/screen/usage";
 import { resolveAppInfo } from "./usageSync";
 import type { Habit, HabitLog } from "../types";
 
 /**
- * Auto-ticks (or un-ticks) the "screentime" habit for `date` from creker's data,
- * if that habit exists and creker's number for the day is one we can stand behind
- * — see decideScreenTimeHabit for that rule. Silent no-op otherwise: no creker
- * installed, nothing synced yet, a row creker hasn't caught up on, or no
- * screen-time habit are all the same "nothing to do" case, not errors. Habits
- * without `auto: "screentime"` are untouched, so everything else — and this one,
- * on days creker can't speak for — stays manual.
+ * Отмечает экранные привычки за день по данным, которые уже лежат у нас.
  *
- * Returns whether the habit's state was actually set from creker's data.
+ * Раньше такая привычка была одна, следила за всем экранным временем и спрашивала creker
+ * напрямую. Теперь их может быть сколько угодно, и каждая смотрит на своё: одна на тикток,
+ * другая на всё сразу. Поэтому и источник сменился на свою копию истории — в ней есть
+ * разбивка по приложениям, и она переживёт удаление creker, ради чего её и завели.
+ *
+ * Молчаливый ноль — нормальное состояние, а не ошибка: нет экранных привычек, нет данных за
+ * день, creker отстал и не может ручаться за «уложился» — всё это «делать нечего».
+ *
+ * Возвращает, сколько привычек действительно отметилось.
  */
-export async function syncScreenTimeHabit(habits: Habit[], date: string): Promise<boolean> {
-  const target = habits.find((h) => h.auto === "screentime");
-  if (!target) return false;
+export async function syncScreenHabits(habits: Habit[], date: string): Promise<number> {
+  const watching = habits.filter((h) => h.auto === "screentime" && h.screen);
+  if (watching.length === 0) return 0;
 
-  // A day the person set by hand is theirs: unticking "экранное время в норме" used to last
-  // only until the next visit to the tab, when this sync quietly put it back.
+  // День человек мог отметить руками — это его день. Раньше снятая галочка «экранное время
+  // в норме» держалась только до следующего захода на вкладку, где синхронизация тихо
+  // ставила её обратно.
   const logs = (await api.getHabitLog(date, date)) as HabitLog[];
-  if (logs.some((l) => l.habitId === target.id && l.manual)) return false;
+  const manual = new Set(logs.filter((l) => l.manual).map((l) => l.habitId));
 
-  const rows = await getCrekerScreenTime(date, date);
-  const row = rows.find((r) => r.date === date);
-  if (!row) return false;
+  // Разбивка по приложениям читается только если она кому-то нужна: у привычки «всё
+  // экранное время» она лишняя, а список приложений за день — самая длинная из этих таблиц.
+  const needApps = watching.some((h) => !isTotal(h.screen as ScreenRule));
+  const [days, apps] = await Promise.all([
+    api.getScreenDays(date, date),
+    needApps ? api.getScreenApps(date, date) : Promise.resolve([]),
+  ]);
 
-  const limitMin = await api.getScreenTimeLimitMinutes();
-  const verdict = decideScreenTimeHabit(row, limitMin, Date.now(), date);
-  if (verdict.action !== "tick") return false;
+  /*
+   * Отметка о свежести — одна на весь день, и берётся она из общей строки.
+   *
+   * У строки приложения своей нет: creker считает её тем же проходом, что и день целиком,
+   * и отдельного «досчитано до» у неё не бывает. Значит, доверие к минутам тиктока — это
+   * доверие к тому, докуда домерен день.
+   */
+  const day = days.find((d) => d.date === date);
+  const updatedAt = day?.updatedAt ?? 0;
+  const now = Date.now();
 
-  // The auto habit is a plain yes/no, so its day is written straight to full or empty
-  // rather than stepped: creker's answer is not a tap.
-  const perDay = perDayTarget(target);
-  await api.setHabitProgress(target.id, date, verdict.withinLimit ? perDay : 0, perDay);
-  return true;
+  let ticked = 0;
+  for (const habit of watching) {
+    if (manual.has(habit.id)) continue;
+    const rule = habit.screen as ScreenRule;
+    const used = isTotal(rule)
+      ? day?.screenMillis
+      : apps.filter((a) => a.date === date && a.packageName === rule.app).reduce((n, a) => n + a.usageMillis, 0);
+    // Нет строки дня вовсе — сказать нечего. А вот ноль минут в приложении, когда день
+    // домерен, — это настоящий ответ: не открывал.
+    if (used === undefined) continue;
+
+    const verdict = decideUsage(used, updatedAt, rule.limitMin, now, date);
+    if (verdict.action !== "tick") continue;
+
+    // Привычка тут «да или нет», поэтому день пишется сразу полным или пустым, а не
+    // шагами: ответ creker — это не нажатие.
+    const perDay = perDayTarget(habit);
+    await api.setHabitProgress(habit.id, date, verdict.withinLimit ? perDay : 0, perDay);
+    ticked += 1;
+  }
+
+  return ticked;
+}
+
+/**
+ * Сколько минут ушло на то, за чем следит привычка, за этот день.
+ *
+ * Для строки в чек-листе: там нужно не «уложился или нет», а само число — «1 ч 12 мин из
+ * 5 ч». `null` значит, что данных за день нет вовсе.
+ */
+export async function usedMinutes(rule: ScreenRule, date: string): Promise<number | null> {
+  if (isTotal(rule)) {
+    const days = await api.getScreenDays(date, date);
+    const day = days.find((d) => d.date === date);
+    return day ? Math.round(day.screenMillis / 60_000) : null;
+  }
+  const apps = await api.getScreenApps(date, date);
+  const rows = apps.filter((a) => a.date === date && a.packageName === rule.app);
+  const days = await api.getScreenDays(date, date);
+  if (!days.some((d) => d.date === date)) return null;
+  return Math.round(rows.reduce((n, a) => n + a.usageMillis, 0) / 60_000);
 }
 
 /**

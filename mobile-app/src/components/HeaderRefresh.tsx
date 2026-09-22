@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { colors } from "../theme/colors";
 import { todayKey } from "../lib/date";
-import { syncScreenTimeHabit } from "../integrations/screenTime";
+import { syncScreenHabits } from "../integrations/screenTime";
 import type { Habit } from "../types";
 
 /**
@@ -30,7 +30,7 @@ export default function HeaderRefresh() {
     const settle = new Promise((resolve) => setTimeout(resolve, 400));
     try {
       const habits = (await api.getHabits()) as Habit[];
-      if (habits.length > 0) await syncScreenTimeHabit(habits, todayKey());
+      if (habits.length > 0) await syncScreenHabits(habits, todayKey());
       await qc.invalidateQueries();
     } finally {
       await settle;

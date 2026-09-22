@@ -29,6 +29,7 @@ import { normalizeWeightEntry, type WeightEntry } from "../lib/balance/weight";
 import { CATALOG_DISHES, CATALOG_PRODUCTS } from "../lib/balance/catalog";
 import { normalizeAppDay, normalizeScreenDay, type AppDay, type ScreenDay } from "../lib/screen/usage";
 import { isEmptyHourlyDay, normalizeHourlyDay, type HourlyDay } from "../lib/screen/hours";
+import { TOTAL_APP, type ScreenRule } from "../lib/screenTime";
 import { MAX_DAY_ML, normalizeWaterDay, type WaterDay } from "../lib/balance/water";
 
 // Local-only storage: no account, no server. Everything lives in
@@ -196,6 +197,7 @@ async function ensureSeeded() {
   if ((await AsyncStorage.getItem(KEYS.habits)) === null) await write(KEYS.habits, DEFAULT_HABITS);
   if ((await AsyncStorage.getItem(KEYS.rewardOptions)) === null) await write(KEYS.rewardOptions, DEFAULT_REWARD_OPTIONS);
   await migrateHabitCreatedAt();
+  await migrateScreenRule();
   // After it, not before: this one reads createdAt.
   await repairNowSinceOnce();
   await dropTriggers();
@@ -265,6 +267,29 @@ async function migrateHabitCreatedAt(): Promise<void> {
   await write(
     KEYS.habits,
     habits.map((h) => (h.createdAt ? h : { ...h, createdAt: firstMark.get(h.id) ?? today })),
+  );
+}
+
+/**
+ * Достраивает правило экранной привычке, заведённой до того, как правила появились.
+ *
+ * Такая привычка была ровно одна и следила за всем экранным временем сразу, а планку брала
+ * из общей настройки. Теперь планка своя у каждой, и старая привычка получает ту же, что
+ * была у неё до сих пор, — иначе после обновления она бы молча сменила смысл.
+ */
+async function migrateScreenRule(): Promise<void> {
+  const habits = await read<Habit[]>(KEYS.habits, []);
+  const stale = habits.filter((h) => h.auto === "screentime" && !h.screen);
+  if (stale.length === 0) return;
+
+  const limitMin = await read(KEYS.screenTimeLimit, DEFAULT_SCREEN_TIME_LIMIT_MIN);
+  await write(
+    KEYS.habits,
+    habits.map((h) =>
+      h.auto === "screentime" && !h.screen
+        ? { ...h, screen: { app: TOTAL_APP, label: "Всё экранное время", limitMin } }
+        : h,
+    ),
   );
 }
 
@@ -393,6 +418,8 @@ export const api = {
       target?: HabitTarget;
       /** null clears the schedule; undefined leaves it as it was. */
       schedule?: HabitSchedule | null;
+      /** null снимает автоматический подсчёт; undefined оставляет как было. */
+      screen?: ScreenRule | null;
     },
   ): Promise<{ ok: true }> {
     return withKeyLock(KEYS.habits, async () => {
@@ -402,8 +429,22 @@ export const api = {
         habits.map((h) => {
           if (h.id !== id) return h;
           const joiningNow = data.group === "now" && habitGroup(h) !== "now";
-          const { schedule, ...rest } = data;
+          const { schedule, screen, ...rest } = data;
           const next: Habit = { ...h, ...rest };
+          /*
+           * Признак «считается сам» и правило снимаются вместе.
+           *
+           * Оставить `auto` без правила значило бы получить привычку, которая объявляет себя
+           * автоматической и не знает, за чем следит: она перестала бы отмечаться руками и
+           * не отмечалась бы сама.
+           */
+          if (screen === null) {
+            delete next.screen;
+            delete next.auto;
+          } else if (screen !== undefined) {
+            next.screen = screen;
+            next.auto = "screentime";
+          }
           if (schedule === null) delete next.schedule;
           else if (schedule !== undefined) {
             const clean = normalizeSchedule(schedule);

@@ -1,4 +1,5 @@
 import type { HabitLevel } from "./lib/level";
+import type { ScreenRule } from "./lib/screenTime";
 
 /**
  * Which pile a habit or a trigger sits in.
@@ -78,6 +79,14 @@ export interface Habit {
    *  instead of by tapping — currently only "screentime" (from creker), see
    *  src/integrations/screenTime.ts. */
   auto?: "screentime" | null;
+  /**
+   * Что именно считается автоматически: какое приложение и сколько ему позволено.
+   *
+   * Отсутствует у привычки, которая была экранной до того, как эти привычки научились
+   * смотреть на одно приложение: у неё правилом было «всё экранное время» и общий лимит из
+   * настроек. Такую разбирает миграция — см. migrateScreenRule.
+   */
+  screen?: ScreenRule | null;
   /**
    * When in the day — and, for a weekly habit, on which days — it is supposed to happen.
    *

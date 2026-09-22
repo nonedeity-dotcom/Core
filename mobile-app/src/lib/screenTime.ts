@@ -35,6 +35,47 @@ export function endOfLocalDay(date: string): number {
 }
 
 /**
+ * Правило привычки: какое приложение и сколько ему позволено.
+ *
+ * `app` — либо имя пакета, либо `TOTAL_APP` для всего экранного времени. Название хранится
+ * рядом с пакетом: приложение могут удалить, а привычка «не больше часа в тиктоке» должна
+ * остаться читаемой и после этого.
+ */
+export interface ScreenRule {
+  app: string;
+  label?: string;
+  limitMin: number;
+}
+
+/** «Всё экранное время» — не пакет, и спутать его с пакетом нельзя: точка в начале. */
+export const TOTAL_APP = ".total";
+
+export const isTotal = (rule: ScreenRule): boolean => rule.app === TOTAL_APP;
+
+/** Потолок лимита — тот же, что и в редакторе: шестнадцать часов, дольше суток не бывает. */
+export const MAX_LIMIT_MIN = 16 * 60;
+
+/**
+ * Правило из чего угодно — для восстановления из резервной копии.
+ *
+ * Без него привычка «не больше часа в тиктоке» пережила бы перенос на новый телефон
+ * обычной привычкой с галочкой: разбор копии собирает привычку по известным полям, а всё
+ * остальное молча отбрасывает.
+ */
+export function normalizeScreenRule(value: unknown): ScreenRule | null {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.app !== "string" || v.app === "") return null;
+  const limit = typeof v.limitMin === "number" && Number.isFinite(v.limitMin) ? Math.round(v.limitMin) : 0;
+  if (limit <= 0) return null;
+  return {
+    app: v.app,
+    ...(typeof v.label === "string" && v.label !== "" ? { label: v.label } : {}),
+    limitMin: Math.min(MAX_LIMIT_MIN, limit),
+  };
+}
+
+/**
  * What creker's row for `date` actually licenses us to say about the habit.
  *
  * `screenMillis` only ever grows during a day, which makes the two directions
@@ -53,14 +94,36 @@ export function decideScreenTimeHabit(
   date: string,
 ): ScreenTimeVerdict {
   if (!row) return { action: "skip", reason: "no-data" };
+  return decideUsage(row.screenMillis, row.updatedAt, limitMin, nowMs, date);
+}
 
-  if (row.screenMillis > limitMin * 60_000) return { action: "tick", withinLimit: false };
+/**
+ * То же решение, но про любое время, а не только про общее.
+ *
+ * Отдельная функция понадобилась, когда привычка научилась смотреть на одно приложение:
+ * у строки приложения своей отметки о свежести нет, она есть только у дня целиком. То
+ * есть время берётся из одной строки, а доверие к нему — из другой, и склеивать их
+ * внутри правила было бы неправдой о том, что оно знает.
+ *
+ * Асимметрия та же и по той же причине: израсходованное время только растёт. «Превысил» —
+ * утверждение про уже случившееся, и его можно сделать даже по отставшей строке.
+ * «Уложился» — утверждение про весь день, и непосчитанный день читается нулём, то есть
+ * сутками в телефоне выглядел бы образцовым.
+ */
+export function decideUsage(
+  usedMillis: number,
+  updatedAt: number,
+  limitMin: number,
+  nowMs: number,
+  date: string,
+): ScreenTimeVerdict {
+  if (usedMillis > limitMin * 60_000) return { action: "tick", withinLimit: false };
 
   // No stamp at all: nothing was measured, so there is nothing to compare.
-  if (!row.updatedAt) return { action: "skip", reason: "incomplete" };
+  if (!updatedAt) return { action: "skip", reason: "incomplete" };
 
   const measuredThrough = Math.min(nowMs, endOfLocalDay(date));
-  if (measuredThrough - row.updatedAt > FRESHNESS_TOLERANCE_MS) {
+  if (measuredThrough - updatedAt > FRESHNESS_TOLERANCE_MS) {
     return { action: "skip", reason: "incomplete" };
   }
   return { action: "tick", withinLimit: true };

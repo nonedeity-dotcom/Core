@@ -22,6 +22,7 @@ import { normalizeDayOff } from "./dayOff";
 import { normalizeGoals } from "./goals";
 import { normalizeTipPrefs } from "./tipLibrary";
 import { normalizeLateRule, normalizeSchedule } from "./habitSchedule";
+import { normalizeScreenRule } from "./screenTime";
 import { normalizeProfile } from "./balance/profile";
 import { normalizeDish, normalizeEntry, normalizeProduct } from "./balance/food";
 import { normalizeWeightEntry } from "./balance/weight";
@@ -240,6 +241,9 @@ function parseData(raw: unknown): BackupData {
           group: isGroup(h.group) ? h.group : "now",
           target: parseTarget(h.target),
           auto: h.auto === "screentime" ? "screentime" : null,
+          // Вместе с `auto`, а не отдельно: без правила привычка объявила бы себя
+          // автоматической и не знала бы, за чем следит.
+          ...(normalizeScreenRule(h.screen) ? { screen: normalizeScreenRule(h.screen) } : {}),
           // Carried through rather than rebuilt from the parts above. Without these a
           // restore quietly undid three of the rules the streak runs on: an undated habit
           // judges nothing, one that lost `nowSince` starts answering for the days it spent
