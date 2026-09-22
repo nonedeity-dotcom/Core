@@ -17,7 +17,7 @@ import type { Section } from "./sections";
 
 const ITEMS: { id: Section; title: string; icon: React.ComponentProps<typeof Feather>["name"] }[] = [
   { id: "home", title: "Главная", icon: "home" },
-  { id: "sterzhen", title: "Стержень", icon: "check-square" },
+  { id: "sterzhen", title: "Sterzhen", icon: "check-square" },
   { id: "balance", title: "CaloriX", icon: "pie-chart" },
   { id: "screen", title: "Creker", icon: "smartphone" },
   { id: "more", title: "Ещё", icon: "more-horizontal" },
