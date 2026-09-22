@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavigationContainer, DarkTheme, createNavigationContainerRef } from "@react-navigation/native";
-import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { BackHandler, Pressable, View } from "react-native";
+import { BackHandler, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
 
@@ -33,7 +32,10 @@ import GamesScreen from "../screens/games/GamesScreen";
 import WordSearchScreen from "../screens/games/WordSearchScreen";
 import RewardsScreen from "../screens/rewards/RewardsScreen";
 import PathScreen from "../screens/PathScreen";
-import SectionMenu, { type Section } from "./SectionMenu";
+import SectionBar from "./SectionBar";
+import TabChips from "./TabChips";
+import MoreScreen from "../screens/MoreScreen";
+import { SECTION_TITLES, type Section } from "./sections";
 import { CHANNEL_LABELS, type ReminderChannel } from "../notifications/reminders";
 
 // Меню разделов живёт рядом с навигатором, а не внутри экрана, поэтому своего `navigation`
@@ -43,7 +45,6 @@ const navRef = createNavigationContainerRef();
 /** Насколько глубоко помнится путь по разделам. Дальше — уже не «назад», а история. */
 const SECTION_HISTORY = 10;
 
-const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
 const navTheme = {
@@ -51,117 +52,26 @@ const navTheme = {
   colors: { ...DarkTheme.colors, background: colors.bg, card: colors.card, border: colors.cardBorder },
 };
 
-// No screen declared a tabBarIcon, so React Navigation fell back to its
-// built-in placeholder — a "⏷" glyph that the Android system font has no
-// character for, which is why the tabs showed empty tofu boxes on a real
-// device. Each tab names its own icon now.
-type FeatherName = React.ComponentProps<typeof Feather>["name"];
-
-const icon =
-  (name: FeatherName) =>
-  ({ color, size }: { color: string; size: number }) => <Feather name={name} size={size} color={color} />;
-
-function Tabs() {
-  return (
-    <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: colors.text,
-        tabBarInactiveTintColor: colors.textMuted,
-        tabBarStyle: { backgroundColor: colors.card, borderTopColor: colors.cardBorder },
-        // Five tabs — ~64px each on a 320px screen. "Статистика" is the longest label the
-        // bar has ever carried, so it sets the size rather than the count.
-        tabBarLabelStyle: { fontSize: 10 },
-        tabBarItemStyle: { paddingHorizontal: 0 },
-      }}
-    >
-      {/* Отчёт first: it opens on the tip of the day, which is the one thing worth seeing
-          before you have done anything. Чек-лист sits right next to it since that is what
-          the day actually runs on. It used to share the tab with a triggers list on a
-          switch; the triggers are gone, so the tab is the checklist and nothing else. */}
-      <Tab.Screen name="Отчёт" component={ReportScreen} options={{ tabBarIcon: icon("bar-chart-2") }} />
-      <Tab.Screen name="Чек-лист" component={TodayScreen} options={{ tabBarIcon: icon("check-square") }} />
-      <Tab.Screen name="Фокус" component={FocusScreen} options={{ tabBarIcon: icon("target") }} />
-      <Tab.Screen name="Энергия" component={EnergyScreen} options={{ tabBarIcon: icon("activity") }} />
-      {/* Last, and deliberately so: the long view is for looking back, not for the thing you
-          open the app to do. */}
-      <Tab.Screen name="Статистика" component={StatsScreen} options={{ tabBarIcon: icon("trending-up") }} />
-    </Tab.Navigator>
-  );
-}
-
 /**
- * CaloriX — второй раздел приложения, со своим набором вкладок.
+ * Раздел с вкладками наверху.
  *
- * Три вкладки в порядке от ежедневного к разовому: дневник открывают каждый день,
- * статистику — раз в неделю посмотреть, куда всё идёт, а профиль настраивают один раз и
- * возвращаются к нему, только когда меняется вес или цель.
- */
-function BalanceTabs() {
-  return (
-    <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: colors.text,
-        tabBarInactiveTintColor: colors.textMuted,
-        tabBarStyle: { backgroundColor: colors.card, borderTopColor: colors.cardBorder },
-        tabBarLabelStyle: { fontSize: 10 },
-        tabBarItemStyle: { paddingHorizontal: 0 },
-      }}
-    >
-      {/* Дневник первым: за ним открывают CaloriX каждый день, а профиль настраивают раз. */}
-      <Tab.Screen name="Дневник" component={DiaryScreen} options={{ tabBarIcon: icon("book-open") }} />
-      <Tab.Screen name="Статистика" component={BalanceStatsScreen} options={{ tabBarIcon: icon("trending-up") }} />
-      <Tab.Screen name="Профиль" component={BalanceProfileScreen} options={{ tabBarIcon: icon("user") }} />
-    </Tab.Navigator>
-  );
-}
-
-/**
- * «Экран» — раздел о времени в телефоне.
+ * Навигатора у вкладок больше нет: внизу теперь стоят разделы, и вторая полоса там не
+ * помещается, а выносить чужой навигатор наверх — это подпорка ради подпорки. Вкладка
+ * здесь — просто выбранный экран, и переключается она тем же чипом, каким в приложении
+ * выбирают всё остальное.
  *
- * Одна вкладка, и вкладочной панели под ней не будет: навигатор здесь нужен только чтобы
- * раздел вёл себя как остальные два, а второго экрана в нём нет — приложение открывается
- * поверх, из списка.
+ * Уходя со вкладки, экран размонтируется. Это не потеря: данные лежат в кэше запросов и
+ * возвращаются мгновенно, а держать в памяти пять экранов ради сохранённой прокрутки —
+ * плата не по товару.
  */
-/**
- * «Игры» — раздел на перерыв.
- *
- * Как и «Экран», одна вкладка без панели внизу: игры открываются поверх, из списка. Панель с
- * одной кнопкой — это полоска, которая ничего не переключает.
- */
-function GameTabs() {
+function TabbedSection({ tabs }: { tabs: { title: string; render: () => React.ReactElement }[] }) {
+  const [index, setIndex] = useState(0);
+  const current = tabs[Math.min(index, tabs.length - 1)];
   return (
-    <Tab.Navigator screenOptions={{ headerShown: false, tabBarStyle: { display: "none" } }}>
-      <Tab.Screen name="Игры" component={GamesScreen} />
-    </Tab.Navigator>
-  );
-}
-
-/**
- * «Награды» — кошелёк, магазин и титулы.
- *
- * Тоже одна вкладка без панели: внутри экрана и так три переключателя, и четвёртая полоска
- * внизу была бы вторым рядом вкладок над тем же самым.
- */
-function RewardTabs() {
-  return (
-    <Tab.Navigator screenOptions={{ headerShown: false, tabBarStyle: { display: "none" } }}>
-      <Tab.Screen name="Награды" component={RewardsScreen} />
-    </Tab.Navigator>
-  );
-}
-
-function ScreenTabs() {
-  return (
-    <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarStyle: { display: "none" },
-      }}
-    >
-      <Tab.Screen name="Экран" component={UsageScreen} />
-    </Tab.Navigator>
+    <View style={{ flex: 1 }}>
+      {tabs.length > 1 && <TabChips titles={tabs.map((t) => t.title)} index={index} onChange={setIndex} />}
+      <View style={{ flex: 1 }}>{current.render()}</View>
+    </View>
   );
 }
 
@@ -183,7 +93,6 @@ export default function RootTabs() {
    */
   const [history, setHistory] = useState<Section[]>(["home"]);
   const section = history[history.length - 1];
-  const [menuOpen, setMenuOpen] = useState(false);
 
   /** Открыть раздел. Повторный выбор того же самого стопку не растит. */
   const openSection = (next: Section) =>
@@ -226,23 +135,9 @@ export default function RootTabs() {
         <Stack.Screen
           name="Tabs"
           options={() => ({
-            // No title: every tab already says what it is, and a second title
-            // row would just eat height on a 640px screen.
-            headerTitle: "",
-            headerLeft: () => (
-              <Pressable
-                onPress={() => setMenuOpen(true)}
-                accessibilityRole="button"
-                accessibilityLabel="Разделы"
-                hitSlop={12}
-                style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, paddingRight: 4 })}
-              >
-                <Feather name="menu" size={20} color={colors.textMuted} />
-              </Pressable>
-            ),
-            // Шестерёнка ушла в меню разделов: настройки настраивают все три раздела, и
-            // место им там же, где эти разделы выбирают, — а в шапке остаётся то, что
-            // относится к текущему экрану.
+            // Заголовок называет раздел, а не экран: кнопка внизу показывает, где ты, но
+            // подсвеченная иконка в десять точек — самый тихий способ это сказать.
+            headerTitle: SECTION_TITLES[section],
             headerRight: () => (
               <View style={{ flexDirection: "row", alignItems: "center" }}>
                 {section === "sterzhen" && <HeaderRefresh />}
@@ -250,21 +145,42 @@ export default function RootTabs() {
             ),
           })}
         >
-          {() =>
-            section === "home" ? (
-              <HomeScreen onOpen={openSection} />
-            ) : section === "sterzhen" ? (
-              <Tabs />
-            ) : section === "balance" ? (
-              <BalanceTabs />
-            ) : section === "games" ? (
-              <GameTabs />
-            ) : section === "rewards" ? (
-              <RewardTabs />
-            ) : (
-              <ScreenTabs />
-            )
-          }
+          {({ navigation }) => (
+            <View style={{ flex: 1 }}>
+              <View style={{ flex: 1 }}>
+                {section === "home" ? (
+                  <HomeScreen onOpen={openSection} />
+                ) : section === "sterzhen" ? (
+                  <TabbedSection
+                    tabs={[
+                      { title: "Отчёт", render: () => <ReportScreen navigation={navigation} /> },
+                      { title: "Чек-лист", render: () => <TodayScreen /> },
+                      { title: "Фокус", render: () => <FocusScreen /> },
+                      { title: "Энергия", render: () => <EnergyScreen /> },
+                      { title: "Статистика", render: () => <StatsScreen /> },
+                    ]}
+                  />
+                ) : section === "balance" ? (
+                  <TabbedSection
+                    tabs={[
+                      { title: "Дневник", render: () => <DiaryScreen navigation={navigation} /> },
+                      { title: "Статистика", render: () => <BalanceStatsScreen /> },
+                      { title: "Профиль", render: () => <BalanceProfileScreen /> },
+                    ]}
+                  />
+                ) : section === "games" ? (
+                  <GamesScreen navigation={navigation} />
+                ) : section === "rewards" ? (
+                  <RewardsScreen />
+                ) : section === "more" ? (
+                  <MoreScreen onOpen={openSection} navigation={navigation} />
+                ) : (
+                  <UsageScreen navigation={navigation} />
+                )}
+              </View>
+              <SectionBar section={section} onSelect={openSection} />
+            </View>
+          )}
         </Stack.Screen>
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: "Настройки" }} />
         <Stack.Screen name="Library" component={LibraryScreen} options={{ title: "Подсказки" }} />
@@ -307,14 +223,6 @@ export default function RootTabs() {
           options={({ route }) => ({ title: goalScreenTitle((route.params as { period: string }).period) })}
         />
       </Stack.Navigator>
-
-      <SectionMenu
-        visible={menuOpen}
-        section={section}
-        onClose={() => setMenuOpen(false)}
-        onSelect={openSection}
-        onSettings={() => navRef.current?.navigate("Settings" as never)}
-      />
     </NavigationContainer>
   );
 }

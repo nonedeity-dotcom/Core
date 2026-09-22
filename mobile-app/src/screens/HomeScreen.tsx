@@ -19,8 +19,7 @@ import { formatCompact } from "../lib/screen/duration";
 import { hasUsageAccess } from "../../modules/creker-usage";
 import { syncUsage } from "../integrations/usageSync";
 import RotatingTip from "../components/RotatingTip";
-import { useNavigation } from "@react-navigation/native";
-import type { Section } from "../navigation/SectionMenu";
+import type { Section } from "../navigation/sections";
 import type { GameStats } from "../lib/games/stats";
 import type { Purse } from "../lib/rewards/currency";
 import { titleName } from "../lib/rewards/catalog";
@@ -38,12 +37,6 @@ import { titleName } from "../lib/rewards/catalog";
  * закрываться за три секунды.
  */
 export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => void }) {
-  /*
-   * Главная — не экран навигатора, а то, что он показывает вместо разделов, и своего
-   * `navigation` в свойствах у неё нет. «Путь» при этом открывается поверх, как настройки,
-   * поэтому ссылка на навигатор берётся из контекста.
-   */
-  const nav = useNavigation() as { navigate: (screen: string) => void };
   const { data: gameStats } = useQuery<GameStats>({ queryKey: ["gameStats"], queryFn: () => api.getGameStats() });
   const solvedGames = gameStats?.wordsearch.solved ?? 0;
   /*
@@ -206,59 +199,10 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
         }
       />
 
-      {/* Игры — узкой строкой, а не карточкой в ряд с тремя.
-          Те три отвечают числом про сегодняшний день: сколько привычек, сколько съедено,
-          сколько экрана. У игр такого числа нет и быть не должно — «собрано 12 полей» это не
-          про сегодня. Поставить их карточкой значило бы сказать, что играть надо было. */}
-      <Pressable
-        onPress={() => onOpen("games")}
-        accessibilityRole="button"
-        accessibilityLabel="Игры"
-        style={({ pressed }) => [styles.gamesRow, pressed && { opacity: 0.7 }]}
-      >
-        <Feather name="grid" size={15} color={colors.textMuted} />
-        <Text style={styles.gamesText}>
-          {solvedGames > 0
-            ? `Игры · собрано ${solvedGames} ${plural(solvedGames, ["поле", "поля", "полей"])}`
-            : "Игры · размяться головой на перерыве"}
-        </Text>
-        <Text style={styles.gamesChevron}>›</Text>
-      </Pressable>
-
-      {/* Награды — такой же узкой строкой и сразу под играми: это про то же самое, только
-          не «чем заняться», а «что за это дали». Числом про сегодня они тоже не отвечают. */}
-      <Pressable
-        onPress={() => onOpen("rewards")}
-        accessibilityRole="button"
-        accessibilityLabel="Награды"
-        style={({ pressed }) => [styles.gamesRow, styles.tightRow, pressed && { opacity: 0.7 }]}
-      >
-        <Feather name="award" size={15} color={colors.textMuted} />
-        <Text style={styles.gamesText}>
-          {purse
-            ? `${worn !== "" ? `${worn} · ` : ""}${purse.wallet.sparks} ${plural(purse.wallet.sparks, [
-                "искра",
-                "искры",
-                "искр",
-              ])} · ${purse.wallet.cores} ${plural(purse.wallet.cores, ["ядро", "ядра", "ядер"])}`
-            : "Награды · искры, ядра и титулы"}
-        </Text>
-        <Text style={styles.gamesChevron}>›</Text>
-      </Pressable>
-
-      {/* «Путь» — третьей строкой и последней: это единственное на экране, что не про
-          сегодня вообще. Открывается поверх, а не разделом: туда не «переходят жить», туда
-          заглядывают. */}
-      <Pressable
-        onPress={() => nav.navigate("Path")}
-        accessibilityRole="button"
-        accessibilityLabel="Путь"
-        style={({ pressed }) => [styles.gamesRow, styles.tightRow, pressed && { opacity: 0.7 }]}
-      >
-        <Feather name="map" size={15} color={colors.textMuted} />
-        <Text style={styles.gamesText}>Путь · весь год клетками и всё, что было</Text>
-        <Text style={styles.gamesChevron}>›</Text>
-      </Pressable>
+      {/* Игры, награды и путь ушли в «Ещё».
+          Здесь они были тремя одинаковыми серыми строками, и каждая новая вещь делала
+          Главную всё больше похожей на список ссылок вместо ответа на вопрос «как идёт
+          день». Внизу для них теперь есть своя кнопка. */}
 
       {/* Подсказка живёт здесь, и только здесь: главную открывают каждый раз, и это
           единственное на экране, что не является числом про тебя. */}
