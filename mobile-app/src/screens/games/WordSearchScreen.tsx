@@ -7,7 +7,7 @@ import { api } from "../../api/client";
 import { colors } from "../../theme/colors";
 import { plural } from "../../lib/plural";
 import { todayKey } from "../../lib/date";
-import { WORD_THEMES, type WordTheme } from "../../content/wordThemes";
+import { WORD_THEMES, themeOpen, type WordTheme } from "../../content/wordThemes";
 import {
   CROSSINGS,
   DIFFICULTY_HINTS,
@@ -285,13 +285,19 @@ export default function WordSearchScreen({
 
         <Text style={styles.label}>Тема</Text>
         <View style={styles.chipRow}>
-          {WORD_THEMES.map((t) => (
-            <Chip key={t.id} on={t.id === theme.id} onPress={() => setTheme(t)}>
-              {t.title}
-            </Chip>
-          ))}
+          {WORD_THEMES.map((t) => {
+            const open = themeOpen(t, purse?.owned ?? []);
+            return (
+              <Chip key={t.id} on={t.id === theme.id} locked={!open} onPress={() => open && setTheme(t)}>
+                {t.title}
+              </Chip>
+            );
+          })}
         </View>
         <Text style={styles.hint}>{theme.hint}</Text>
+        {WORD_THEMES.some((t) => !themeOpen(t, purse?.owned ?? [])) && (
+          <Text style={styles.hint}>Темы с замком открываются за ядра — в разделе «Награды».</Text>
+        )}
 
         <Text style={[styles.label, styles.spaced]}>Сложность</Text>
         <View style={styles.chipRow}>
@@ -538,15 +544,28 @@ function HintButton({
   );
 }
 
-function Chip({ on, onPress, children }: { on: boolean; onPress: () => void; children: string }) {
+function Chip({
+  on,
+  onPress,
+  children,
+  locked = false,
+}: {
+  on: boolean;
+  onPress: () => void;
+  children: string;
+  /** Запертая тема видна и не выбирается: скрыть её — значит не сказать, что она есть. */
+  locked?: boolean;
+}) {
   return (
     <Pressable
       onPress={onPress}
+      disabled={locked}
       accessibilityRole="radio"
-      accessibilityState={{ selected: on }}
-      style={({ pressed }) => [styles.chip, on && styles.chipOn, pressed && styles.dimmed]}
+      accessibilityState={{ selected: on, disabled: locked }}
+      style={({ pressed }) => [styles.chip, on && styles.chipOn, locked && styles.chipOff, pressed && styles.dimmed]}
     >
-      <Text style={[styles.chipText, on && styles.chipTextOn]}>{children}</Text>
+      {locked && <Feather name="lock" size={10} color={colors.textMuted} />}
+      <Text style={[styles.chipText, on && styles.chipTextOn, locked && styles.chipTextOff]}>{children}</Text>
     </Pressable>
   );
 }
@@ -579,6 +598,9 @@ const styles = StyleSheet.create({
   record: { color: colors.accentGreen, fontSize: 12, marginTop: 14 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 20,
@@ -587,8 +609,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
   },
   chipOn: { backgroundColor: "rgba(143,184,154,0.12)", borderColor: colors.accentGreen },
+  chipOff: { backgroundColor: colors.bg, borderStyle: "dashed" },
   chipText: { color: colors.textMuted, fontSize: 13 },
   chipTextOn: { color: colors.accentGreen, fontWeight: "600" },
+  chipTextOff: { opacity: 0.6 },
 
   /*
    * Отступ сверху — под строку состояния Android.

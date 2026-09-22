@@ -5,13 +5,24 @@ import { Feather } from "@expo/vector-icons";
 import { api } from "../../api/client";
 import { colors } from "../../theme/colors";
 import { plural } from "../../lib/plural";
-import { formatDateShort } from "../../lib/date";
+import { formatDateShort, todayKey } from "../../lib/date";
 import { useRewards } from "../../lib/rewards/useRewards";
-import { buy, canAfford, equip, formatAmount, type Purse, type Slot } from "../../lib/rewards/currency";
+import {
+  MELT,
+  buy,
+  canAfford,
+  equip,
+  formatAmount,
+  melt,
+  meltWaitDays,
+  type Purse,
+  type Slot,
+} from "../../lib/rewards/currency";
 import {
   ACCENTS,
   BUYABLE_TITLES,
   FIELD_PALETTES,
+  THEME_PACKS,
   TITLE_RULES,
   isOwned,
   nextTitle,
@@ -21,8 +32,18 @@ import {
   type ShopItem,
 } from "../../lib/rewards/catalog";
 
-/** В каком слоте живёт товар. Три вида товаров — три слота, и связь между ними одна. */
-const SLOTS: Record<ItemKind, Slot> = { fieldPalette: "palette", accent: "accent", title: "title" };
+/**
+ * В каком слоте живёт товар.
+ *
+ * У темы слов слота нет, и это не пропуск: её не надевают, а открывают — открытая тема
+ * просто появляется в выборе перед партией, все сразу и вместе.
+ */
+const SLOTS: Record<ItemKind, Slot | null> = {
+  fieldPalette: "palette",
+  accent: "accent",
+  title: "title",
+  theme: null,
+};
 
 type Tab = "shop" | "titles" | "history";
 
@@ -60,11 +81,18 @@ export default function RewardsScreen() {
     const bought = buy(purse, item.id, priceOf(item));
     if (!bought) return;
     const slot = SLOTS[item.kind];
-    const keep = slot === "title" && bought.equipped.title !== "";
-    purchase.mutate(keep ? bought : equip(bought, slot, item.id));
+    const keep = slot === null || (slot === "title" && bought.equipped.title !== "");
+    purchase.mutate(keep ? bought : equip(bought, slot as Slot, item.id));
   };
 
   const wear = (slot: Slot, id: string) => purchase.mutate(equip(purse, slot, id));
+
+  const today = todayKey();
+  const wait = meltWaitDays(purse, today);
+  const melting = () => {
+    const next = melt(purse, today);
+    if (next) purchase.mutate(next);
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -98,7 +126,56 @@ export default function RewardsScreen() {
 
       {tab === "shop" && (
         <>
-          <Text style={styles.sectionLabel}>Цвета найденных слов</Text>
+          <Text style={styles.sectionLabel}>Переплавка</Text>
+          <View style={styles.row}>
+            <Feather name="repeat" size={18} color={colors.textMuted} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>{`${MELT.sparks} искр → ${MELT.cores} ядро`}</Text>
+              <Text style={styles.rowHint}>
+                {wait > 0
+                  ? `Ещё ${wait} ${plural(wait, ["день", "дня", "дней"])}`
+                  : purse.wallet.sparks < MELT.sparks
+                    ? `Не хватает ${MELT.sparks - purse.wallet.sparks}`
+                    : "Раз в неделю, не чаще"}
+              </Text>
+            </View>
+            <Pressable
+              onPress={melting}
+              disabled={wait > 0 || purse.wallet.sparks < MELT.sparks}
+              accessibilityRole="button"
+              accessibilityLabel="Переплавить искры в ядро"
+              style={({ pressed }) => [
+                styles.buy,
+                (wait > 0 || purse.wallet.sparks < MELT.sparks) && styles.buyOff,
+                pressed && styles.dimmed,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.buyText,
+                  (wait > 0 || purse.wallet.sparks < MELT.sparks) && styles.buyTextOff,
+                ]}
+              >
+                переплавить
+              </Text>
+            </Pressable>
+          </View>
+          <Text style={styles.note}>
+            Курс скверный намеренно, и чаще раза в неделю нельзя. Иначе гора искр, которая
+            копится сама собой, превращалась бы в горсть ядер за один тап, и всё, что должно
+            стоить недель, покупалось бы за вечер.
+          </Text>
+
+          <Text style={[styles.sectionLabel, styles.spaced]}>Темы для «Найди слова»</Text>
+          <Text style={styles.note}>
+            Единственное здесь, что не красит, а прибавляет: пятьдесят новых слов — это не
+            другой оттенок полоски, а другая игра на вечер.
+          </Text>
+          {THEME_PACKS.map((item) => (
+            <ShopRow key={item.id} item={item} purse={purse} onBuy={() => take(item)} onWear={() => {}} />
+          ))}
+
+          <Text style={[styles.sectionLabel, styles.spaced]}>Цвета найденных слов</Text>
           {FIELD_PALETTES.map((item) => (
             <ShopRow
               key={item.id}
@@ -256,6 +333,56 @@ function Coin({
   );
 }
 
+/**
+ * Набор цветов на кусочке настоящего поля.
+ *
+ * Четыре полоски рядом показывали цвета и не показывали главного: как они выглядят
+ * полосами поверх клеток и не сливаются ли две соседние. За восемь ядер это кот в мешке —
+ * а здесь тот же самый рисунок, что будет в игре, только маленький.
+ */
+const P_CELL = 7;
+const P_GAP = 1;
+const P_STEP = P_CELL + P_GAP;
+const at = (n: number) => n * P_STEP;
+const span = (n: number) => n * P_STEP - P_GAP;
+
+/** Четыре слова на поле шесть на четыре: два поперёк, одно вдоль, одно короткое в углу. */
+const P_WORDS = [
+  { row: 0, col: 0, len: 3, across: true },
+  { row: 0, col: 4, len: 4, across: false },
+  { row: 2, col: 1, len: 3, across: true },
+  { row: 3, col: 0, len: 2, across: true },
+];
+
+function PalettePreview({ colors: palette }: { colors: string[] }) {
+  return (
+    <View style={{ width: span(6), height: span(4) }}>
+      {[0, 1, 2, 3].map((r) => (
+        <View key={r} style={{ flexDirection: "row", gap: P_GAP, marginBottom: P_GAP }}>
+          {[0, 1, 2, 3, 4, 5].map((c) => (
+            <View key={c} style={styles.previewCell} />
+          ))}
+        </View>
+      ))}
+      {P_WORDS.map((w, i) => (
+        <View
+          key={i}
+          style={{
+            position: "absolute",
+            left: at(w.col),
+            top: at(w.row),
+            width: w.across ? span(w.len) : P_CELL,
+            height: w.across ? P_CELL : span(w.len),
+            borderRadius: 3,
+            backgroundColor: palette[i % palette.length],
+            opacity: 0.55,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
 /** Полоска «сколько из скольки» под запертым титулом. */
 function Progress({ have, need }: { have: number; need: number }) {
   return (
@@ -302,15 +429,12 @@ function ShopRow({
 }) {
   const owned = isOwned(purse.owned, item);
   const affordable = canAfford(purse.wallet, priceOf(item));
-  const worn = purse.equipped[SLOTS[item.kind]] === item.id;
+  const slot = SLOTS[item.kind];
+  const worn = slot !== null && purse.equipped[slot] === item.id;
   return (
     <View style={[styles.row, worn && styles.rowOn]}>
       {item.colors ? (
-        <View style={styles.swatches}>
-          {item.colors.slice(0, 4).map((c) => (
-            <View key={c} style={[styles.swatch, { backgroundColor: c }]} />
-          ))}
-        </View>
+        <PalettePreview colors={item.colors} />
       ) : item.color ? (
         <View style={[styles.swatch, styles.swatchBig, { backgroundColor: item.color }]} />
       ) : (
@@ -321,7 +445,11 @@ function ShopRow({
         <Text style={styles.rowHint}>{item.hint}</Text>
       </View>
       {owned ? (
-        <Wear on={worn} onPress={onWear} />
+        slot === null ? (
+          <Text style={styles.ownedText}>открыто</Text>
+        ) : (
+          <Wear on={worn} onPress={onWear} />
+        )
       ) : (
         <Pressable
           onPress={onBuy}
@@ -390,7 +518,7 @@ const styles = StyleSheet.create({
   rowHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 2 },
   gain: { color: colors.accentGreen, fontSize: 11 },
 
-  swatches: { flexDirection: "row", gap: 2 },
+  previewCell: { width: P_CELL, height: P_CELL, borderRadius: 1, backgroundColor: colors.bg },
   swatch: { width: 8, height: 20, borderRadius: 2 },
   swatchBig: { width: 20, height: 20, borderRadius: 6 },
 

@@ -67,6 +67,8 @@ export interface Purse {
    */
   history: { key: string; title: string; sparks: number; cores: number; at: string }[];
   equipped: Equipped;
+  /** Когда последний раз плавили искры в ядро. Пустая строка — ни разу. */
+  meltedAt: string;
 }
 
 export const HISTORY_LIMIT = 40;
@@ -77,6 +79,7 @@ export const EMPTY_PURSE: Purse = {
   owned: [],
   history: [],
   equipped: { ...DEFAULT_EQUIPPED },
+  meltedAt: "",
 };
 
 const int = (v: unknown): number =>
@@ -114,6 +117,7 @@ export function normalizePurse(raw: unknown): Purse {
       accent: slot(e.accent, DEFAULT_EQUIPPED.accent),
       title: slot(e.title, DEFAULT_EQUIPPED.title),
     },
+    meltedAt: typeof o.meltedAt === "string" ? o.meltedAt : "",
   };
 }
 
@@ -134,6 +138,7 @@ export function applyAwards(purse: Purse, awards: Award[], today: string): Purse
     paid: [...purse.paid, ...fresh.map((a) => a.key)],
     owned: purse.owned,
     equipped: purse.equipped,
+    meltedAt: purse.meltedAt,
     history: [
       ...fresh.map((a) => ({ key: a.key, title: a.title, sparks: a.sparks, cores: a.cores, at: today })),
       ...purse.history,
@@ -167,6 +172,47 @@ export function buy(purse: Purse, id: string, price: { sparks?: number; cores?: 
   if (purse.owned.includes(id)) return null;
   const paid = spend(purse, price);
   return paid ? { ...paid, owned: [...paid.owned, id] } : null;
+}
+
+/**
+ * Переплавка: искры в ядро.
+ *
+ * Курс намеренно скверный, и лимит — раз в неделю. Без него гора искр, которая копится
+ * сама собой, превращалась бы в горсть ядер за один тап, и всё, что должно стоить недель,
+ * покупалось бы за вечер. С ним у искр появляется выход, а у ядер остаётся редкость.
+ *
+ * Неделя считается от даты последней переплавки, а не «раз в календарную неделю»: иначе
+ * воскресенье и понедельник дали бы два ядра подряд.
+ */
+export const MELT = { sparks: 200, cores: 1, everyDays: 7 };
+
+/** Сколько дней осталось до следующей переплавки. Ноль — можно хоть сейчас. */
+export function meltWaitDays(purse: Purse, today: string): number {
+  if (purse.meltedAt === "") return 0;
+  const day = (key: string) => {
+    const [y, m, d] = key.split("-").map(Number);
+    return Date.UTC(y, m - 1, d) / 86400000;
+  };
+  return Math.max(0, MELT.everyDays - (day(today) - day(purse.meltedAt)));
+}
+
+export const canMelt = (purse: Purse, today: string): boolean =>
+  meltWaitDays(purse, today) === 0 && purse.wallet.sparks >= MELT.sparks;
+
+/** Переплавить. `null`, когда рано или не хватает: отказать честнее, чем сделать вид. */
+export function melt(purse: Purse, today: string): Purse | null {
+  if (!canMelt(purse, today)) return null;
+  return {
+    ...purse,
+    wallet: { sparks: purse.wallet.sparks - MELT.sparks, cores: purse.wallet.cores + MELT.cores },
+    meltedAt: today,
+    // В журнал переплавка идёт как обычное начисление, но ключ у неё свой и с датой: это
+    // не событие приложения, а поступок, и повторяться он обязан.
+    history: [
+      { key: `melt:${today}`, title: "Переплавка искр", sparks: 0, cores: MELT.cores, at: today },
+      ...purse.history,
+    ].slice(0, HISTORY_LIMIT),
+  };
 }
 
 /**

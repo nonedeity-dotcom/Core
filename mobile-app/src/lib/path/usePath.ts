@@ -4,12 +4,16 @@ import { todayKey, shiftDate } from "../date";
 import { countedDates } from "../streak";
 import { streakSummary, totalFocusMinutes, type StreakSummary } from "../stats";
 import { goalProgress, hasContent, summaryWritten } from "../goals";
+import { decideScreenTimeHabit } from "../screenTime";
 import { PHASE_STEPS, type PhaseStep } from "../phase";
 import { DEFAULT_DAY_RULE, type DayRule } from "../dayRule";
 import { DEFAULT_DAY_OFF, type DayOffRule } from "../dayOff";
 import { DEFAULT_LEVEL_RULE, type LevelRule } from "../level";
 import { earnedTitles, nextTitle, type EarnedTitle, type TitleRule, type TitleState } from "../rewards/catalog";
 import { yearGrid, daysSince, type YearGrid } from "./year";
+import type { ScreenDay } from "../screen/usage";
+import type { FoodEntry } from "../balance/food";
+import type { WeightEntry } from "../balance/weight";
 import type { GameStats } from "../games/stats";
 import type { PeriodGoal } from "../goals";
 import type { FocusSession, Habit, HabitLog } from "../../types";
@@ -43,6 +47,8 @@ export interface PathView {
   phases: { step: PhaseStep; reached: boolean }[];
   focus: { sessions: number; minutes: number };
   goals: { planned: number; summaries: number; done: number };
+  /** CaloriX и Creker: дни с записанной едой, записи веса, дни в пределах экранного лимита. */
+  care: { mealDays: number; weights: number; screenDays: number };
   games: { fields: number; hard: number; records: number };
   titles: EarnedTitle[];
   next: { rule: TitleRule; have: number; need: number } | null;
@@ -79,6 +85,22 @@ export function usePath(): PathView {
     queryKey: ["daysOff"],
     queryFn: () => api.getDaysOff(),
   });
+  const { data: meals = [] } = useQuery<FoodEntry[]>({
+    queryKey: ["foodLog", "path", from, today],
+    queryFn: () => api.getFoodLog(from, today),
+  });
+  const { data: weights = [] } = useQuery<WeightEntry[]>({
+    queryKey: ["weightLog"],
+    queryFn: () => api.getWeightLog(),
+  });
+  const { data: screenDays = [] } = useQuery<ScreenDay[]>({
+    queryKey: ["screenDays", "path", from, today],
+    queryFn: () => api.getScreenDays(from, today),
+  });
+  const { data: screenLimit = 0 } = useQuery<number>({
+    queryKey: ["screenTimeLimit"],
+    queryFn: () => api.getScreenTimeLimitMinutes(),
+  });
 
   const log = logs ?? [];
   const counted = countedDates(habits, log, dayRule, levelRule);
@@ -94,6 +116,13 @@ export function usePath(): PathView {
    */
   const since = log.length === 0 ? null : log.reduce((min, l) => (l.date < min ? l.date : min), log[0].date);
 
+  const mealDays = new Set(meals.map((m) => m.date)).size;
+  const screenOk = screenDays.filter((d) => {
+    const verdict = decideScreenTimeHabit(d, screenLimit, Date.now(), d.date);
+    return verdict.action === "tick" && verdict.withinLimit;
+  }).length;
+  const focusMinutes = totalFocusMinutes(sessions);
+
   const monthGoals = goals.filter((g) => g.kind === "month" && hasContent(g));
   const titleState: TitleState = {
     bestStreak: streak.best,
@@ -105,6 +134,10 @@ export function usePath(): PathView {
     }).length,
     fields: games?.wordsearch.solved ?? 0,
     hardFields: games?.wordsearch.byDifficulty.hard ?? 0,
+    mealDays,
+    weights: weights.length,
+    screenDays: screenOk,
+    focusMinutes,
   };
 
   return {
@@ -117,8 +150,9 @@ export function usePath(): PathView {
     // Этап засчитан по лучшей серии, а не по текущей: дойти до «спада» и сорваться — это
     // всё равно дойти. Отбирать пройденное за то, что было потом, — переписывание истории.
     phases: PHASE_STEPS.map((step) => ({ step, reached: streak.best >= step.fromDay })),
-    focus: { sessions: sessions.length, minutes: totalFocusMinutes(sessions) },
+    focus: { sessions: sessions.length, minutes: focusMinutes },
     goals: { planned: monthGoals.length, summaries: titleState.summaries, done: titleState.goalsDone },
+    care: { mealDays, weights: weights.length, screenDays: screenOk },
     games: {
       fields: titleState.fields,
       hard: titleState.hardFields,

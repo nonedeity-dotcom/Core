@@ -1,4 +1,5 @@
 import { WORD_COLORS } from "../games/wordsearch";
+import { WORD_THEMES, themeItemId } from "../../content/wordThemes";
 import type { Currency } from "./currency";
 
 /**
@@ -12,7 +13,7 @@ import type { Currency } from "./currency";
  * список, а не три файла.
  */
 
-export type ItemKind = "fieldPalette" | "accent" | "title";
+export type ItemKind = "fieldPalette" | "accent" | "title" | "theme";
 
 export interface ShopItem {
   id: string;
@@ -93,7 +94,24 @@ export const BUYABLE_TITLES: ShopItem[] = [
   { id: "title-ironside", kind: "title", title: "Железнобокий", hint: "Дорогой и без повода", cores: 20 },
 ];
 
-export const SHOP_ITEMS: ShopItem[] = [...FIELD_PALETTES, ...ACCENTS, ...BUYABLE_TITLES];
+/**
+ * Темы слов из магазина.
+ *
+ * Первое в этом магазине, что не красит, а прибавляет: пятьдесят новых слов — это не другой
+ * оттенок полоски, это другая игра на вечер. Поэтому и цена выше, чем у цвета.
+ *
+ * Список не пишется руками, а выводится из самих тем: цена и название темы в двух местах
+ * рано или поздно разъехались бы.
+ */
+export const THEME_PACKS: ShopItem[] = WORD_THEMES.filter((t) => t.paid).map((t) => ({
+  id: themeItemId(t.id),
+  kind: "theme",
+  title: t.title,
+  hint: `${t.hint} · ${t.words.length} слов`,
+  cores: 10,
+}));
+
+export const SHOP_ITEMS: ShopItem[] = [...THEME_PACKS, ...FIELD_PALETTES, ...ACCENTS, ...BUYABLE_TITLES];
 
 export const itemById = (id: string): ShopItem | null => SHOP_ITEMS.find((i) => i.id === id) ?? null;
 
@@ -120,6 +138,11 @@ export interface TitleState {
   goalsDone: number;
   fields: number;
   hardFields: number;
+  /** Дни с записанной едой, записи веса, дни в пределах экранного лимита, минуты фокуса. */
+  mealDays: number;
+  weights: number;
+  screenDays: number;
+  focusMinutes: number;
 }
 
 /**
@@ -160,6 +183,18 @@ export const TITLE_RULES: TitleRule[] = [
   { id: "t-finisher", title: "Доводящий", hint: "Цель месяца закрыта целиком", need: 1, have: (s) => s.goalsDone },
   { id: "t-seeker", title: "Искатель", hint: "50 собранных полей", need: 50, have: (s) => s.fields },
   { id: "t-untangler", title: "Распутыватель", hint: "10 полей на сложном", need: 10, have: (s) => s.hardFields },
+  // Эти четыре — из CaloriX, Creker и фокуса: раньше титулы знали только про привычки,
+  // цели и игру, хотя приложение состоит не только из них.
+  { id: "t-weighed", title: "Взвешенный", hint: "30 записей веса", need: 30, have: (s) => s.weights },
+  { id: "t-bookkeeper", title: "Счетовод", hint: "60 дней с записанной едой", need: 60, have: (s) => s.mealDays },
+  {
+    id: "t-unplugged",
+    title: "Отключённый",
+    hint: "30 дней в пределах экранного лимита",
+    need: 30,
+    have: (s) => s.screenDays,
+  },
+  { id: "t-hundredhours", title: "Сто часов", hint: "100 часов фокуса", need: 6000, have: (s) => s.focusMinutes },
 ];
 
 /** Сколько есть и сколько нужно. Больше порога не показывается: «120 из 100» — это не счёт. */

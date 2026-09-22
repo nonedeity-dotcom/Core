@@ -61,7 +61,7 @@ export default function PathScreen() {
     );
   }
 
-  const { streak, grid, focus, goals, games, titles, next } = path;
+  const { streak, grid, focus, goals, games, care, titles, next } = path;
   const share = path.days > 0 ? Math.round((path.closedDays / path.days) * 100) : 0;
 
   return (
@@ -160,6 +160,28 @@ export default function PathScreen() {
             : "Полей в словах пока не собрано"
         }
       />
+
+      {/* CaloriX и Creker — одной строкой каждый: в «Пути» важно, что они вообще были. */}
+      {(care.mealDays > 0 || care.weights > 0) && (
+        <Line
+          icon="pie-chart"
+          text={`${care.mealDays} ${plural(care.mealDays, [
+            "день",
+            "дня",
+            "дней",
+          ])} с записанной едой · взвешиваний ${care.weights}`}
+        />
+      )}
+      {care.screenDays > 0 && (
+        <Line
+          icon="smartphone"
+          text={`${care.screenDays} ${plural(care.screenDays, [
+            "день",
+            "дня",
+            "дней",
+          ])} в пределах экранного лимита`}
+        />
+      )}
 
       <Text style={[styles.sectionLabel, styles.spaced]}>Титулы</Text>
       {titles.length === 0 ? (

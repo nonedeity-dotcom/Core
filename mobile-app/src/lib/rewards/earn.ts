@@ -23,6 +23,25 @@ export const SPARKS = {
   maxSessionsPerDay: 4,
   field: { easy: 5, normal: 10, hard: 20 } as Record<Difficulty, number>,
   record: 10,
+  /**
+   * День с записанной едой и день с записанным весом.
+   *
+   * Платится за запись, а не за цифру. «Уложился в норму калорий» — это то, за что платить
+   * нельзя: человек на наборе, и деньги за маленькое число превратились бы в деньги за
+   * недоедание. Записал — значит посмотрел правде в глаза, и это то самое действие,
+   * которое и требуется.
+   */
+  meal: 5,
+  weight: 5,
+  /**
+   * День в пределах своего экранного лимита.
+   *
+   * Лимит человек ставит себе сам, и да, его можно задрать. Но это ровно та же честность,
+   * на которой держится планка дня: оплачено один раз и задним числом не пересчитывается,
+   * так что поднять лимит ради вчерашних искр нельзя — только ради завтрашних, и врать
+   * при этом придётся себе.
+   */
+  screen: 5,
 };
 
 /** Сколько ядер. Ядра редкие: только за крупное и неповторимое. */
@@ -50,6 +69,12 @@ export interface EarnState {
   fields: Record<Difficulty, number>;
   /** Ключи «тема:сложность», по которым есть рекорд времени. */
   records: string[];
+  /** Дни, в которые в дневнике еды хоть что-то записано. */
+  mealDates: string[];
+  /** Дни, в которые записан вес. */
+  weightDates: string[];
+  /** Законченные дни, уложившиеся в экранный лимит, — и только те, за которые есть данные. */
+  screenDates: string[];
 }
 
 export const MILESTONES = [7, 14, 30, 66];
@@ -130,6 +155,28 @@ export function earnedAwards(state: EarnState): Award[] {
 
   for (const key of state.records) {
     out.push({ key: `record:${key}`, title: "Рекорд в игре", sparks: SPARKS.record, cores: 0 });
+  }
+
+  /*
+   * CaloriX и Creker.
+   *
+   * Сегодняшний день не оплачивается ни в одном из трёх: дневник ещё могут дополнить, вес
+   * перевзвесить, а экранное время за день только растёт. Платить за незаконченное — значит
+   * платить дважды или не за то.
+   */
+  for (const date of state.mealDates) {
+    if (date >= state.today) continue;
+    out.push({ key: `meal:${date}`, title: "День записан в дневник", sparks: SPARKS.meal, cores: 0 });
+  }
+
+  for (const date of state.weightDates) {
+    if (date >= state.today) continue;
+    out.push({ key: `weight:${date}`, title: "Вес записан", sparks: SPARKS.weight, cores: 0 });
+  }
+
+  for (const date of state.screenDates) {
+    if (date >= state.today) continue;
+    out.push({ key: `screen:${date}`, title: "Экран в пределах лимита", sparks: SPARKS.screen, cores: 0 });
   }
 
   return out;

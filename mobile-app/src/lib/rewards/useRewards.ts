@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { todayKey } from "../date";
 import { countedDates } from "../streak";
-import { streakSummary } from "../stats";
+import { streakSummary, totalFocusMinutes } from "../stats";
 import { goalProgress, hasContent, summaryWritten } from "../goals";
 import { DEFAULT_DAY_RULE, type DayRule } from "../dayRule";
 import { DEFAULT_DAY_OFF, type DayOffRule } from "../dayOff";
@@ -11,6 +11,10 @@ import { DEFAULT_LEVEL_RULE, type LevelRule } from "../level";
 import { applyAwards, type Purse } from "./currency";
 import { earnedAwards, type EarnState } from "./earn";
 import { earnedTitles, type EarnedTitle, type TitleState } from "./catalog";
+import { decideScreenTimeHabit } from "../screenTime";
+import type { ScreenDay } from "../screen/usage";
+import type { FoodEntry } from "../balance/food";
+import type { WeightEntry } from "../balance/weight";
 import type { GameStats } from "../games/stats";
 import type { PeriodGoal } from "../goals";
 import type { FocusSession, Habit, HabitLog } from "../../types";
@@ -72,6 +76,22 @@ export function useRewards(): RewardsView {
     queryKey: ["daysOff"],
     queryFn: () => api.getDaysOff(),
   });
+  const { data: meals = [] } = useQuery<FoodEntry[]>({
+    queryKey: ["foodLog", "rewards", from, today],
+    queryFn: () => api.getFoodLog(from, today),
+  });
+  const { data: weights = [] } = useQuery<WeightEntry[]>({
+    queryKey: ["weightLog"],
+    queryFn: () => api.getWeightLog(),
+  });
+  const { data: screenDays = [] } = useQuery<ScreenDay[]>({
+    queryKey: ["screenDays", "rewards", from, today],
+    queryFn: () => api.getScreenDays(from, today),
+  });
+  const { data: screenLimit = 0 } = useQuery<number>({
+    queryKey: ["screenTimeLimit"],
+    queryFn: () => api.getScreenTimeLimitMinutes(),
+  });
 
   const counted = countedDates(habits, logs, dayRule, levelRule);
   const streaks = streakSummary(counted, freezes, from, today, daysOff);
@@ -94,6 +114,21 @@ export function useRewards(): RewardsView {
       .map((g) => g.period),
     fields: games?.wordsearch.byDifficulty ?? { easy: 0, normal: 0, hard: 0 },
     records: Object.keys(games?.wordsearch.best ?? {}),
+    mealDates: [...new Set(meals.map((m) => m.date))],
+    weightDates: weights.map((w) => w.date),
+    /*
+     * День в пределах лимита — по тому же правилу, по которому тикает экранная привычка.
+     *
+     * Своего правила здесь нет намеренно: «уложился» — это утверждение про весь день, и
+     * день, который creker не домерил, читается нулём. Без проверки на свежесть за сутки,
+     * проведённые в телефоне при выключенном creker, платили бы как за образцовые.
+     */
+    screenDates: screenDays
+      .filter((d) => {
+        const verdict = decideScreenTimeHabit(d, screenLimit, Date.now(), d.date);
+        return verdict.action === "tick" && verdict.withinLimit;
+      })
+      .map((d) => d.date),
   };
 
   /*
@@ -125,6 +160,10 @@ export function useRewards(): RewardsView {
     goalsDone: state.goalsDone.length,
     fields: games?.wordsearch.solved ?? 0,
     hardFields: games?.wordsearch.byDifficulty.hard ?? 0,
+    mealDays: state.mealDates.length,
+    weights: state.weightDates.length,
+    screenDays: state.screenDates.length,
+    focusMinutes: totalFocusMinutes(sessions),
   };
 
   return { purse, titles: earnedTitles(titleState), closedDays: counted.size, titleState };
