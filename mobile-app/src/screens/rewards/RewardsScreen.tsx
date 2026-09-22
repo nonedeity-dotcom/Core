@@ -4,10 +4,12 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Feather } from "@expo/vector-icons";
 import { api } from "../../api/client";
 import { colors } from "../../theme/colors";
+import { iconPackById } from "../../lib/rewards/icons";
 import { plural } from "../../lib/plural";
 import { formatDateShort, todayKey } from "../../lib/date";
 import { useRewards } from "../../lib/rewards/useRewards";
 import {
+  HISTORY_LIMIT,
   MELT,
   buy,
   canAfford,
@@ -22,11 +24,14 @@ import {
   ACCENTS,
   BUYABLE_TITLES,
   FIELD_PALETTES,
+  ICON_ITEMS,
   THEME_PACKS,
   TITLE_RULES,
   isOwned,
   nextTitle,
   priceOf,
+  purchaseTitle,
+  shopStanding,
   titleProgress,
   type ItemKind,
   type ShopItem,
@@ -43,9 +48,12 @@ const SLOTS: Record<ItemKind, Slot | null> = {
   accent: "accent",
   title: "title",
   theme: null,
+  // Значки, как и темы, не надевают: набор открывается целиком, а выбирают уже у самой
+  // привычки — там, где видно, к чему значок прикладывается.
+  icons: null,
 };
 
-type Tab = "shop" | "titles" | "history";
+type Tab = "shop" | "titles" | "wallet";
 
 /**
  * Награды: кошелёк, магазин и титулы.
@@ -78,7 +86,7 @@ export default function RewardsScreen() {
    * купил — увидел, а не пошёл искать, где это включается.
    */
   const take = (item: ShopItem) => {
-    const bought = buy(purse, item.id, priceOf(item));
+    const bought = buy(purse, item.id, priceOf(item), purchaseTitle(item), todayKey());
     if (!bought) return;
     const slot = SLOTS[item.kind];
     const keep = slot === null || (slot === "title" && bought.equipped.title !== "");
@@ -110,7 +118,7 @@ export default function RewardsScreen() {
         {([
           ["shop", "Магазин"],
           ["titles", "Титулы"],
-          ["history", "Начисления"],
+          ["wallet", "Кошелёк"],
         ] as [Tab, string][]).map(([id, label]) => (
           <Pressable
             key={id}
@@ -126,7 +134,22 @@ export default function RewardsScreen() {
 
       {tab === "shop" && (
         <>
-          <Text style={styles.sectionLabel}>Переплавка</Text>
+          {(() => {
+            const standing = shopStanding(purse.owned, purse.wallet.cores);
+            return (
+              <Text style={styles.sectionLabel}>
+                {`Куплено ${standing.have} из ${standing.total}${
+                  standing.affordable > 0
+                    ? ` · по карману ещё ${standing.affordable}`
+                    : standing.have === standing.total
+                      ? " · всё"
+                      : " · пока ни на что не хватает"
+                }`}
+              </Text>
+            );
+          })()}
+
+          <Text style={[styles.sectionLabel, styles.spacedSmall]}>Переплавка</Text>
           <View style={styles.row}>
             <Feather name="repeat" size={18} color={colors.textMuted} />
             <View style={{ flex: 1 }}>
@@ -172,6 +195,15 @@ export default function RewardsScreen() {
             другой оттенок полоски, а другая игра на вечер.
           </Text>
           {THEME_PACKS.map((item) => (
+            <ShopRow key={item.id} item={item} purse={purse} onBuy={() => take(item)} onWear={() => {}} />
+          ))}
+
+          <Text style={[styles.sectionLabel, styles.spaced]}>Значки для привычек</Text>
+          <Text style={styles.note}>
+            Единственное купленное, что видно каждый день: значок стоит у названия привычки в
+            чек-листе. Выбирается там же, в редакторе привычки.
+          </Text>
+          {ICON_ITEMS.map((item) => (
             <ShopRow key={item.id} item={item} purse={purse} onBuy={() => take(item)} onWear={() => {}} />
           ))}
 
@@ -284,10 +316,10 @@ export default function RewardsScreen() {
         </>
       )}
 
-      {tab === "history" && (
+      {tab === "wallet" && (
         <>
           {purse.history.length === 0 ? (
-            <Text style={styles.note}>Пока ничего не начислялось.</Text>
+            <Text style={styles.note}>Пока ничего не приходило и не уходило.</Text>
           ) : (
             purse.history.map((h, i) => (
               <View key={`${h.key}:${i}`} style={styles.row}>
@@ -295,17 +327,16 @@ export default function RewardsScreen() {
                   <Text style={styles.rowTitle}>{h.title}</Text>
                   <Text style={styles.rowHint}>{formatDateShort(h.at)}</Text>
                 </View>
-                <Text style={styles.gain}>
-                  {h.sparks > 0 ? `+${h.sparks} искр` : ""}
-                  {h.sparks > 0 && h.cores > 0 ? " · " : ""}
-                  {h.cores > 0 ? `+${h.cores} ${plural(h.cores, ["ядро", "ядра", "ядер"])}` : ""}
-                </Text>
+                <View style={{ alignItems: "flex-end" }}>
+                  <Amount value={h.sparks} forms={["искра", "искры", "искр"]} />
+                  <Amount value={h.cores} forms={["ядро", "ядра", "ядер"]} />
+                </View>
               </View>
             ))
           )}
           <Text style={[styles.note, styles.spaced]}>
-            Показаны последние сорок. Каждое событие оплачивается один раз: если поменять
-            правило дня, задним числом ничего не доплатится и не отнимется.
+            {`Показаны последние ${HISTORY_LIMIT}. Каждое событие оплачивается один раз: если
+            поменять правило дня, задним числом ничего не доплатится и не отнимется.`}
           </Text>
         </>
       )}
@@ -383,6 +414,22 @@ function PalettePreview({ colors: palette }: { colors: string[] }) {
   );
 }
 
+/**
+ * Сумма со знаком. Ноль не печатается вовсе.
+ *
+ * Строка бывает и в одну валюту, и в обе сразу — переплавка тратит искры и даёт ядро, — но
+ * «+0 ядер» рядом с настоящим числом читается как ошибка, а не как ноль.
+ */
+function Amount({ value, forms }: { value: number; forms: [string, string, string] }) {
+  if (value === 0) return null;
+  const up = value > 0;
+  return (
+    <Text style={[styles.amount, up ? styles.amountUp : styles.amountDown]}>
+      {`${up ? "+" : "−"}${Math.abs(value)} ${plural(Math.abs(value), forms)}`}
+    </Text>
+  );
+}
+
 /** Полоска «сколько из скольки» под запертым титулом. */
 function Progress({ have, need }: { have: number; need: number }) {
   return (
@@ -437,6 +484,13 @@ function ShopRow({
         <PalettePreview colors={item.colors} />
       ) : item.color ? (
         <View style={[styles.swatch, styles.swatchBig, { backgroundColor: item.color }]} />
+      ) : item.kind === "icons" ? (
+        // Сами значки, а не абстрактная медалька: набор покупают ради того, как он выглядит.
+        <View style={styles.iconPreview}>
+          {(iconPackById(item.id)?.icons ?? []).slice(0, 4).map((name) => (
+            <Feather key={name} name={name} size={13} color={colors.textMuted} />
+          ))}
+        </View>
       ) : (
         <Feather name="award" size={18} color={owned ? colors.accent : colors.textMuted} />
       )}
@@ -500,6 +554,7 @@ const styles = StyleSheet.create({
 
   sectionLabel: { color: colors.textMuted, fontSize: 12, marginBottom: 8 },
   spaced: { marginTop: 22 },
+  spacedSmall: { marginTop: 12 },
   note: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginBottom: 10 },
 
   row: {
@@ -516,9 +571,13 @@ const styles = StyleSheet.create({
   rowTitle: { color: colors.text, fontSize: 14, fontWeight: "600" },
   rowTitleOff: { color: colors.textMuted },
   rowHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 2 },
-  gain: { color: colors.accentGreen, fontSize: 11 },
+  amount: { fontSize: 11, fontVariant: ["tabular-nums"] },
+  amountUp: { color: colors.accentGreen },
+  // Не красный: трата — это не беда, а то, ради чего монеты и нужны.
+  amountDown: { color: colors.textMuted },
 
   previewCell: { width: P_CELL, height: P_CELL, borderRadius: 1, backgroundColor: colors.bg },
+  iconPreview: { flexDirection: "row", flexWrap: "wrap", width: 34, gap: 4 },
   swatch: { width: 8, height: 20, borderRadius: 2 },
   swatchBig: { width: 20, height: 20, borderRadius: 6 },
 

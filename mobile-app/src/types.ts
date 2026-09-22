@@ -88,6 +88,14 @@ export interface Habit {
    */
   screen?: ScreenRule | null;
   /**
+   * Значок рядом с названием — из набора, купленного в «Наградах».
+   *
+   * Отсутствует у всех, кто ничего не выбирал, и это нормальное состояние: привычка без
+   * значка ничем не хуже, а список, где значок обязателен, заставляет придумывать его там,
+   * где он ничего не добавляет.
+   */
+  icon?: string | null;
+  /**
    * When in the day — and, for a weekly habit, on which days — it is supposed to happen.
    *
    * Absent means whenever, which is what every habit meant before this existed and what most

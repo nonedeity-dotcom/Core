@@ -1,5 +1,6 @@
 import { WORD_COLORS } from "../games/wordsearch";
 import { WORD_THEMES, themeItemId } from "../../content/wordThemes";
+import { ICON_PACKS } from "./icons";
 import type { Currency } from "./currency";
 
 /**
@@ -13,7 +14,7 @@ import type { Currency } from "./currency";
  * список, а не три файла.
  */
 
-export type ItemKind = "fieldPalette" | "accent" | "title" | "theme";
+export type ItemKind = "fieldPalette" | "accent" | "title" | "theme" | "icons";
 
 export interface ShopItem {
   id: string;
@@ -111,12 +112,52 @@ export const THEME_PACKS: ShopItem[] = WORD_THEMES.filter((t) => t.paid).map((t)
   cores: 10,
 }));
 
-export const SHOP_ITEMS: ShopItem[] = [...THEME_PACKS, ...FIELD_PALETTES, ...ACCENTS, ...BUYABLE_TITLES];
+/**
+ * Наборы значков для привычек.
+ *
+ * Выводятся из самого списка наборов, как и темы: цена в одном месте, содержимое в другом —
+ * это два списка, которые однажды разойдутся.
+ */
+export const ICON_ITEMS: ShopItem[] = ICON_PACKS.filter((p) => p.cores > 0).map((p) => ({
+  id: p.id,
+  kind: "icons",
+  title: p.title,
+  hint: `${p.hint} · ${p.icons.length} значков`,
+  cores: p.cores,
+}));
+
+export const SHOP_ITEMS: ShopItem[] = [
+  ...THEME_PACKS,
+  ...ICON_ITEMS,
+  ...FIELD_PALETTES,
+  ...ACCENTS,
+  ...BUYABLE_TITLES,
+];
 
 export const itemById = (id: string): ShopItem | null => SHOP_ITEMS.find((i) => i.id === id) ?? null;
 
 /** Бесплатное считается своим с самого начала — покупать «обычный цвет» абсурдно. */
 export const isOwned = (owned: string[], item: ShopItem): boolean => item.cores === 0 || owned.includes(item.id);
+
+/**
+ * Что уже есть и на что хватает прямо сейчас.
+ *
+ * Магазин вырос до простыни, по которой надо скроллить, чтобы понять, есть ли вообще смысл
+ * заходить. Две цифры сверху отвечают на это, не листая: сколько собрано и сколько вещей по
+ * карману в эту минуту.
+ *
+ * Бесплатное в счёт не идёт ни с одной стороны: «куплено 3 из 19», где три — это то, что
+ * всегда было твоим, — число, которое льстит и ничего не значит.
+ */
+export function shopStanding(owned: string[], cores: number): { have: number; total: number; affordable: number } {
+  const paid = SHOP_ITEMS.filter((i) => i.cores > 0);
+  const missing = paid.filter((i) => !owned.includes(i.id));
+  return {
+    have: paid.length - missing.length,
+    total: paid.length,
+    affordable: missing.filter((i) => i.cores <= cores).length,
+  };
+}
 
 /**
  * Титул за дело.
@@ -223,6 +264,23 @@ export function nextTitle(state: TitleState): { rule: TitleRule; have: number; n
   if (left.length === 0) return null;
   return left.sort((a, b) => b.have / b.need - a.have / a.need)[0];
 }
+
+/**
+ * Как покупка называется в журнале.
+ *
+ * Одного названия товара мало: «Космос» в списке движений не говорит, что это было — тема,
+ * набор цветов или титул. Вид добавляется здесь, а не у зовущего, чтобы все строки в
+ * журнале были построены одинаково.
+ */
+const KIND_WORDS: Record<ItemKind, string> = {
+  theme: "Тема",
+  icons: "Значки",
+  fieldPalette: "Цвета",
+  accent: "Акцент",
+  title: "Титул",
+};
+
+export const purchaseTitle = (item: ShopItem): string => `${KIND_WORDS[item.kind]} «${item.title}»`;
 
 /** Цена словами — в магазине она всегда в ядрах, но пусть это будет сказано в одном месте. */
 export const priceOf = (item: ShopItem): { cores: number } => ({ cores: item.cores });

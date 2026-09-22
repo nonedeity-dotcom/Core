@@ -251,7 +251,7 @@ export default function WordSearchScreen({
     const target = unfound[Math.floor(Math.random() * unfound.length)];
     const rest = target.cells.filter((c) => !shown.has(`${c.row}:${c.col}`));
     if (rest.length === 0) return;
-    const next = spend(purse, { sparks: HINT_PRICES.letter });
+    const next = spend(purse, { sparks: HINT_PRICES.letter }, "Подсказка: буква", todayKey());
     if (!next) return;
     pay.mutate(next);
     setHints((prev) => [...prev, rest[Math.floor(Math.random() * rest.length)]]);
@@ -260,7 +260,7 @@ export default function WordSearchScreen({
 
   const hintWord = () => {
     if (!purse || unfound.length === 0) return;
-    const next = spend(purse, { sparks: HINT_PRICES.word });
+    const next = spend(purse, { sparks: HINT_PRICES.word }, "Подсказка: слово", todayKey());
     if (!next) return;
     pay.mutate(next);
     const target = unfound[Math.floor(Math.random() * unfound.length)];

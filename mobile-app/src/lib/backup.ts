@@ -244,6 +244,7 @@ function parseData(raw: unknown): BackupData {
           // Вместе с `auto`, а не отдельно: без правила привычка объявила бы себя
           // автоматической и не знала бы, за чем следит.
           ...(normalizeScreenRule(h.screen) ? { screen: normalizeScreenRule(h.screen) } : {}),
+          ...(isStr(h.icon) && h.icon !== "" ? { icon: h.icon } : {}),
           // Carried through rather than rebuilt from the parts above. Without these a
           // restore quietly undid three of the rules the streak runs on: an undated habit
           // judges nothing, one that lost `nowSince` starts answering for the days it spent

@@ -420,6 +420,8 @@ export const api = {
       schedule?: HabitSchedule | null;
       /** null снимает автоматический подсчёт; undefined оставляет как было. */
       screen?: ScreenRule | null;
+      /** null снимает значок; undefined оставляет как было. */
+      icon?: string | null;
     },
   ): Promise<{ ok: true }> {
     return withKeyLock(KEYS.habits, async () => {
@@ -429,8 +431,10 @@ export const api = {
         habits.map((h) => {
           if (h.id !== id) return h;
           const joiningNow = data.group === "now" && habitGroup(h) !== "now";
-          const { schedule, screen, ...rest } = data;
+          const { schedule, screen, icon, ...rest } = data;
           const next: Habit = { ...h, ...rest };
+          if (icon === null) delete next.icon;
+          else if (icon !== undefined) next.icon = icon;
           /*
            * Признак «считается сам» и правило снимаются вместе.
            *

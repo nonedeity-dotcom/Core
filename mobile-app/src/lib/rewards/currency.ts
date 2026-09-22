@@ -61,7 +61,12 @@ export interface Purse {
   /** Что куплено в магазине — идентификаторы товаров. */
   owned: string[];
   /**
-   * Последние начисления, новые сверху. Только для показа: кошелёк считается не по ним.
+   * Последние движения, новые сверху: и приход, и расход. Только для показа — кошелёк
+   * считается не по ним.
+   *
+   * Расход пишется отрицательным числом. Без этого деньги уходили молча: купил тему за
+   * десять ядер, потратил восемьдесят искр на подсказку — в журнале пусто, числа в кошельке
+   * просто стали меньше, и через месяц на вопрос «куда делись ядра» ответить было нечем.
    *
    * Список подрезается, потому что за год их накопятся тысячи, а прочитают из них пять.
    */
@@ -71,7 +76,13 @@ export interface Purse {
   meltedAt: string;
 }
 
-export const HISTORY_LIMIT = 40;
+/**
+ * Сколько движений помнить.
+ *
+ * Восемьдесят, а не сорок: начисления частые и вытесняют редкое, а редкое здесь как раз то,
+ * ради чего в журнал и заглядывают, — покупки.
+ */
+export const HISTORY_LIMIT = 80;
 
 export const EMPTY_PURSE: Purse = {
   wallet: { ...EMPTY_WALLET },
@@ -84,6 +95,10 @@ export const EMPTY_PURSE: Purse = {
 
 const int = (v: unknown): number =>
   typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+
+/** То же, но со знаком: в журнале расход отрицателен, а в кошельке минуса не бывает. */
+const signed = (v: unknown): number =>
+  typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : 0;
 
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
@@ -106,8 +121,8 @@ export function normalizePurse(raw: unknown): Purse {
       .map((h) => ({
         key: typeof h.key === "string" ? h.key : "",
         title: typeof h.title === "string" ? h.title : "",
-        sparks: int(h.sparks),
-        cores: int(h.cores),
+        sparks: signed(h.sparks),
+        cores: signed(h.cores),
         at: typeof h.at === "string" ? h.at : "",
       }))
       .filter((h) => h.key !== "")
@@ -146,6 +161,28 @@ export function applyAwards(purse: Purse, awards: Award[], today: string): Purse
   };
 }
 
+/**
+ * Строка в журнал.
+ *
+ * Одна на всё: и начисление, и трата пишутся ею же, разница только в знаке. Ключ с датой,
+ * потому что трата — это поступок, а не событие приложения: купить два набора в один день
+ * можно, и обе покупки должны остаться в списке.
+ */
+const noted = (
+  purse: Purse,
+  entry: { key: string; title: string; sparks?: number; cores?: number; at: string },
+): Purse["history"] =>
+  [
+    {
+      key: entry.key,
+      title: entry.title,
+      sparks: entry.sparks ?? 0,
+      cores: entry.cores ?? 0,
+      at: entry.at,
+    },
+    ...purse.history,
+  ].slice(0, HISTORY_LIMIT);
+
 /** Хватает ли на покупку. */
 export const canAfford = (wallet: Wallet, price: { sparks?: number; cores?: number }): boolean =>
   wallet.sparks >= (price.sparks ?? 0) && wallet.cores >= (price.cores ?? 0);
@@ -155,22 +192,47 @@ export const canAfford = (wallet: Wallet, price: { sparks?: number; cores?: numb
  *
  * Возвращает `null`, когда не хватает: молча уйти в минус хуже, чем отказать, — минус в
  * кошельке потом не объяснить ничем.
+ *
+ * Название и дата обязательны, а не «если хочется»: списание без следа в журнале — это
+ * деньги, исчезнувшие без объяснений, а обязательный довод компилятор спросит на каждом
+ * месте, откуда тратят.
  */
-export function spend(purse: Purse, price: { sparks?: number; cores?: number }): Purse | null {
+export function spend(
+  purse: Purse,
+  price: { sparks?: number; cores?: number },
+  title: string,
+  today: string,
+): Purse | null {
   if (!canAfford(purse.wallet, price)) return null;
-  return {
+  const next = {
     ...purse,
     wallet: {
       sparks: purse.wallet.sparks - (price.sparks ?? 0),
       cores: purse.wallet.cores - (price.cores ?? 0),
     },
   };
+  return {
+    ...next,
+    history: noted(purse, {
+      key: `spend:${today}:${title}`,
+      title,
+      sparks: -(price.sparks ?? 0),
+      cores: -(price.cores ?? 0),
+      at: today,
+    }),
+  };
 }
 
 /** Покупка предмета: списать и записать во владение. */
-export function buy(purse: Purse, id: string, price: { sparks?: number; cores?: number }): Purse | null {
+export function buy(
+  purse: Purse,
+  id: string,
+  price: { sparks?: number; cores?: number },
+  title: string,
+  today: string,
+): Purse | null {
   if (purse.owned.includes(id)) return null;
-  const paid = spend(purse, price);
+  const paid = spend(purse, price, title, today);
   return paid ? { ...paid, owned: [...paid.owned, id] } : null;
 }
 
@@ -206,12 +268,15 @@ export function melt(purse: Purse, today: string): Purse | null {
     ...purse,
     wallet: { sparks: purse.wallet.sparks - MELT.sparks, cores: purse.wallet.cores + MELT.cores },
     meltedAt: today,
-    // В журнал переплавка идёт как обычное начисление, но ключ у неё свой и с датой: это
-    // не событие приложения, а поступок, и повторяться он обязан.
-    history: [
-      { key: `melt:${today}`, title: "Переплавка искр", sparks: 0, cores: MELT.cores, at: today },
-      ...purse.history,
-    ].slice(0, HISTORY_LIMIT),
+    // Обе стороны в одной строке: искры ушли, ядро пришло. Одно без другого выглядело бы
+    // так, будто ядро взялось ниоткуда.
+    history: noted(purse, {
+      key: `melt:${today}`,
+      title: "Переплавка искр",
+      sparks: -MELT.sparks,
+      cores: MELT.cores,
+      at: today,
+    }),
   };
 }
 

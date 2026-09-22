@@ -49,6 +49,8 @@ import {
 import { syncScreenHabits } from "../integrations/screenTime";
 import { TOTAL_APP, isTotal, type ScreenRule } from "../lib/screenTime";
 import { shiftDate } from "../lib/date";
+import { openIcons, type IconName } from "../lib/rewards/icons";
+import type { Purse } from "../lib/rewards/currency";
 import { totalsByApp } from "../lib/screen/usage";
 import { formatMinutes } from "../lib/stats";
 import type { AppDay } from "../lib/screen/usage";
@@ -100,6 +102,8 @@ export default function TodayScreen() {
   const [editSchedule, setEditSchedule] = useState<HabitSchedule | null>(null);
   /** Правило «считать из Creker». null — привычка отмечается руками, как все остальные. */
   const [editScreen, setEditScreen] = useState<ScreenRule | null>(null);
+  /** Значок привычки. null — без значка, и это нормальное состояние, а не пропуск. */
+  const [editIcon, setEditIcon] = useState<string | null>(null);
   const [newLabel, setNewLabel] = useState("");
   const [adding, setAdding] = useState(false);
   // One per group, and closed again the moment you leave the tab.
@@ -122,6 +126,14 @@ export default function TodayScreen() {
     enabled: editingId !== null,
   });
   const appChoices = totalsByApp(appRows).slice(0, APP_PICKER_LIMIT);
+
+  // Значки — только из купленных наборов. Читается лениво: до открытия редактора они не нужны.
+  const { data: purse } = useQuery<Purse>({
+    queryKey: ["purse"],
+    queryFn: () => api.getPurse(),
+    enabled: editingId !== null,
+  });
+  const iconChoices = openIcons(purse?.owned ?? []);
 
   /*
    * Сколько уже потрачено сегодня — для строки «1 ч 12 мин из 5 ч».
@@ -250,6 +262,7 @@ export default function TodayScreen() {
       target: HabitTarget;
       schedule: HabitSchedule | null;
       screen: ScreenRule | null;
+      icon: string | null;
     }) =>
       api.updateHabit(data.id, {
         label: data.label,
@@ -259,6 +272,7 @@ export default function TodayScreen() {
         target: data.target,
         schedule: data.schedule,
         screen: data.screen,
+        icon: data.icon,
       }),
     onSuccess: () => {
       setEditingId(null);
@@ -297,6 +311,7 @@ export default function TodayScreen() {
     setEditTarget(habitTarget(h));
     setEditSchedule(h.schedule ?? null);
     setEditScreen(h.screen ?? null);
+    setEditIcon(h.icon ?? null);
   };
 
   const saveEdit = () => {
@@ -311,6 +326,7 @@ export default function TodayScreen() {
         target: editTarget,
         schedule: editSchedule,
         screen: editScreen,
+        icon: editIcon,
       });
     } else setEditingId(null);
   };
@@ -457,6 +473,9 @@ export default function TodayScreen() {
               screen={editScreen}
               onScreen={setEditScreen}
               apps={appChoices}
+              icon={editIcon}
+              onIcon={setEditIcon}
+              icons={iconChoices}
               onSave={saveEdit}
               onCancel={() => setEditingId(null)}
             />
@@ -649,6 +668,11 @@ function HabitRow({
           )}
           <View style={{ flex: 1 }}>
             <View style={styles.labelRow}>
+              {/* Значок перед названием и приглушённый: он помогает найти строку глазами, а
+                  не спорит с текстом за внимание. */}
+              {!!habit.icon && (
+                <Feather name={habit.icon as IconName} size={13} color={colors.textMuted} />
+              )}
               <Text style={[styles.label, { flexShrink: 1 }, !tickable && styles.labelLater]}>{habit.label}</Text>
               {/* Метка уровня стоит у названия, а не в конце строки: уровень — свойство самой
                   привычки, и читается он вместе с ней. Приглушённая заливка на то и нужна,
@@ -812,6 +836,9 @@ function HabitEditor({
   screen,
   onScreen,
   apps,
+  icon,
+  onIcon,
+  icons,
   onSave,
   onCancel,
 }: {
@@ -833,6 +860,10 @@ function HabitEditor({
   onScreen: (v: ScreenRule | null) => void;
   /** Приложения, которыми человек пользовался за последний месяц, — из чего выбирать. */
   apps: { packageName: string; label: string }[];
+  /** Выбранный значок и те, что доступны из купленных наборов. */
+  icon: string | null;
+  onIcon: (v: string | null) => void;
+  icons: IconName[];
   onSave: () => void;
   onCancel: () => void;
 }) {
@@ -869,6 +900,34 @@ function HabitEditor({
         accessibilityLabel="Минимальный вариант"
         onSubmitEditing={onSave}
       />
+
+      {/* Значок — сразу под названием: он про то же, что и название, и выбирают их вместе.
+          Первая кнопка снимает значок: привычка без него ничем не хуже. */}
+      <Text style={styles.editLabel}>Значок</Text>
+      <View style={styles.chipRow}>
+        <Pressable
+          onPress={() => onIcon(null)}
+          accessibilityRole="radio"
+          accessibilityState={{ selected: icon === null }}
+          accessibilityLabel="Без значка"
+          style={({ pressed }) => [styles.iconBox, icon === null && styles.iconBoxOn, pressed && styles.dimmed]}
+        >
+          <Feather name="slash" size={15} color={icon === null ? colors.accentGreen : colors.textMuted} />
+        </Pressable>
+        {icons.map((name) => (
+          <Pressable
+            key={name}
+            onPress={() => onIcon(name)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: icon === name }}
+            accessibilityLabel={`Значок ${name}`}
+            style={({ pressed }) => [styles.iconBox, icon === name && styles.iconBoxOn, pressed && styles.dimmed]}
+          >
+            <Feather name={name} size={15} color={icon === name ? colors.accentGreen : colors.textMuted} />
+          </Pressable>
+        ))}
+      </View>
+      <Text style={styles.editHint}>Новые наборы значков — за ядра, в «Наградах».</Text>
 
       <Text style={styles.editLabel}>Куда</Text>
       <View style={styles.chipRow}>
@@ -1365,6 +1424,17 @@ const styles = StyleSheet.create({
   },
   timeRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   // Экранная привычка: переключатель, подсказка и шаг лимита.
+  iconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.bg,
+  },
+  iconBoxOn: { backgroundColor: "rgba(143,184,154,0.12)", borderColor: colors.accentGreen },
   screenToggle: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, paddingVertical: 4 },
   screenToggleText: { marginTop: 0 },
   screenToggleTextOn: { color: colors.accentGreen, fontWeight: "600" },
