@@ -13,7 +13,7 @@ import type { Section } from "../navigation/sections";
  * «Ещё» — то, что открывают редко.
  *
  * Пятая кнопка внизу, и в ней лежит всё, что не про сегодняшний день: игра на перерыв,
- * награды, путь за всё время и настройки. Раньше это были три одинаковые серые строки на
+ * магазин, профиль и настройки. Раньше это были три одинаковые серые строки на
  * Главной, и с каждой новой вещью Главная всё больше становилась списком ссылок вместо
  * ответа на вопрос «как идёт день».
  *
@@ -46,24 +46,24 @@ export default function MoreScreen({
         onPress={() => onOpen("games")}
       />
       <Row
-        icon="award"
-        title="Награды"
+        icon="shopping-bag"
+        title="Магазин"
         hint={
           purse
-            ? `${worn !== "" ? `${worn} · ` : ""}${purse.wallet.sparks} ${plural(purse.wallet.sparks, [
+            ? `${purse.wallet.sparks} ${plural(purse.wallet.sparks, [
                 "искра",
                 "искры",
                 "искр",
               ])} · ${purse.wallet.cores} ${plural(purse.wallet.cores, ["ядро", "ядра", "ядер"])}`
-            : "Искры, ядра, магазин и титулы"
+            : "Темы, значки, цвета и титулы за монеты"
         }
-        onPress={() => onOpen("rewards")}
+        onPress={() => onOpen("shop")}
       />
       <Row
-        icon="map"
-        title="Путь"
-        hint="Весь год клетками и всё, что было"
-        onPress={() => navigation.navigate("Path")}
+        icon="user"
+        title="Профиль"
+        hint={worn !== "" ? `${worn} · путь, титулы и коллекция` : "Путь, титулы и коллекция"}
+        onPress={() => onOpen("profile")}
       />
 
       <View style={styles.divider} />

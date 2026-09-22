@@ -30,8 +30,8 @@ import AppUsageScreen from "../screens/screen/AppUsageScreen";
 import HomeScreen from "../screens/HomeScreen";
 import GamesScreen from "../screens/games/GamesScreen";
 import WordSearchScreen from "../screens/games/WordSearchScreen";
-import RewardsScreen from "../screens/rewards/RewardsScreen";
-import PathScreen from "../screens/PathScreen";
+import ShopSection from "../screens/shop/ShopSection";
+import ProfileSection from "../screens/profile/ProfileSection";
 import SectionBar from "./SectionBar";
 import TabChips from "./TabChips";
 import MoreScreen from "../screens/MoreScreen";
@@ -170,8 +170,10 @@ export default function RootTabs() {
                   />
                 ) : section === "games" ? (
                   <GamesScreen navigation={navigation} />
-                ) : section === "rewards" ? (
-                  <RewardsScreen />
+                ) : section === "shop" ? (
+                  <ShopSection />
+                ) : section === "profile" ? (
+                  <ProfileSection />
                 ) : section === "more" ? (
                   <MoreScreen onOpen={openSection} navigation={navigation} />
                 ) : (
@@ -213,8 +215,6 @@ export default function RootTabs() {
         {/* Год с двенадцатью месяцами — одна дверь, за которой и цели, и итоги. */}
         <Stack.Screen name="Goals" component={GoalsScreen} options={{ title: goalsScreenTitle() }} />
         <Stack.Screen name="WordSearch" component={WordSearchScreen} options={{ title: "Найди слова" }} />
-        {/* Не раздел, а взгляд назад: открывается с Главной и закрывается обратно в неё. */}
-        <Stack.Screen name="Path" component={PathScreen} options={{ title: "Путь" }} />
         {/* Заголовок называет месяц: экран открывается с любой клетки года, и «Цель» без
             имени оставляла бы вопрос, чья именно. */}
         <Stack.Screen

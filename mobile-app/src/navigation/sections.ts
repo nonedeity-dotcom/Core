@@ -7,7 +7,7 @@
  * Главная.
  */
 
-export type Section = "home" | "sterzhen" | "balance" | "screen" | "games" | "rewards" | "more";
+export type Section = "home" | "sterzhen" | "balance" | "screen" | "games" | "shop" | "profile" | "more";
 
 /**
  * Как раздел называется в шапке.
@@ -23,6 +23,7 @@ export const SECTION_TITLES: Record<Section, string> = {
   balance: "CaloriX",
   screen: "Creker",
   games: "Игры",
-  rewards: "Награды",
+  shop: "Магазин",
+  profile: "Профиль",
   more: "Ещё",
 };

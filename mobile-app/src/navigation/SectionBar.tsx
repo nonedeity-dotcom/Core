@@ -24,7 +24,7 @@ const ITEMS: { id: Section; title: string; icon: React.ComponentProps<typeof Fea
 ];
 
 /** «Ещё» держит то, что открывают редко, и подсвечивается, пока ты внутри любого из них. */
-const UNDER_MORE: Section[] = ["more", "games", "rewards"];
+const UNDER_MORE: Section[] = ["more", "games", "shop", "profile"];
 
 export default function SectionBar({
   section,
