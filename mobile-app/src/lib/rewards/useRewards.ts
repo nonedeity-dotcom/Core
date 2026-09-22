@@ -35,6 +35,8 @@ export interface RewardsView {
   titles: EarnedTitle[];
   /** Сколько закрытых дней за всё время — для титулов и для «Пути». */
   closedDays: number;
+  /** То, чем меряются титулы. Экрану он нужен, чтобы сказать, сколько осталось. */
+  titleState: TitleState;
 }
 
 export function useRewards(): RewardsView {
@@ -125,7 +127,7 @@ export function useRewards(): RewardsView {
     hardFields: games?.wordsearch.byDifficulty.hard ?? 0,
   };
 
-  return { purse, titles: earnedTitles(titleState), closedDays: counted.size };
+  return { purse, titles: earnedTitles(titleState), closedDays: counted.size, titleState };
 }
 
 /** Дата на N дней назад — без зависимости от «сегодня» из другого модуля. */

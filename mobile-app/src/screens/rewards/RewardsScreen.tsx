@@ -14,7 +14,9 @@ import {
   FIELD_PALETTES,
   TITLE_RULES,
   isOwned,
+  nextTitle,
   priceOf,
+  titleProgress,
   type ItemKind,
   type ShopItem,
 } from "../../lib/rewards/catalog";
@@ -37,7 +39,7 @@ type Tab = "shop" | "titles" | "history";
  */
 export default function RewardsScreen() {
   const qc = useQueryClient();
-  const { purse, titles, closedDays } = useRewards();
+  const { purse, titles, closedDays, titleState } = useRewards();
   const [tab, setTab] = useState<Tab>("shop");
 
   const purchase = useMutation({
@@ -144,6 +146,16 @@ export default function RewardsScreen() {
           <Text style={styles.sectionLabel}>
             {`${titles.length} из ${TITLE_RULES.length} · закрыто дней за всё время: ${closedDays}`}
           </Text>
+          {(() => {
+            const near = nextTitle(titleState);
+            return near === null ? (
+              <Text style={styles.note}>Все титулы за дело взяты. Дальше — только те, что за ядра.</Text>
+            ) : (
+              <Text style={styles.note}>
+                {`Ближе всего «${near.rule.title}»: ${near.have} из ${near.need}, осталось ${near.need - near.have}.`}
+              </Text>
+            );
+          })()}
           {TITLE_RULES.map((rule) => {
             const has = titles.some((t) => t.id === rule.id);
             return (
@@ -156,6 +168,10 @@ export default function RewardsScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.rowTitle, !has && styles.rowTitleOff]}>{rule.title}</Text>
                   <Text style={styles.rowHint}>{rule.hint}</Text>
+                  {/* Запертому титулу есть что сказать: замок молчит, а число — нет. */}
+                  {!has && (
+                    <Progress have={titleProgress(rule, titleState).have} need={titleProgress(rule, titleState).need} />
+                  )}
                 </View>
                 {has && (
                   <Wear on={purse.equipped.title === rule.id} onPress={() => wear("title", rule.id)} />
@@ -236,6 +252,18 @@ function Coin({
       <Feather name={icon} size={16} color={tint} />
       <Text style={[styles.coinValue, { color: tint }]}>{formatAmount(value)}</Text>
       <Text style={styles.coinLabel}>{plural(value, forms)}</Text>
+    </View>
+  );
+}
+
+/** Полоска «сколько из скольки» под запертым титулом. */
+function Progress({ have, need }: { have: number; need: number }) {
+  return (
+    <View style={styles.progressRow}>
+      <View style={styles.track}>
+        <View style={[styles.fill, { width: `${Math.round((have / need) * 100)}%` }]} />
+      </View>
+      <Text style={styles.progressText}>{`${have} из ${need}`}</Text>
     </View>
   );
 }
@@ -376,6 +404,10 @@ const styles = StyleSheet.create({
   buyText: { color: colors.accentGreen, fontSize: 12, fontWeight: "600" },
   buyTextOff: { color: colors.textMuted },
   ownedText: { color: colors.textMuted, fontSize: 11 },
+  progressRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
+  track: { flex: 1, height: 4, borderRadius: 2, backgroundColor: colors.bg, overflow: "hidden" },
+  fill: { height: 4, borderRadius: 2, backgroundColor: colors.accentGreen },
+  progressText: { color: colors.textMuted, fontSize: 10, fontVariant: ["tabular-nums"] },
   wornTag: { flexDirection: "row", alignItems: "center", gap: 4 },
   wornText: { color: colors.accentGreen, fontSize: 11 },
   plain: { alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 2 },

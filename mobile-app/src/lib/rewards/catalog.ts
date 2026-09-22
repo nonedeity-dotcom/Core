@@ -122,19 +122,71 @@ export interface TitleState {
   hardFields: number;
 }
 
-export const TITLE_RULES: { id: string; title: string; hint: string; reached: (s: TitleState) => boolean }[] = [
-  { id: "t-week", title: "Неделя", hint: "7 дней подряд", reached: (s) => s.bestStreak >= 7 },
-  { id: "t-month", title: "Месяц", hint: "30 дней подряд", reached: (s) => s.bestStreak >= 30 },
-  { id: "t-autopilot", title: "Автопилот", hint: "66 дней подряд — привычка держится сама", reached: (s) => s.bestStreak >= 66 },
-  { id: "t-hundred", title: "Сотня", hint: "100 закрытых дней за всё время", reached: (s) => s.closedDays >= 100 },
-  { id: "t-chronicler", title: "Летописец", hint: "3 написанных итога месяца", reached: (s) => s.summaries >= 3 },
-  { id: "t-finisher", title: "Доводящий", hint: "Цель месяца закрыта целиком", reached: (s) => s.goalsDone >= 1 },
-  { id: "t-seeker", title: "Искатель", hint: "50 собранных полей", reached: (s) => s.fields >= 50 },
-  { id: "t-untangler", title: "Распутыватель", hint: "10 полей на сложном", reached: (s) => s.hardFields >= 10 },
+/**
+ * Правило титула: чем меряется и сколько нужно.
+ *
+ * Мера и порог лежат отдельно, а не спрятаны внутри «достигнуто или нет». Из-за этого
+ * запертый титул умеет сказать, сколько осталось, — а список того, чего у тебя нет, без
+ * этого числа только и делает, что перечисляет.
+ */
+export interface TitleRule {
+  id: string;
+  title: string;
+  hint: string;
+  /** Сколько нужно. */
+  need: number;
+  /** Сколько есть сейчас. */
+  have: (s: TitleState) => number;
+}
+
+export const TITLE_RULES: TitleRule[] = [
+  { id: "t-week", title: "Неделя", hint: "7 дней подряд", need: 7, have: (s) => s.bestStreak },
+  { id: "t-month", title: "Месяц", hint: "30 дней подряд", need: 30, have: (s) => s.bestStreak },
+  {
+    id: "t-autopilot",
+    title: "Автопилот",
+    hint: "66 дней подряд — привычка держится сама",
+    need: 66,
+    have: (s) => s.bestStreak,
+  },
+  {
+    id: "t-hundred",
+    title: "Сотня",
+    hint: "100 закрытых дней за всё время",
+    need: 100,
+    have: (s) => s.closedDays,
+  },
+  { id: "t-chronicler", title: "Летописец", hint: "3 написанных итога месяца", need: 3, have: (s) => s.summaries },
+  { id: "t-finisher", title: "Доводящий", hint: "Цель месяца закрыта целиком", need: 1, have: (s) => s.goalsDone },
+  { id: "t-seeker", title: "Искатель", hint: "50 собранных полей", need: 50, have: (s) => s.fields },
+  { id: "t-untangler", title: "Распутыватель", hint: "10 полей на сложном", need: 10, have: (s) => s.hardFields },
 ];
 
+/** Сколько есть и сколько нужно. Больше порога не показывается: «120 из 100» — это не счёт. */
+export const titleProgress = (rule: TitleRule, state: TitleState): { have: number; need: number } => ({
+  have: Math.min(rule.have(state), rule.need),
+  need: rule.need,
+});
+
+export const titleReached = (rule: TitleRule, state: TitleState): boolean => rule.have(state) >= rule.need;
+
 export function earnedTitles(state: TitleState): EarnedTitle[] {
-  return TITLE_RULES.filter((r) => r.reached(state)).map(({ id, title, hint }) => ({ id, title, hint }));
+  return TITLE_RULES.filter((r) => titleReached(r, state)).map(({ id, title, hint }) => ({ id, title, hint }));
+}
+
+/**
+ * Ближайший незаработанный титул.
+ *
+ * Тот, до которого меньше всего осталось в долях, а не в штуках: «две сотых до сотни дней»
+ * ближе, чем «половина до трёх итогов», хотя в штуках наоборот.
+ */
+export function nextTitle(state: TitleState): { rule: TitleRule; have: number; need: number } | null {
+  const left = TITLE_RULES.filter((r) => !titleReached(r, state)).map((rule) => ({
+    rule,
+    ...titleProgress(rule, state),
+  }));
+  if (left.length === 0) return null;
+  return left.sort((a, b) => b.have / b.need - a.have / a.need)[0];
 }
 
 /** Цена словами — в магазине она всегда в ядрах, но пусть это будет сказано в одном месте. */

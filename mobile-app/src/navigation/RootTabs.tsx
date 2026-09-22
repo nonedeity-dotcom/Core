@@ -32,6 +32,7 @@ import HomeScreen from "../screens/HomeScreen";
 import GamesScreen from "../screens/games/GamesScreen";
 import WordSearchScreen from "../screens/games/WordSearchScreen";
 import RewardsScreen from "../screens/rewards/RewardsScreen";
+import PathScreen from "../screens/PathScreen";
 import SectionMenu, { type Section } from "./SectionMenu";
 import { CHANNEL_LABELS, type ReminderChannel } from "../notifications/reminders";
 
@@ -296,6 +297,8 @@ export default function RootTabs() {
         {/* Год с двенадцатью месяцами — одна дверь, за которой и цели, и итоги. */}
         <Stack.Screen name="Goals" component={GoalsScreen} options={{ title: goalsScreenTitle() }} />
         <Stack.Screen name="WordSearch" component={WordSearchScreen} options={{ title: "Найди слова" }} />
+        {/* Не раздел, а взгляд назад: открывается с Главной и закрывается обратно в неё. */}
+        <Stack.Screen name="Path" component={PathScreen} options={{ title: "Путь" }} />
         {/* Заголовок называет месяц: экран открывается с любой клетки года, и «Цель» без
             имени оставляла бы вопрос, чья именно. */}
         <Stack.Screen

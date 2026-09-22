@@ -19,6 +19,7 @@ import { formatCompact } from "../lib/screen/duration";
 import { hasUsageAccess } from "../../modules/creker-usage";
 import { syncUsage } from "../integrations/usageSync";
 import RotatingTip from "../components/RotatingTip";
+import { useNavigation } from "@react-navigation/native";
 import type { Section } from "../navigation/SectionMenu";
 import type { GameStats } from "../lib/games/stats";
 import type { Purse } from "../lib/rewards/currency";
@@ -37,6 +38,12 @@ import { titleName } from "../lib/rewards/catalog";
  * закрываться за три секунды.
  */
 export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => void }) {
+  /*
+   * Главная — не экран навигатора, а то, что он показывает вместо разделов, и своего
+   * `navigation` в свойствах у неё нет. «Путь» при этом открывается поверх, как настройки,
+   * поэтому ссылка на навигатор берётся из контекста.
+   */
+  const nav = useNavigation() as { navigate: (screen: string) => void };
   const { data: gameStats } = useQuery<GameStats>({ queryKey: ["gameStats"], queryFn: () => api.getGameStats() });
   const solvedGames = gameStats?.wordsearch.solved ?? 0;
   /*
@@ -236,6 +243,20 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
               ])} · ${purse.wallet.cores} ${plural(purse.wallet.cores, ["ядро", "ядра", "ядер"])}`
             : "Награды · искры, ядра и титулы"}
         </Text>
+        <Text style={styles.gamesChevron}>›</Text>
+      </Pressable>
+
+      {/* «Путь» — третьей строкой и последней: это единственное на экране, что не про
+          сегодня вообще. Открывается поверх, а не разделом: туда не «переходят жить», туда
+          заглядывают. */}
+      <Pressable
+        onPress={() => nav.navigate("Path")}
+        accessibilityRole="button"
+        accessibilityLabel="Путь"
+        style={({ pressed }) => [styles.gamesRow, styles.tightRow, pressed && { opacity: 0.7 }]}
+      >
+        <Feather name="map" size={15} color={colors.textMuted} />
+        <Text style={styles.gamesText}>Путь · весь год клетками и всё, что было</Text>
         <Text style={styles.gamesChevron}>›</Text>
       </Pressable>
 
