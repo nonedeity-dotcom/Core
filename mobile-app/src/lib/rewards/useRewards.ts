@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
-import { todayKey } from "../date";
+import { shiftDate, todayKey } from "../date";
 import { countedDates } from "../streak";
 import { streakSummary, totalFocusMinutes } from "../stats";
 import { goalProgress, hasContent, summaryWritten } from "../goals";
@@ -10,9 +10,17 @@ import { DEFAULT_DAY_OFF, type DayOffRule } from "../dayOff";
 import { DEFAULT_LEVEL_RULE, type LevelRule } from "../level";
 import { applyAwards, type Purse } from "./currency";
 import { earnedAwards, type EarnState } from "./earn";
-import { earnedTitles, type EarnedTitle, type TitleState } from "./catalog";
-import { decideScreenTimeHabit } from "../screenTime";
-import type { ScreenDay } from "../screen/usage";
+import { earnedTitles, nextTitle, type EarnedTitle, type TitleRule, type TitleState } from "./catalog";
+import {
+  earliest,
+  effective,
+  paidDates,
+  restDays,
+  screenHabitDates,
+  settle,
+  type Ledger,
+  type Verdicts,
+} from "./ledger";
 import type { FoodEntry } from "../balance/food";
 import type { WeightEntry } from "../balance/weight";
 import type { GameStats } from "../games/stats";
@@ -22,158 +30,186 @@ import type { FocusSession, Habit, HabitLog } from "../../types";
 /**
  * Начисление — в одном месте и от состояния, а не от событий.
  *
- * Соблазн был начислять прямо там, где что-то происходит: отметил привычку — получил искры.
- * Так не вышло бы главного: начисления за прошлое и защиты от двойной оплаты. Пришлось бы
- * ловить каждое место, где день может закрыться, и в каждом помнить, платили уже или нет.
+ * Состояние читается целиком, из него выводится всё, что причитается, и кошелёк отсеивает
+ * оплаченное по ключам. Один проход отвечает и на «что нового», и на «что там было за
+ * полгода до магазина».
  *
- * Здесь наоборот: состояние читается целиком, из него выводится всё, что причитается, и
- * кошелёк отсеивает оплаченное по ключам. Один проход отвечает сразу на всё — и на «что
- * нового», и на «а что там было за полгода до магазина».
+ * Поверх этого — журнал рассчитанных дней (ledger.ts). Без него «от состояния» означало
+ * «по нынешним правилам», и смена правила переписывала прошлое: понизил планку — старые дни
+ * стали закрытыми и оплатились. Теперь прошедший день решается один раз и записывается, а
+ * нынешние правила судят только то, что ещё не закончилось.
  */
 
-/** Сколько истории читать. Тот же горизонт, на котором живут серии. */
-const WINDOW_DAYS = 400;
+/**
+ * Сколько истории читать.
+ *
+ * Столько же, сколько «Путь», и теми же ключами запросов: оба живут в «Профиле», и два
+ * разных окна означали две загрузки одной и той же истории и два разных «за всё время» на
+ * соседних вкладках. После первого расчёта окно нужно только для открытых дней — всё
+ * старое уже в журнале, — но первый расчёт должен увидеть всё, что есть.
+ */
+export const HISTORY_WINDOW_DAYS = 1200;
+
+/** Ключи запросов за всю историю — общие с «Путём», чтобы история грузилась один раз. */
+export const historyKeys = (from: string, today: string) => ({
+  logs: ["habitLog", "all", from, today],
+  sessions: ["sessions", "all", from, today],
+  meals: ["foodLog", "all", from, today],
+});
 
 export interface RewardsView {
   purse: Purse | undefined;
   titles: EarnedTitle[];
-  /** Сколько закрытых дней за всё время — для титулов и для «Пути». */
-  closedDays: number;
-  /** То, чем меряются титулы. Экрану он нужен, чтобы сказать, сколько осталось. */
   titleState: TitleState;
+  next: { rule: TitleRule; have: number; need: number } | null;
 }
 
 export function useRewards(): RewardsView {
   const qc = useQueryClient();
   const today = todayKey();
-  const from = shiftBack(today, WINDOW_DAYS);
+  const from = shiftDate(today, -HISTORY_WINDOW_DAYS);
+  const keys = historyKeys(from, today);
 
-  const { data: purse } = useQuery<Purse>({ queryKey: ["purse"], queryFn: () => api.getPurse() });
-  const { data: habits = [] } = useQuery<Habit[]>({
-    queryKey: ["habits"],
-    queryFn: () => api.getHabits() as Promise<Habit[]>,
-  });
-  const { data: logs = [] } = useQuery<HabitLog[]>({
-    queryKey: ["habitLog", "rewards", from, today],
+  const purseQ = useQuery<Purse>({ queryKey: ["purse"], queryFn: () => api.getPurse() });
+  const habitsQ = useQuery<Habit[]>({ queryKey: ["habits"], queryFn: () => api.getHabits() as Promise<Habit[]> });
+  const logsQ = useQuery<HabitLog[]>({
+    queryKey: keys.logs,
     queryFn: () => api.getHabitLog(from, today) as Promise<HabitLog[]>,
   });
-  const { data: sessions = [] } = useQuery<FocusSession[]>({
-    queryKey: ["sessions", "rewards", from, today],
+  const sessionsQ = useQuery<FocusSession[]>({
+    queryKey: keys.sessions,
     queryFn: () => api.getSessions(from, today) as Promise<FocusSession[]>,
   });
-  const { data: freezes = [] } = useQuery<string[]>({ queryKey: ["freezes"], queryFn: () => api.getFreezes() });
-  const { data: goals = [] } = useQuery<PeriodGoal[]>({ queryKey: ["goals"], queryFn: () => api.getGoals() });
-  const { data: games } = useQuery<GameStats>({ queryKey: ["gameStats"], queryFn: () => api.getGameStats() });
-  const { data: dayRule = DEFAULT_DAY_RULE } = useQuery<DayRule>({
-    queryKey: ["dayRule"],
-    queryFn: () => api.getDayRule(),
-  });
-  const { data: levelRule = DEFAULT_LEVEL_RULE } = useQuery<LevelRule>({
-    queryKey: ["levelRule"],
-    queryFn: () => api.getLevelRule(),
-  });
-  const { data: daysOff = DEFAULT_DAY_OFF } = useQuery<DayOffRule>({
-    queryKey: ["daysOff"],
-    queryFn: () => api.getDaysOff(),
-  });
-  const { data: meals = [] } = useQuery<FoodEntry[]>({
-    queryKey: ["foodLog", "rewards", from, today],
-    queryFn: () => api.getFoodLog(from, today),
-  });
-  const { data: weights = [] } = useQuery<WeightEntry[]>({
-    queryKey: ["weightLog"],
-    queryFn: () => api.getWeightLog(),
-  });
-  const { data: screenDays = [] } = useQuery<ScreenDay[]>({
-    queryKey: ["screenDays", "rewards", from, today],
-    queryFn: () => api.getScreenDays(from, today),
-  });
-  const { data: screenLimit = 0 } = useQuery<number>({
-    queryKey: ["screenTimeLimit"],
-    queryFn: () => api.getScreenTimeLimitMinutes(),
-  });
+  const freezesQ = useQuery<string[]>({ queryKey: ["freezes"], queryFn: () => api.getFreezes() });
+  const goalsQ = useQuery<PeriodGoal[]>({ queryKey: ["goals"], queryFn: () => api.getGoals() });
+  const gamesQ = useQuery<GameStats>({ queryKey: ["gameStats"], queryFn: () => api.getGameStats() });
+  const dayRuleQ = useQuery<DayRule>({ queryKey: ["dayRule"], queryFn: () => api.getDayRule() });
+  const levelRuleQ = useQuery<LevelRule>({ queryKey: ["levelRule"], queryFn: () => api.getLevelRule() });
+  const daysOffQ = useQuery<DayOffRule>({ queryKey: ["daysOff"], queryFn: () => api.getDaysOff() });
+  const mealsQ = useQuery<FoodEntry[]>({ queryKey: keys.meals, queryFn: () => api.getFoodLog(from, today) });
+  const weightsQ = useQuery<WeightEntry[]>({ queryKey: ["weightLog"], queryFn: () => api.getWeightLog() });
+
+  /*
+   * Считать можно только когда пришло всё.
+   *
+   * Раньше хватало кошелька и игр, а остальное подставлялось пустым. Для начислений это
+   * было безвредно — пустое ничего не оплачивает. Для журнала это катастрофа: расчёт по
+   * ещё не загруженной истории записал бы прошлое пустым, и навсегда.
+   */
+  const ready = [
+    purseQ,
+    habitsQ,
+    logsQ,
+    sessionsQ,
+    freezesQ,
+    goalsQ,
+    gamesQ,
+    dayRuleQ,
+    levelRuleQ,
+    daysOffQ,
+    mealsQ,
+    weightsQ,
+  ].every((q) => q.isSuccess);
+
+  const purse = purseQ.data;
+  const habits = habitsQ.data ?? [];
+  const logs = logsQ.data ?? [];
+  const sessions = sessionsQ.data ?? [];
+  const freezes = freezesQ.data ?? [];
+  const goals = goalsQ.data ?? [];
+  const games = gamesQ.data;
+  const dayRule = dayRuleQ.data ?? DEFAULT_DAY_RULE;
+  const levelRule = levelRuleQ.data ?? DEFAULT_LEVEL_RULE;
+  const daysOff = daysOffQ.data ?? DEFAULT_DAY_OFF;
+  const meals = mealsQ.data ?? [];
+  const weights = weightsQ.data ?? [];
 
   const counted = countedDates(habits, logs, dayRule, levelRule);
-  const streaks = streakSummary(counted, freezes, from, today, daysOff);
+  const verdicts: Verdicts = {
+    from,
+    closed: counted,
+    rest: restDays(counted, freezes, daysOff, from, today),
+    screen: screenHabitDates(habits, logs),
+  };
 
   const sessionsByDate: Record<string, number> = {};
   for (const s of sessions) sessionsByDate[s.date] = (sessionsByDate[s.date] ?? 0) + 1;
 
   const monthGoals = goals.filter((g) => g.kind === "month");
-  const state: EarnState = {
-    countedDates: [...counted].sort(),
-    today,
-    bestStreak: streaks.best,
-    sessionsByDate,
-    summaries: monthGoals.filter((g) => summaryWritten(g)).map((g) => g.period),
-    goalsDone: monthGoals
-      .filter((g) => {
-        const p = goalProgress(g);
-        return hasContent(g) && p.total > 0 && p.done === p.total;
-      })
-      .map((g) => g.period),
-    fields: games?.wordsearch.byDifficulty ?? { easy: 0, normal: 0, hard: 0 },
-    records: Object.keys(games?.wordsearch.best ?? {}),
-    mealDates: [...new Set(meals.map((m) => m.date))],
-    weightDates: weights.map((w) => w.date),
-    /*
-     * День в пределах лимита — по тому же правилу, по которому тикает экранная привычка.
-     *
-     * Своего правила здесь нет намеренно: «уложился» — это утверждение про весь день, и
-     * день, который creker не домерил, читается нулём. Без проверки на свежесть за сутки,
-     * проведённые в телефоне при выключенном creker, платили бы как за образцовые.
-     */
-    screenDates: screenDays
-      .filter((d) => {
-        const verdict = decideScreenTimeHabit(d, screenLimit, Date.now(), d.date);
-        return verdict.action === "tick" && verdict.withinLimit;
-      })
-      .map((d) => d.date),
+  const summaries = monthGoals.filter((g) => summaryWritten(g)).map((g) => g.period);
+  const goalsDone = monthGoals
+    .filter((g) => {
+      const p = goalProgress(g);
+      return hasContent(g) && p.total > 0 && p.done === p.total;
+    })
+    .map((g) => g.period);
+  const mealDates = [...new Set(meals.map((m) => m.date))];
+
+  /** Всё, что причитается, при данном журнале. Чистая функция — её зовут и здесь, и под блокировкой. */
+  const stateFor = (ledger: Ledger): EarnState => {
+    const all = effective(ledger, verdicts);
+    const streak = streakSummary(all.closed, [...all.rest], earliest(ledger, verdicts), today, DEFAULT_DAY_OFF);
+    return {
+      countedDates: [...all.closed].sort(),
+      today,
+      bestStreak: streak.best,
+      sessionsByDate,
+      summaries,
+      goalsDone,
+      fields: games?.wordsearch.byDifficulty ?? { easy: 0, normal: 0, hard: 0 },
+      records: Object.keys(games?.wordsearch.best ?? {}),
+      mealDates,
+      weightDates: weights.map((w) => w.date),
+      screenDates: [...all.screen].sort(),
+    };
   };
 
+  const seedFor = (p: Purse) => ({ closed: paidDates(p.paid, "day"), screen: paidDates(p.paid, "screen") });
+  const ledger = purse && ready ? settle(purse.ledger, verdicts, today, seedFor(purse)) : purse?.ledger;
+  const state = ledger ? stateFor(ledger) : null;
+
   /*
-   * Запись идёт один раз на набор данных.
+   * Запись — одна на набор изменений.
    *
-   * Без этой отсечки получался замкнутый круг: запись помечает кошелёк устаревшим, он
-   * перечитывается, пересчёт запускается снова. Ключи бы его остановили — платить было бы не
-   * за что, — но приложение крутило бы эту карусель на каждом кадре.
+   * Без отсечки получался бы круг: запись обновляет кошелёк, он перечитывается, пересчёт
+   * запускается снова. Ключи бы его остановили, но приложение крутило бы карусель на
+   * каждом кадре.
+   *
+   * Сама запись идёт правкой под блокировкой, а не готовым кошельком: всё пересчитывается
+   * от того, что лежит в хранилище в эту секунду. Иначе начисление, дописанное после
+   * покупки, откатывало бы покупку — оно собиралось из копии, в которой её ещё не было.
    */
   const writing = useRef<string | null>(null);
-  const ready = purse !== undefined && games !== undefined;
   useEffect(() => {
-    if (!ready) return;
-    const awards = earnedAwards(state);
-    const fresh = awards.filter((a) => !purse.paid.includes(a.key));
-    if (fresh.length === 0) return;
-    const stamp = fresh.map((a) => a.key).join("|");
+    if (!ready || !purse || !ledger || !state) return;
+    const fresh = earnedAwards(state).filter((a) => !purse.paid.includes(a.key));
+    const moved = ledger.through !== purse.ledger.through;
+    if (!moved && fresh.length === 0) return;
+    const stamp = `${ledger.through}|${fresh.map((a) => a.key).join("|")}`;
     if (writing.current === stamp) return;
     writing.current = stamp;
-    void api.setPurse(applyAwards(purse, fresh, today)).then(() => {
-      qc.invalidateQueries({ queryKey: ["purse"] });
-    });
+    void api
+      .updatePurse((current) => {
+        const settled = settle(current.ledger, verdicts, today, seedFor(current));
+        return applyAwards({ ...current, ledger: settled }, earnedAwards(stateFor(settled)), today);
+      })
+      .then((saved) => {
+        if (saved) qc.setQueryData(["purse"], saved);
+      });
   });
 
   const titleState: TitleState = {
-    bestStreak: streaks.best,
-    closedDays: counted.size,
-    summaries: state.summaries.length,
-    goalsDone: state.goalsDone.length,
+    bestStreak: state?.bestStreak ?? 0,
+    closedDays: state?.countedDates.length ?? 0,
+    summaries: summaries.length,
+    goalsDone: goalsDone.length,
     fields: games?.wordsearch.solved ?? 0,
     hardFields: games?.wordsearch.byDifficulty.hard ?? 0,
-    mealDays: state.mealDates.length,
-    weights: state.weightDates.length,
-    screenDays: state.screenDates.length,
+    mealDays: mealDates.length,
+    weights: weights.length,
+    screenDays: state?.screenDates.length ?? 0,
     focusMinutes: totalFocusMinutes(sessions),
   };
 
-  return { purse, titles: earnedTitles(titleState), closedDays: counted.size, titleState };
-}
-
-/** Дата на N дней назад — без зависимости от «сегодня» из другого модуля. */
-function shiftBack(date: string, days: number): string {
-  const [y, m, d] = date.split("-").map(Number);
-  const cursor = new Date(y, m - 1, d, 12);
-  cursor.setDate(cursor.getDate() - days);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}-${pad(cursor.getDate())}`;
+  return { purse, titles: earnedTitles(titleState), titleState, next: nextTitle(titleState) };
 }

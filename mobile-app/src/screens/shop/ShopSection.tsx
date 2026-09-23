@@ -1,12 +1,9 @@
-import { useState } from "react";
 import { View } from "react-native";
 import { colors } from "../../theme/colors";
-import TabChips from "../../navigation/TabChips";
+import TabbedSection from "../../navigation/TabbedSection";
 import { useRewards } from "../../lib/rewards/useRewards";
 import ShopScreen from "./ShopScreen";
 import WalletScreen from "./WalletScreen";
-
-const TABS = ["Магазин", "Кошелёк"];
 
 /**
  * Раздел «Магазин»: что купить и на что.
@@ -17,13 +14,14 @@ const TABS = ["Магазин", "Кошелёк"];
  * местах сразу.
  */
 export default function ShopSection() {
-  const [tab, setTab] = useState(0);
   const { purse } = useRewards();
-
+  if (!purse) return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <TabChips titles={TABS} index={tab} onChange={setTab} />
-      {purse && (tab === 0 ? <ShopScreen purse={purse} /> : <WalletScreen purse={purse} />)}
-    </View>
+    <TabbedSection
+      tabs={[
+        { title: "Магазин", render: () => <ShopScreen purse={purse} /> },
+        { title: "Кошелёк", render: () => <WalletScreen purse={purse} /> },
+      ]}
+    />
   );
 }

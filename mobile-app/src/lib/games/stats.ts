@@ -84,6 +84,29 @@ export function normalizeGameStats(raw: unknown): GameStats {
 }
 
 /**
+ * Слияние игровой статистики с другого телефона.
+ *
+ * Счётчики берутся большие, а не складываются: если обе копии собраны из одних и тех же
+ * партий, сумма удвоила бы поля — и монеты за них. Рекорд — лучший из двух, то есть
+ * меньшее время.
+ */
+export function mergeGameStats(a: GameStats, b: GameStats): GameStats {
+  const best: Record<string, number> = { ...a.wordsearch.best };
+  for (const [key, seconds] of Object.entries(b.wordsearch.best)) {
+    best[key] = best[key] === undefined ? seconds : Math.min(best[key], seconds);
+  }
+  const by = (d: Difficulty) => Math.max(a.wordsearch.byDifficulty[d], b.wordsearch.byDifficulty[d]);
+  return {
+    wordsearch: {
+      solved: Math.max(a.wordsearch.solved, b.wordsearch.solved),
+      byDifficulty: { easy: by("easy"), normal: by("normal"), hard: by("hard") },
+      best,
+      lastAt: a.wordsearch.lastAt > b.wordsearch.lastAt ? a.wordsearch.lastAt : b.wordsearch.lastAt,
+    },
+  };
+}
+
+/**
  * Записать решённое поле.
  *
  * Время попадает в рекорды, только если игра шла с секундомером и вышла быстрее прежнего.

@@ -46,7 +46,7 @@ import {
   perDayTarget,
   weeklyProgress,
 } from "../lib/habits";
-import { syncScreenHabits } from "../integrations/screenTime";
+import { refreshScreenHabits } from "../integrations/screenTime";
 import { TOTAL_APP, isTotal, type ScreenRule } from "../lib/screenTime";
 import { shiftDate } from "../lib/date";
 import { openIcons, type IconName } from "../lib/rewards/icons";
@@ -202,7 +202,9 @@ export default function TodayScreen() {
 
   useEffect(() => {
     if (habits.length === 0) return;
-    syncScreenHabits(habits, today).then((ticked) => {
+    refreshScreenHabits(habits, today).then((ticked) => {
+      // Цифры за день тоже обновились — строка «1 ч 12 мин из 5 ч» должна их увидеть.
+      qc.invalidateQueries({ queryKey: ["screenToday"] });
       if (ticked > 0) qc.invalidateQueries({ queryKey: ["habitLog"] });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

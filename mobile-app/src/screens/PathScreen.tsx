@@ -7,6 +7,7 @@ import { formatDayLong } from "../lib/date";
 import { formatMinutes } from "../lib/stats";
 import { usePath } from "../lib/path/usePath";
 import type { DayMark, YearDay } from "../lib/path/year";
+import type { EarnedTitle, TitleRule } from "../lib/rewards/catalog";
 
 /**
  * Зазор между клетками.
@@ -45,7 +46,14 @@ const MARK_COLORS: Record<DayMark, string> = {
  * и что осталось после. Ничего нового он не считает и ничего не начисляет — только
  * собирает в одно место то, что уже разбросано по разделам.
  */
-export default function PathScreen() {
+export default function PathScreen({
+  titles,
+  next,
+}: {
+  /** Титулы — от начисления, а не свои: иначе у соседних вкладок профиля разные ответы. */
+  titles: EarnedTitle[];
+  next: { rule: TitleRule; have: number; need: number } | null;
+}) {
   const path = usePath();
 
   if (!path.ready) return <View style={styles.container} />;
@@ -61,7 +69,7 @@ export default function PathScreen() {
     );
   }
 
-  const { streak, grid, focus, goals, games, care, titles, next } = path;
+  const { streak, grid, focus, goals, games, care } = path;
   const share = path.days > 0 ? Math.round((path.closedDays / path.days) * 100) : 0;
 
   return (

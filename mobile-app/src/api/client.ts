@@ -18,8 +18,8 @@ import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skip
 import { DEFAULT_DAY_OFF, normalizeDayOff, pruneDates, type DayOffRule } from "../lib/dayOff";
 import { normalizeGoals, type PeriodGoal } from "../lib/goals";
 import { DEFAULT_LEVEL_RULE, normalizeLevelRule, type HabitLevel, type LevelRule } from "../lib/level";
-import { DEFAULT_GAME_STATS, normalizeGameStats, type GameStats } from "../lib/games/stats";
-import { EMPTY_PURSE, normalizePurse, type Purse } from "../lib/rewards/currency";
+import { DEFAULT_GAME_STATS, mergeGameStats, normalizeGameStats, type GameStats } from "../lib/games/stats";
+import { EMPTY_PURSE, mergePurse, normalizePurse, type Purse } from "../lib/rewards/currency";
 import { STREAK_WINDOW_DAYS } from "../lib/streak";
 import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipLibrary";
 import { DEFAULT_LATE_RULE, normalizeLateRule, normalizeSchedule, type LateRule } from "../lib/habitSchedule";
@@ -627,9 +627,27 @@ export const api = {
   async getPurse(): Promise<Purse> {
     return normalizePurse(await read<unknown>(KEYS.purse, EMPTY_PURSE));
   },
-  async setPurse(purse: Purse): Promise<Purse> {
+  /**
+   * Изменить кошелёк: прочитать, поменять и записать — под одной блокировкой.
+   *
+   * Раньше здесь был `setPurse(purse)`: экран собирал новый кошелёк из той копии, что была
+   * у него на руках, и отдавал целиком. Две быстрые покупки подряд собирались из одной и
+   * той же копии, и вторая затирала первую — купленное пропадало вместе со списанием. Так
+   * же начисление за прошедшие дни, дописанное после покупки, откатывало покупку.
+   *
+   * Теперь зовущий отдаёт не кошелёк, а правку: функцию от свежего кошелька. Она получает
+   * то, что лежит в хранилище в эту самую секунду, и никто не успеет записать между чтением
+   * и записью. `null` из правки значит «ничего не менять» — не хватило денег, уже куплено.
+   *
+   * Прежнего метода нет совсем, а не «оставлен рядом»: иначе кто-нибудь однажды снова
+   * запишет кошелёк из устаревшей копии.
+   */
+  async updatePurse(change: (purse: Purse) => Purse | null): Promise<Purse | null> {
     return withKeyLock(KEYS.purse, async () => {
-      const clean = normalizePurse(purse);
+      const current = normalizePurse(await read<unknown>(KEYS.purse, EMPTY_PURSE));
+      const next = change(current);
+      if (next === null) return null;
+      const clean = normalizePurse(next);
       await write(KEYS.purse, clean);
       return clean;
     });
@@ -1435,6 +1453,16 @@ export interface BackupData {
   screenApps: AppDay[];
   /** Почасовая картина дней. Отсутствует в файлах, записанных до неё. */
   screenHours: HourlyDay[];
+  /**
+   * Кошелёк: искры, ядра, купленное, надетое, журнал рассчитанных дней.
+   *
+   * `null` — «в файле его нет»: старые копии и копии одного CaloriX или Creker. Такая копия
+   * кошелёк не трогает. Раньше его не было в копии вовсе, и перенос на новый телефон терял
+   * всё купленное, а начисление потом выдавало искры за ту же историю ещё раз.
+   */
+  purse: Purse | null;
+  /** Решённые поля и рекорды. `null` — в файле нет, и своё не трогается. */
+  gameStats: GameStats | null;
 }
 
 /** What an import actually changed, so the UI can report it honestly. */
@@ -1509,6 +1537,7 @@ export async function exportData(): Promise<BackupData> {
       read<AppDay[]>(KEYS.screenApps, []),
       read<HourlyDay[]>(KEYS.screenHours, []),
     ]);
+  const [purse, gameStats] = await Promise.all([api.getPurse(), api.getGameStats()]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
     habitLog,
@@ -1538,6 +1567,8 @@ export async function exportData(): Promise<BackupData> {
     screenDays,
     screenApps,
     screenHours,
+    purse,
+    gameStats,
   };
 }
 
@@ -1573,6 +1604,9 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.screenDays, data.screenDays),
       write(KEYS.screenApps, data.screenApps),
       write(KEYS.screenHours, data.screenHours ?? []),
+      // Нет в файле — значит, не про это: старая копия не должна стирать кошелёк.
+      ...(data.purse ? [write(KEYS.purse, normalizePurse(data.purse))] : []),
+      ...(data.gameStats ? [write(KEYS.gameStats, normalizeGameStats(data.gameStats))] : []),
     ]);
     return {
       habits: data.habits.length,
@@ -1907,6 +1941,17 @@ export async function mergeData(data: BackupData): Promise<ImportStats> {
     }
     if (hoursChanged) {
       await write(KEYS.screenHours, [...hourByDate.values()].sort((a, b) => a.date.localeCompare(b.date)));
+    }
+
+    // Кошелёк и игры — по своим правилам слияния: деньги не складываются, купленное не
+    // теряется, рекорд берётся лучший. Нет в файле — не трогаем.
+    if (data.purse) {
+      const local = normalizePurse(await read<unknown>(KEYS.purse, EMPTY_PURSE));
+      await write(KEYS.purse, normalizePurse(mergePurse(local, normalizePurse(data.purse))));
+    }
+    if (data.gameStats) {
+      const local = normalizeGameStats(await read<unknown>(KEYS.gameStats, DEFAULT_GAME_STATS));
+      await write(KEYS.gameStats, mergeGameStats(local, normalizeGameStats(data.gameStats)));
     }
 
     // The screen-time limit is a setting of *this* phone, not history — merging

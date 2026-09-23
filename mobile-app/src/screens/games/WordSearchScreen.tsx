@@ -22,6 +22,7 @@ import {
 import { emptyWordSearch, formatSeconds, recordKey, withSolved, type GameStats } from "../../lib/games/stats";
 import { spend, type Purse } from "../../lib/rewards/currency";
 import { HINT_PRICES, paletteColors } from "../../lib/rewards/catalog";
+import { useSavePurse } from "../../lib/rewards/useSavePurse";
 
 const DIFFICULTIES: Difficulty[] = ["easy", "normal", "hard"];
 
@@ -57,10 +58,7 @@ export default function WordSearchScreen({
    * экран, который и так считает поле, незачем.
    */
   const { data: purse } = useQuery<Purse>({ queryKey: ["purse"], queryFn: () => api.getPurse() });
-  const pay = useMutation({
-    mutationFn: (next: Purse) => api.setPurse(next),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["purse"] }),
-  });
+  const pay = useSavePurse();
   const save = useMutation({
     mutationFn: (next: GameStats) => api.setGameStats(next),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["gameStats"] }),
@@ -251,22 +249,29 @@ export default function WordSearchScreen({
     const target = unfound[Math.floor(Math.random() * unfound.length)];
     const rest = target.cells.filter((c) => !shown.has(`${c.row}:${c.col}`));
     if (rest.length === 0) return;
-    const next = spend(purse, { sparks: HINT_PRICES.letter }, "Подсказка: буква", todayKey());
-    if (!next) return;
-    pay.mutate(next);
-    setHints((prev) => [...prev, rest[Math.floor(Math.random() * rest.length)]]);
-    setHinted(true);
+    const cell = rest[Math.floor(Math.random() * rest.length)];
+    // Букву показывает только оплата, которая прошла: списание решается в хранилище, а не
+    // по копии кошелька на экране, и отказ оттуда значит «не открывать».
+    pay.mutate((current) => spend(current, { sparks: HINT_PRICES.letter }, "Подсказка: буква", todayKey()), {
+      onSuccess: (saved) => {
+        if (!saved) return;
+        setHints((prev) => [...prev, cell]);
+        setHinted(true);
+      },
+    });
   };
 
   const hintWord = () => {
     if (!purse || unfound.length === 0) return;
-    const next = spend(purse, { sparks: HINT_PRICES.word }, "Подсказка: слово", todayKey());
-    if (!next) return;
-    pay.mutate(next);
     const target = unfound[Math.floor(Math.random() * unfound.length)];
-    setFound((prev) => (prev.some((f) => f.word === target.word) ? prev : [...prev, target]));
-    setJust(target.word);
-    setHinted(true);
+    pay.mutate((current) => spend(current, { sparks: HINT_PRICES.word }, "Подсказка: слово", todayKey()), {
+      onSuccess: (saved) => {
+        if (!saved) return;
+        setFound((prev) => (prev.some((f) => f.word === target.word) ? prev : [...prev, target]));
+        setJust(target.word);
+        setHinted(true);
+      },
+    });
   };
 
   const isHinted = (c: Cell) => hints.some((h) => h.row === c.row && h.col === c.col);
@@ -478,13 +483,13 @@ export default function WordSearchScreen({
           <HintButton
             label="Буква"
             price={HINT_PRICES.letter}
-            enough={sparks >= HINT_PRICES.letter}
+            enough={sparks >= HINT_PRICES.letter && !pay.isPending}
             onPress={hintLetter}
           />
           <HintButton
             label="Слово"
             price={HINT_PRICES.word}
-            enough={sparks >= HINT_PRICES.word}
+            enough={sparks >= HINT_PRICES.word && !pay.isPending}
             onPress={hintWord}
           />
           <View style={styles.purse}>

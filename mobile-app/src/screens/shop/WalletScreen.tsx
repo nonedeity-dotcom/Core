@@ -1,9 +1,9 @@
 import { View, Text, ScrollView, StyleSheet } from "react-native";
-import { Feather } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
 import { plural } from "../../lib/plural";
 import { formatDateShort } from "../../lib/date";
-import { HISTORY_LIMIT, formatAmount, type Purse } from "../../lib/rewards/currency";
+import { HISTORY_LIMIT, type Purse } from "../../lib/rewards/currency";
+import WalletRow from "../../components/WalletRow";
 
 /**
  * Кошелёк: сколько есть и что было.
@@ -16,10 +16,7 @@ import { HISTORY_LIMIT, formatAmount, type Purse } from "../../lib/rewards/curre
 export default function WalletScreen({ purse }: { purse: Purse }) {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.walletRow}>
-        <Coin icon="zap" value={purse.wallet.sparks} forms={["искра", "искры", "искр"]} tint={colors.accent} />
-        <Coin icon="hexagon" value={purse.wallet.cores} forms={["ядро", "ядра", "ядер"]} tint={colors.accentGreen} />
-      </View>
+      <WalletRow wallet={purse.wallet} />
       <Text style={styles.note}>
         Искры капают за закрытые дни, фокус-сессии, записанную еду, вес и собранные поля —
         их тратят на подсказки. Ядра даются редко: за вехи серии, написанный итог месяца и
@@ -45,29 +42,9 @@ export default function WalletScreen({ purse }: { purse: Purse }) {
       )}
 
       <Text style={styles.footnote}>
-        {`Показаны последние ${HISTORY_LIMIT}. Каждое событие оплачивается один раз: если поменять правило дня, задним числом ничего не доплатится и не отнимется.`}
+        {`Показаны последние ${HISTORY_LIMIT}. Каждое событие оплачивается один раз. Прошедший день рассчитывается через два дня после того, как закончился, и дальше смена правил его не трогает: задним числом ничего не доплатится и не отнимется.`}
       </Text>
     </ScrollView>
-  );
-}
-
-function Coin({
-  icon,
-  value,
-  forms,
-  tint,
-}: {
-  icon: React.ComponentProps<typeof Feather>["name"];
-  value: number;
-  forms: [string, string, string];
-  tint: string;
-}) {
-  return (
-    <View style={styles.coin}>
-      <Feather name={icon} size={16} color={tint} />
-      <Text style={[styles.coinValue, { color: tint }]}>{formatAmount(value)}</Text>
-      <Text style={styles.coinLabel}>{plural(value, forms)}</Text>
-    </View>
   );
 }
 
@@ -90,19 +67,6 @@ function Amount({ value, forms }: { value: number; forms: [string, string, strin
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   content: { padding: 20, paddingBottom: 40 },
-  walletRow: { flexDirection: "row", gap: 10 },
-  coin: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-  },
-  coinValue: { fontSize: 20, fontWeight: "700" },
-  coinLabel: { color: colors.textMuted, fontSize: 11, flex: 1 },
 
   sectionLabel: { color: colors.textMuted, fontSize: 12, marginBottom: 8 },
   spaced: { marginTop: 22 },

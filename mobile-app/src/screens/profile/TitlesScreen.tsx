@@ -1,9 +1,9 @@
 import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Feather } from "@expo/vector-icons";
-import { api } from "../../api/client";
 import { colors } from "../../theme/colors";
 import { equip, type Purse } from "../../lib/rewards/currency";
+import { useSavePurse } from "../../lib/rewards/useSavePurse";
+import Wear from "../../components/Wear";
 import {
   BUYABLE_TITLES,
   TITLE_RULES,
@@ -27,19 +27,13 @@ export default function TitlesScreen({
   purse,
   titles,
   titleState,
-  closedDays,
 }: {
   purse: Purse;
   titles: EarnedTitle[];
   titleState: TitleState;
-  closedDays: number;
 }) {
-  const qc = useQueryClient();
-  const save = useMutation({
-    mutationFn: (next: Purse) => api.setPurse(next),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["purse"] }),
-  });
-  const wear = (id: string) => save.mutate(equip(purse, "title", id));
+  const save = useSavePurse();
+  const wear = (id: string) => save.mutate((current) => equip(current, "title", id));
 
   const near = nextTitle(titleState);
   const bought = BUYABLE_TITLES.filter((t) => purse.owned.includes(t.id));
@@ -47,7 +41,7 @@ export default function TitlesScreen({
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.sectionLabel}>
-        {`${titles.length} из ${TITLE_RULES.length} · закрыто дней за всё время: ${closedDays}`}
+        {`${titles.length} из ${TITLE_RULES.length} · закрыто дней за всё время: ${titleState.closedDays}`}
       </Text>
       <Text style={styles.note}>
         {near === null
@@ -67,7 +61,7 @@ export default function TitlesScreen({
               <Text style={styles.rowHint}>{rule.hint}</Text>
               {!has && <Progress have={progress.have} need={progress.need} />}
             </View>
-            {has && <Wear on={purse.equipped.title === rule.id} onPress={() => wear(rule.id)} />}
+            {has && <Wear on={purse.equipped.title === rule.id} label={rule.title} onPress={() => wear(rule.id)} />}
           </View>
         );
       })}
@@ -82,7 +76,7 @@ export default function TitlesScreen({
                 <Text style={styles.rowTitle}>{t.title}</Text>
                 <Text style={styles.rowHint}>{t.hint}</Text>
               </View>
-              <Wear on={purse.equipped.title === t.id} onPress={() => wear(t.id)} />
+              <Wear on={purse.equipped.title === t.id} label={t.title} onPress={() => wear(t.id)} />
             </View>
           ))}
         </>
@@ -99,27 +93,6 @@ export default function TitlesScreen({
         </Pressable>
       )}
     </ScrollView>
-  );
-}
-
-/** «Надето» или «Надеть» — одна кнопка на обе половины списка, чтобы выглядели одинаково. */
-function Wear({ on, onPress }: { on: boolean; onPress: () => void }) {
-  if (on)
-    return (
-      <View style={styles.wornTag}>
-        <Feather name="check" size={12} color={colors.accentGreen} />
-        <Text style={styles.wornText}>надето</Text>
-      </View>
-    );
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel="Надеть титул"
-      style={({ pressed }) => [styles.wear, pressed && styles.dimmed]}
-    >
-      <Text style={styles.wearText}>надеть</Text>
-    </Pressable>
   );
 }
 
@@ -162,10 +135,6 @@ const styles = StyleSheet.create({
   fill: { height: 4, borderRadius: 2, backgroundColor: colors.accentGreen },
   progressText: { color: colors.textMuted, fontSize: 10, fontVariant: ["tabular-nums"] },
 
-  wear: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, backgroundColor: "rgba(143,184,154,0.16)" },
-  wearText: { color: colors.accentGreen, fontSize: 12, fontWeight: "600" },
-  wornTag: { flexDirection: "row", alignItems: "center", gap: 4 },
-  wornText: { color: colors.accentGreen, fontSize: 11 },
   plain: { alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 2 },
   plainText: { color: colors.textMuted, fontSize: 12, textDecorationLine: "underline" },
   dimmed: { opacity: 0.6 },

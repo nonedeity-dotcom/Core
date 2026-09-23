@@ -1,10 +1,10 @@
-import { getCrekerAppUsage, getCrekerScreenTime } from "../../modules/creker-usage";
+import { getCrekerAppUsage, getCrekerScreenTime, hasUsageAccess } from "../../modules/creker-usage";
 import { api } from "../api/client";
 import { perDayTarget } from "../lib/habits";
 import { decideUsage, isTotal, type ScreenRule } from "../lib/screenTime";
-import { dateNDaysAgo, todayKey } from "../lib/date";
+import { dateNDaysAgo, shiftDate, todayKey } from "../lib/date";
 import { normalizeAppDay, normalizeScreenDay, relabel } from "../lib/screen/usage";
-import { resolveAppInfo } from "./usageSync";
+import { resolveAppInfo, syncUsage } from "./usageSync";
 import type { Habit, HabitLog } from "../types";
 
 /**
@@ -52,6 +52,9 @@ export async function syncScreenHabits(habits: Habit[], date: string): Promise<n
   let ticked = 0;
   for (const habit of watching) {
     if (manual.has(habit.id)) continue;
+    // День до появления привычки ей не принадлежит: отметка там ничего не решает, зато
+    // попала бы в награды за экран как день, который «удержался».
+    if (habit.createdAt && date < habit.createdAt) continue;
     const rule = habit.screen as ScreenRule;
     const used = isTotal(rule)
       ? day?.screenMillis
@@ -71,6 +74,57 @@ export async function syncScreenHabits(habits: Habit[], date: string): Promise<n
   }
 
   return ticked;
+}
+
+/**
+ * Как долго считать недавний пересчёт свежим.
+ *
+ * Пересчёт экранного времени зовут и Главная, и Sterzhen, и кнопка «обновить», а открытие
+ * приложения обычно дёргает сразу двоих. Разбирать события за четыре дня дважды за секунду
+ * незачем: минута — это меньше, чем меняется что-либо, что правило способно заметить.
+ */
+const REFRESH_FRESH_MS = 60_000;
+let lastRefreshMs = 0;
+
+/**
+ * Обновить свою копию экранного времени.
+ *
+ * Своим замером, если система его разрешила, иначе — из Creker. Ошибка здесь не повод
+ * ничего не делать дальше: правило посмотрит на то, что сохранено, и честно промолчит,
+ * если сохранённое устарело.
+ */
+async function refreshScreenData(): Promise<void> {
+  const now = Date.now();
+  if (now - lastRefreshMs < REFRESH_FRESH_MS) return;
+  lastRefreshMs = now;
+  try {
+    if (hasUsageAccess()) await syncUsage(now);
+    else await syncFromCreker();
+  } catch {
+    // Не пересчиталось — отметка посмотрит на последнее сохранённое.
+  }
+}
+
+/**
+ * Обновить цифры и отметить экранные привычки — за сегодня и за вчера.
+ *
+ * Сначала обновление. Отметка читает свою копию истории, а копия сама не свежеет: её
+ * пересчитывает Главная при открытии. Кто сразу уходил в Sterzhen, мог застать копию
+ * вчерашней, и правило, которое не верит устаревшему «уложился», молча не ставило
+ * галочку. Кнопка «обновить» по той же причине перестала обновлять экранное время —
+ * хотя ради него она и была заведена.
+ *
+ * Потом — вчера. День заканчивается не тогда, когда приложение закрыли в восемь вечера:
+ * до полуночи можно ещё просидеть в телефоне три часа. Если вечером было «уложился», а к
+ * ночи лимит перевалил, вчерашняя галочка так и стояла бы — день судился бы по последнему
+ * заходу, а не целиком. К утру вчерашние цифры окончательные, и день пересматривается.
+ */
+export async function refreshScreenHabits(habits: Habit[], today: string): Promise<number> {
+  if (!habits.some((h) => h.auto === "screentime" && h.screen)) return 0;
+  await refreshScreenData();
+  const yesterday = await syncScreenHabits(habits, shiftDate(today, -1));
+  const now = await syncScreenHabits(habits, today);
+  return yesterday + now;
 }
 
 /**

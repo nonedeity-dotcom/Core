@@ -1,10 +1,11 @@
-import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { View, Text, ScrollView, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import { api } from "../../api/client";
 import { colors } from "../../theme/colors";
 import { plural } from "../../lib/plural";
 import ItemPreview from "../../components/ItemPreview";
+import Wear from "../../components/Wear";
+import { WORD_THEMES } from "../../content/wordThemes";
+import { useSavePurse } from "../../lib/rewards/useSavePurse";
 import { equip, type Purse, type Slot } from "../../lib/rewards/currency";
 import {
   ACCENTS,
@@ -29,18 +30,17 @@ import { ICON_PACKS, packOpen } from "../../lib/rewards/icons";
  * искать.
  */
 export default function CollectionScreen({ purse }: { purse: Purse }) {
-  const qc = useQueryClient();
-  const save = useMutation({
-    mutationFn: (next: Purse) => api.setPurse(next),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["purse"] }),
-  });
-  const wear = (slot: Slot, id: string) => save.mutate(equip(purse, slot, id));
+  const save = useSavePurse();
+  const wear = (slot: Slot, id: string) => save.mutate((current) => equip(current, slot, id));
 
   const mine = (items: ShopItem[]) => items.filter((i) => isOwned(purse.owned, i));
   const palettes = mine(FIELD_PALETTES);
   const accents = mine(ACCENTS);
   const themes = mine(THEME_PACKS);
   const icons = ICON_PACKS.filter((p) => packOpen(p, purse.owned));
+  // Сколько платных наборов ещё не куплено — одним числом, а не тремя одинаковыми фильтрами.
+  const morePacks = ICON_ITEMS.length - icons.filter((p) => p.cores > 0).length;
+  const freeThemes = WORD_THEMES.filter((t) => !t.paid).length;
   const standing = shopStanding(purse.owned, purse.wallet.cores);
 
   return (
@@ -75,29 +75,28 @@ export default function CollectionScreen({ purse }: { purse: Purse }) {
       <Text style={[styles.sectionLabel, styles.spaced]}>Значки для привычек</Text>
       {icons.map((pack) => (
         <View key={pack.id} style={styles.row}>
-          <View style={styles.iconRow}>
-            {pack.icons.slice(0, 4).map((name) => (
-              <Feather key={name} name={name} size={13} color={colors.textMuted} />
-            ))}
-          </View>
+          <ItemPreview item={{ id: pack.id, kind: "icons", title: pack.title, hint: pack.hint, cores: pack.cores }} />
           <View style={{ flex: 1 }}>
             <Text style={styles.rowTitle}>{pack.title}</Text>
             <Text style={styles.rowHint}>{`${pack.icons.length} значков · выбираются в редакторе привычки`}</Text>
           </View>
         </View>
       ))}
-      {ICON_ITEMS.length > icons.filter((p) => p.cores > 0).length && (
+      {morePacks > 0 && (
         <Text style={styles.note}>
-          {`Ещё ${ICON_ITEMS.length - icons.filter((p) => p.cores > 0).length} ${plural(
-            ICON_ITEMS.length - icons.filter((p) => p.cores > 0).length,
-            ["набор", "набора", "наборов"],
-          )} — в магазине.`}
+          {`Ещё ${morePacks} ${plural(morePacks, ["набор", "набора", "наборов"])} — в магазине.`}
         </Text>
       )}
 
       <Text style={[styles.sectionLabel, styles.spaced]}>Темы для «Найди слова»</Text>
       {themes.length === 0 ? (
-        <Text style={styles.note}>Куплённых тем пока нет — шесть бесплатных и так открыты.</Text>
+        <Text style={styles.note}>
+          {`Купленных тем пока нет — ${freeThemes} ${plural(freeThemes, [
+            "бесплатная и так открыта",
+            "бесплатные и так открыты",
+            "бесплатных и так открыты",
+          ])}.`}
+        </Text>
       ) : (
         themes.map((item) => (
           <View key={item.id} style={styles.row}>
@@ -125,21 +124,7 @@ function Owned({ item, worn, onWear }: { item: ShopItem; worn: boolean; onWear: 
         <Text style={styles.rowTitle}>{item.title}</Text>
         <Text style={styles.rowHint}>{item.hint}</Text>
       </View>
-      {worn ? (
-        <View style={styles.wornTag}>
-          <Feather name="check" size={12} color={colors.accentGreen} />
-          <Text style={styles.wornText}>надето</Text>
-        </View>
-      ) : (
-        <Pressable
-          onPress={onWear}
-          accessibilityRole="button"
-          accessibilityLabel={`Надеть: ${item.title}`}
-          style={({ pressed }) => [styles.wear, pressed && styles.dimmed]}
-        >
-          <Text style={styles.wearText}>надеть</Text>
-        </Pressable>
-      )}
+      <Wear on={worn} label={item.title} onPress={onWear} />
     </View>
   );
 }
@@ -166,11 +151,5 @@ const styles = StyleSheet.create({
   rowOn: { borderWidth: 1, borderColor: "rgba(143,184,154,0.35)" },
   rowTitle: { color: colors.text, fontSize: 14, fontWeight: "600" },
   rowHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 2 },
-  iconRow: { flexDirection: "row", flexWrap: "wrap", width: 34, gap: 4 },
 
-  wear: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, backgroundColor: "rgba(143,184,154,0.16)" },
-  wearText: { color: colors.accentGreen, fontSize: 12, fontWeight: "600" },
-  wornTag: { flexDirection: "row", alignItems: "center", gap: 4 },
-  wornText: { color: colors.accentGreen, fontSize: 11 },
-  dimmed: { opacity: 0.6 },
 });

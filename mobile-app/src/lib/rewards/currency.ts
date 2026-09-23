@@ -1,3 +1,5 @@
+import { EMPTY_LEDGER, normalizeLedger, type Ledger } from "./ledger";
+
 /**
  * Две валюты и кошелёк.
  *
@@ -74,6 +76,14 @@ export interface Purse {
   equipped: Equipped;
   /** Когда последний раз плавили искры в ядро. Пустая строка — ни разу. */
   meltedAt: string;
+  /**
+   * Журнал рассчитанных дней — что решено про каждый прошедший день. См. ledger.ts.
+   *
+   * Лежит в кошельке, а не рядом, по той же причине, что и ключи оплаченного: журнал и
+   * оплата меняются вместе, и записать одно без другого значило бы однажды заплатить за
+   * день, которого в журнале нет, или записать день, за который не заплачено.
+   */
+  ledger: Ledger;
 }
 
 /**
@@ -91,6 +101,7 @@ export const EMPTY_PURSE: Purse = {
   history: [],
   equipped: { ...DEFAULT_EQUIPPED },
   meltedAt: "",
+  ledger: { ...EMPTY_LEDGER },
 };
 
 const int = (v: unknown): number =>
@@ -105,7 +116,7 @@ const strings = (v: unknown): string[] =>
 
 export function normalizePurse(raw: unknown): Purse {
   if (typeof raw !== "object" || raw === null)
-    return { ...EMPTY_PURSE, wallet: { ...EMPTY_WALLET }, equipped: { ...DEFAULT_EQUIPPED } };
+    return { ...EMPTY_PURSE, wallet: { ...EMPTY_WALLET }, equipped: { ...DEFAULT_EQUIPPED }, ledger: { ...EMPTY_LEDGER } };
   const o = raw as Record<string, unknown>;
   const e = (typeof o.equipped === "object" && o.equipped !== null ? o.equipped : {}) as Record<string, unknown>;
   const slot = (v: unknown, fallback: string): string => (typeof v === "string" ? v : fallback);
@@ -133,6 +144,7 @@ export function normalizePurse(raw: unknown): Purse {
       title: slot(e.title, DEFAULT_EQUIPPED.title),
     },
     meltedAt: typeof o.meltedAt === "string" ? o.meltedAt : "",
+    ledger: normalizeLedger(o.ledger),
   };
 }
 
@@ -145,15 +157,15 @@ export function normalizePurse(raw: unknown): Purse {
 export function applyAwards(purse: Purse, awards: Award[], today: string): Purse {
   const fresh = awards.filter((a) => !purse.paid.includes(a.key));
   if (fresh.length === 0) return purse;
+  // Остальное — как было: поля перечислялись здесь руками, и каждое новое поле кошелька
+  // молча терялось бы при первом же начислении.
   return {
+    ...purse,
     wallet: {
       sparks: purse.wallet.sparks + fresh.reduce((n, a) => n + a.sparks, 0),
       cores: purse.wallet.cores + fresh.reduce((n, a) => n + a.cores, 0),
     },
     paid: [...purse.paid, ...fresh.map((a) => a.key)],
-    owned: purse.owned,
-    equipped: purse.equipped,
-    meltedAt: purse.meltedAt,
     history: [
       ...fresh.map((a) => ({ key: a.key, title: a.title, sparks: a.sparks, cores: a.cores, at: today })),
       ...purse.history,
@@ -291,6 +303,25 @@ export const equip = (purse: Purse, slot: Slot, id: string): Purse => ({
   ...purse,
   equipped: { ...purse.equipped, [slot]: id },
 });
+
+/**
+ * Слияние кошельков при переносе истории с другого телефона.
+ *
+ * Деньги не складываются: оба кошелька посчитаны по одной и той же истории, и сумма
+ * означала бы заплатить за одни и те же дни дважды. Поэтому если на этом телефоне кошелёк
+ * ещё пустой — берётся пришедший целиком. Если свой уже есть — он и остаётся, а к нему
+ * добавляется купленное там: это твои вещи, и перенос не должен их отнимать.
+ */
+export function mergePurse(local: Purse, incoming: Purse): Purse {
+  const blank =
+    local.paid.length === 0 &&
+    local.owned.length === 0 &&
+    local.history.length === 0 &&
+    local.wallet.sparks === 0 &&
+    local.wallet.cores === 0;
+  if (blank) return incoming;
+  return { ...local, owned: [...new Set([...local.owned, ...incoming.owned])] };
+}
 
 /** «1 240» — большие числа читаются пробелами, а не сплошняком. */
 export const formatAmount = (n: number): string => n.toLocaleString("ru-RU").replace(/ /g, " ");

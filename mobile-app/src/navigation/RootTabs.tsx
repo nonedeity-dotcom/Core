@@ -33,7 +33,7 @@ import WordSearchScreen from "../screens/games/WordSearchScreen";
 import ShopSection from "../screens/shop/ShopSection";
 import ProfileSection from "../screens/profile/ProfileSection";
 import SectionBar from "./SectionBar";
-import TabChips from "./TabChips";
+import TabbedSection from "./TabbedSection";
 import MoreScreen from "../screens/MoreScreen";
 import { SECTION_TITLES, type Section } from "./sections";
 import { CHANNEL_LABELS, type ReminderChannel } from "../notifications/reminders";
@@ -52,28 +52,6 @@ const navTheme = {
   colors: { ...DarkTheme.colors, background: colors.bg, card: colors.card, border: colors.cardBorder },
 };
 
-/**
- * Раздел с вкладками наверху.
- *
- * Навигатора у вкладок больше нет: внизу теперь стоят разделы, и вторая полоса там не
- * помещается, а выносить чужой навигатор наверх — это подпорка ради подпорки. Вкладка
- * здесь — просто выбранный экран, и переключается она тем же чипом, каким в приложении
- * выбирают всё остальное.
- *
- * Уходя со вкладки, экран размонтируется. Это не потеря: данные лежат в кэше запросов и
- * возвращаются мгновенно, а держать в памяти пять экранов ради сохранённой прокрутки —
- * плата не по товару.
- */
-function TabbedSection({ tabs }: { tabs: { title: string; render: () => React.ReactElement }[] }) {
-  const [index, setIndex] = useState(0);
-  const current = tabs[Math.min(index, tabs.length - 1)];
-  return (
-    <View style={{ flex: 1 }}>
-      {tabs.length > 1 && <TabChips titles={tabs.map((t) => t.title)} index={index} onChange={setIndex} />}
-      <View style={{ flex: 1 }}>{current.render()}</View>
-    </View>
-  );
-}
 
 // A stack around the tabs, so settings and the reference can be pushed on top
 // instead of competing for a seventh slot in the bottom bar — seven labels only

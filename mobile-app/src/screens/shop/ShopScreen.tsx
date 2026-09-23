@@ -1,11 +1,11 @@
 import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Feather } from "@expo/vector-icons";
-import { api } from "../../api/client";
 import { colors } from "../../theme/colors";
 import { plural } from "../../lib/plural";
 import { todayKey } from "../../lib/date";
 import ItemPreview from "../../components/ItemPreview";
+import WalletRow from "../../components/WalletRow";
+import { useSavePurse } from "../../lib/rewards/useSavePurse";
 import { MELT, buy, canAfford, equip, melt, meltWaitDays, type Purse, type Slot } from "../../lib/rewards/currency";
 import {
   ACCENTS,
@@ -48,12 +48,7 @@ const SLOTS: Record<ItemKind, Slot | null> = {
 };
 
 export default function ShopScreen({ purse }: { purse: Purse }) {
-  const qc = useQueryClient();
-  const purchase = useMutation({
-    mutationFn: (next: Purse) => api.setPurse(next),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["purse"] }),
-  });
-
+  const save = useSavePurse();
   const today = todayKey();
 
   /**
@@ -63,26 +58,25 @@ export default function ShopScreen({ purse }: { purse: Purse }) {
    * купленный за человека — значит решать за него. Набор цветов и акцент так не спорят:
    * купил — увидел, а не пошёл искать, где это включается.
    */
-  const take = (item: ShopItem) => {
-    const bought = buy(purse, item.id, priceOf(item), purchaseTitle(item), today);
-    if (!bought) return;
-    const slot = SLOTS[item.kind];
-    const keep = slot === null || (slot === "title" && bought.equipped.title !== "");
-    purchase.mutate(keep ? bought : equip(bought, slot as Slot, item.id));
-  };
+  const take = (item: ShopItem) =>
+    save.mutate((current) => {
+      const bought = buy(current, item.id, priceOf(item), purchaseTitle(item), today);
+      if (!bought) return null;
+      const slot = SLOTS[item.kind];
+      const keep = slot === null || (slot === "title" && bought.equipped.title !== "");
+      return keep ? bought : equip(bought, slot as Slot, item.id);
+    });
 
   const wait = meltWaitDays(purse, today);
   const poor = purse.wallet.sparks < MELT.sparks;
-  const melting = () => {
-    const next = melt(purse, today);
-    if (next) purchase.mutate(next);
-  };
+  const melting = () => save.mutate((current) => melt(current, today));
 
   const standing = shopStanding(purse.owned, purse.wallet.cores);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.sectionLabel}>
+      <WalletRow wallet={purse.wallet} />
+      <Text style={[styles.sectionLabel, styles.spacedSmall]}>
         {`Куплено ${standing.have} из ${standing.total}${
           standing.affordable > 0
             ? ` · по карману ещё ${standing.affordable}`
