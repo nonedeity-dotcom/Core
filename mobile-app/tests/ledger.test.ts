@@ -144,3 +144,14 @@ test("привычка, которой ещё не было, день не по�
 test("без экранных привычек экранных дней нет", () => {
   eq("пусто", [...screenHabitDates([habit("c")], [done("c", "2026-09-10")])], []);
 });
+
+test("«не меньше» в награду за экран не входит", () => {
+  const habits = [
+    habit("limit", { auto: "screentime", screen: rule }),
+    habit("reader", { auto: "screentime", screen: { app: "com.reader", limitMin: 20, direction: "atLeast" } }),
+  ];
+  // Читалку не открывал, но лимит удержал — день экранный: награда про отказ от экрана.
+  eq("засчитан по лимиту", [...screenHabitDates(habits, [done("limit", "2026-09-10")])], ["2026-09-10"]);
+  const onlyReader = [habit("reader", { auto: "screentime", screen: { app: "com.reader", limitMin: 20, direction: "atLeast" } })];
+  eq("одна «не меньше» — экранных дней нет", [...screenHabitDates(onlyReader, [done("reader", "2026-09-10")])], []);
+});

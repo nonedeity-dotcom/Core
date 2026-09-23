@@ -1,7 +1,7 @@
 import { getCrekerAppUsage, getCrekerScreenTime, hasUsageAccess } from "../../modules/creker-usage";
 import { api } from "../api/client";
 import { perDayTarget } from "../lib/habits";
-import { decideUsage, isTotal, type ScreenRule } from "../lib/screenTime";
+import { decideRule, isTotal, type ScreenRule } from "../lib/screenTime";
 import { dateNDaysAgo, shiftDate, todayKey } from "../lib/date";
 import { normalizeAppDay, normalizeScreenDay, relabel } from "../lib/screen/usage";
 import { resolveAppInfo, syncUsage } from "./usageSync";
@@ -63,13 +63,13 @@ export async function syncScreenHabits(habits: Habit[], date: string): Promise<n
     // домерен, — это настоящий ответ: не открывал.
     if (used === undefined) continue;
 
-    const verdict = decideUsage(used, updatedAt, rule.limitMin, now, date);
+    const verdict = decideRule(rule, used, updatedAt, now, date);
     if (verdict.action !== "tick") continue;
 
     // Привычка тут «да или нет», поэтому день пишется сразу полным или пустым, а не
     // шагами: ответ creker — это не нажатие.
     const perDay = perDayTarget(habit);
-    await api.setHabitProgress(habit.id, date, verdict.withinLimit ? perDay : 0, perDay);
+    await api.setHabitProgress(habit.id, date, verdict.done ? perDay : 0, perDay);
     ticked += 1;
   }
 

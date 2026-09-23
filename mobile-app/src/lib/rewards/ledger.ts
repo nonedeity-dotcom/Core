@@ -151,7 +151,12 @@ export function restDays(
  * отмечена сделанной. Нет экранных привычек — нет и такой награды: мерить нечем.
  */
 export function screenHabitDates(habits: Habit[], logs: HabitLog[]): Set<string> {
-  const watchers = habits.filter((h) => h.auto === "screentime" && h.screen);
+  // Только «не больше»: награда и титул «Отключённый» — про то, что удержался от экрана.
+  // «Читалка не меньше двадцати минут» — это привычка к чему-то, а не отказ от телефона, и
+  // закрывает день она наравне со всеми остальными.
+  const watchers = habits.filter(
+    (h) => h.auto === "screentime" && h.screen && (h.screen.direction ?? "atMost") === "atMost",
+  );
   const out = new Set<string>();
   if (watchers.length === 0) return out;
 

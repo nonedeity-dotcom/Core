@@ -45,7 +45,19 @@ export interface ScreenRule {
   app: string;
   label?: string;
   limitMin: number;
+  /**
+   * В какую сторону планка: «не больше» — для того, от чего отвыкают (TikTok), «не
+   * меньше» — для того, к чему привыкают (читалка, Duolingo).
+   *
+   * Отсутствует у всех правил, заведённых до «не меньше», и значит «не больше» — единственное,
+   * что тогда умела такая привычка.
+   */
+  direction?: ScreenDirection;
 }
+
+export type ScreenDirection = "atMost" | "atLeast";
+
+export const ruleDirection = (rule: ScreenRule): ScreenDirection => rule.direction ?? "atMost";
 
 /** «Всё экранное время» — не пакет, и спутать его с пакетом нельзя: точка в начале. */
 export const TOTAL_APP = ".total";
@@ -72,6 +84,8 @@ export function normalizeScreenRule(value: unknown): ScreenRule | null {
     app: v.app,
     ...(typeof v.label === "string" && v.label !== "" ? { label: v.label } : {}),
     limitMin: Math.min(MAX_LIMIT_MIN, limit),
+    // Хранится только «не меньше»: «не больше» — это отсутствие поля, как и было всегда.
+    ...(v.direction === "atLeast" ? { direction: "atLeast" as const } : {}),
   };
 }
 
@@ -127,4 +141,43 @@ export function decideUsage(
     return { action: "skip", reason: "incomplete" };
   }
   return { action: "tick", withinLimit: true };
+}
+
+/** Что правило привычки говорит про день: отметить (сделано или нет) или промолчать. */
+export type RuleVerdict = { action: "tick"; done: boolean } | { action: "skip"; reason: "incomplete" };
+
+/**
+ * Решение по правилу привычки — в обе стороны.
+ *
+ * У «не больше» и «не меньше» асимметрия зеркальная, и держится она на одном и том же:
+ * потраченное за день время только растёт.
+ *
+ * «Не больше». Превысил — это уже случилось, и видно даже по отставшей строке. «Уложился» —
+ * утверждение про весь день, и ему нужна строка, домеренная до «сейчас» (или до конца дня).
+ *
+ * «Не меньше». Набрал — уже случилось, отмечается сразу, в любой момент дня. «Не набрал» —
+ * утверждение про весь день: пока день идёт, ещё не поздно, и снимать галочку в обед за то,
+ * что к вечеру ещё можно успеть, было бы враньём. Такое говорится только про законченный
+ * день, и только если он домерен до конца.
+ */
+export function decideRule(
+  rule: ScreenRule,
+  usedMillis: number,
+  updatedAt: number,
+  nowMs: number,
+  date: string,
+): RuleVerdict {
+  const limitMs = rule.limitMin * 60_000;
+
+  if (ruleDirection(rule) === "atMost") {
+    const v = decideUsage(usedMillis, updatedAt, rule.limitMin, nowMs, date);
+    return v.action === "tick" ? { action: "tick", done: v.withinLimit } : { action: "skip", reason: "incomplete" };
+  }
+
+  if (usedMillis >= limitMs) return { action: "tick", done: true };
+
+  const end = endOfLocalDay(date);
+  if (nowMs < end) return { action: "skip", reason: "incomplete" };
+  if (!updatedAt || end - updatedAt > FRESHNESS_TOLERANCE_MS) return { action: "skip", reason: "incomplete" };
+  return { action: "tick", done: false };
 }

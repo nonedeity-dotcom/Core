@@ -47,7 +47,7 @@ import {
   weeklyProgress,
 } from "../lib/habits";
 import { refreshScreenHabits } from "../integrations/screenTime";
-import { TOTAL_APP, isTotal, type ScreenRule } from "../lib/screenTime";
+import { TOTAL_APP, isTotal, ruleDirection, type ScreenDirection, type ScreenRule } from "../lib/screenTime";
 import { shiftDate } from "../lib/date";
 import { openIcons, type IconName } from "../lib/rewards/icons";
 import type { Purse } from "../lib/rewards/currency";
@@ -72,7 +72,16 @@ const APP_PICKER_LIMIT = 20;
 
 /** Лимит экранной привычки: шаг, начальное значение и потолок. */
 const SCREEN_LIMIT_STEP_MIN = 30;
+/**
+ * Шаг помельче — для коротких планок.
+ *
+ * Полчаса хороши для «TikTok не больше пяти часов», но «читалка хотя бы двадцать минут»
+ * ими не выставить вовсе: ступени шли 30, 60, 90. До часа шаг десять минут.
+ */
+const SCREEN_LIMIT_FINE_STEP_MIN = 10;
+const SCREEN_LIMIT_FINE_UNTIL_MIN = 60;
 const DEFAULT_SCREEN_HABIT_LIMIT_MIN = 120;
+const DEFAULT_SCREEN_HABIT_MINIMUM_MIN = 20;
 const MAX_SCREEN_HABIT_LIMIT_MIN = 16 * 60;
 
 const GROUPS: { id: ItemGroup; title: string; blurb: string }[] = [
@@ -197,7 +206,9 @@ export default function TodayScreen() {
    * рядом. Поэтому в зависимостях слепок самих правил, а не их количество.
    */
   const screenStamp = habits
-    .map((h) => (h.auto === "screentime" && h.screen ? `${h.id}:${h.screen.app}:${h.screen.limitMin}` : ""))
+    .map((h) =>
+      h.auto === "screentime" && h.screen ? `${h.id}:${h.screen.app}:${h.screen.limitMin}:${ruleDirection(h.screen)}` : "",
+    )
     .join("|");
 
   useEffect(() => {
@@ -692,15 +703,7 @@ function HabitRow({
             {!!habit.hint && <Text style={styles.hint}>{habit.hint}</Text>}
             {/* Экранная привычка отвечает числом, а не галочкой: галочка говорит «пока да»,
                 а число — сколько именно и сколько ещё осталось. */}
-            {habit.screen && (
-              <Text style={[styles.progress, used !== null && used > habit.screen.limitMin && styles.overLimit]}>
-                {used === null
-                  ? `Creker ещё не считал сегодня · не больше ${formatMinutes(habit.screen.limitMin)}`
-                  : `${formatMinutes(used)} из ${formatMinutes(habit.screen.limitMin)}${
-                      used > habit.screen.limitMin ? " — превышено" : ""
-                    }`}
-              </Text>
-            )}
+            {habit.screen && <ScreenProgress rule={habit.screen} used={used} />}
             {/* What is owed, and how much of it is behind you. */}
             {tickable && perDay > 1 && (
               <Text style={styles.progress}>
@@ -1013,6 +1016,30 @@ function HabitEditor({
 }
 
 /**
+ * Сколько уже набрано по экранной привычке — числом, а не галочкой.
+ *
+ * Галочка говорит «пока да», а число — сколько именно и сколько ещё. Превышенный лимит
+ * тёплый — это «сюда внимание»; набранный минимум зелёный — это «готово».
+ */
+function ScreenProgress({ rule, used }: { rule: ScreenRule; used: number | null }) {
+  const atLeast = ruleDirection(rule) === "atLeast";
+  const bar = formatMinutes(rule.limitMin);
+  if (used === null)
+    return (
+      <Text style={styles.progress}>
+        {`Creker ещё не считал сегодня · ${atLeast ? "не меньше" : "не больше"} ${bar}`}
+      </Text>
+    );
+  const over = !atLeast && used > rule.limitMin;
+  const reached = atLeast && used >= rule.limitMin;
+  return (
+    <Text style={[styles.progress, over && styles.overLimit, reached && styles.reached]}>
+      {`${formatMinutes(used)} из ${bar}${over ? " — превышено" : reached ? " — набрано" : ""}`}
+    </Text>
+  );
+}
+
+/**
  * «Не больше пяти часов в тиктоке» — привычка, которую отмечает не человек, а Creker.
  *
  * Смысл в том, что такую привычку честно отметить самому почти нельзя: никто не помнит,
@@ -1034,13 +1061,27 @@ function ScreenFields({
   const on = screen !== null;
   const limit = screen?.limitMin ?? DEFAULT_SCREEN_HABIT_LIMIT_MIN;
 
-  const pick = (app: string, label: string) => onScreen({ app, label, limitMin: limit });
-  // Шаг в полчаса: лимит в «4 ч 17 мин» — ложная точность, которую всё равно никто не
-  // выдержит глазами.
-  const step = (delta: number) =>
+  const direction = screen ? ruleDirection(screen) : "atMost";
+  const pick = (app: string, label: string) => onScreen({ ...(screen as ScreenRule), app, label, limitMin: limit });
+  // Шаг в полчаса, а до часа — по десять минут: лимит в «4 ч 17 мин» — ложная точность,
+  // а «хотя бы 20 минут» полчасовым шагом не выставить вовсе.
+  const step = (delta: number) => {
+    const fine = limit < SCREEN_LIMIT_FINE_UNTIL_MIN || (limit === SCREEN_LIMIT_FINE_UNTIL_MIN && delta < 0);
+    const size = fine ? SCREEN_LIMIT_FINE_STEP_MIN : SCREEN_LIMIT_STEP_MIN;
     onScreen({
       ...(screen as ScreenRule),
-      limitMin: Math.min(MAX_SCREEN_HABIT_LIMIT_MIN, Math.max(SCREEN_LIMIT_STEP_MIN, limit + delta * SCREEN_LIMIT_STEP_MIN)),
+      limitMin: Math.min(MAX_SCREEN_HABIT_LIMIT_MIN, Math.max(SCREEN_LIMIT_FINE_STEP_MIN, limit + delta * size)),
+    });
+  };
+  /**
+   * Смена стороны меняет и планку на разумную для неё: «не больше двух часов» и «не меньше
+   * двух часов» — разные просьбы, и та же цифра почти никогда не подходит обеим.
+   */
+  const turn = (next: ScreenDirection) =>
+    onScreen({
+      ...(screen as ScreenRule),
+      direction: next === "atLeast" ? "atLeast" : undefined,
+      limitMin: next === "atLeast" ? DEFAULT_SCREEN_HABIT_MINIMUM_MIN : DEFAULT_SCREEN_HABIT_LIMIT_MIN,
     });
 
   return (
@@ -1062,9 +1103,29 @@ function ScreenFields({
       {on && (
         <>
           <Text style={styles.editHint}>
-            Отмечается сама: уложился в лимит — день засчитан, превысил — нет. Отметить
-            руками всё равно можно, и рука главнее — свою отметку Creker не перебьёт.
+            {direction === "atMost"
+              ? "Отмечается сама: уложился в лимит — день засчитан, превысил — нет."
+              : "Отмечается сама, как только наберёшь нужное время. Не набрал — это видно только назавтра: пока день идёт, ещё не поздно."}{" "}
+            Отметить руками всё равно можно, и рука главнее — свою отметку Creker не перебьёт.
           </Text>
+
+          <Text style={styles.editLabel}>Как считать</Text>
+          <View style={styles.chipRow}>
+            {([
+              ["atMost", "Не больше"],
+              ["atLeast", "Не меньше"],
+            ] as [ScreenDirection, string][]).map(([id, title]) => (
+              <Pressable
+                key={id}
+                onPress={() => direction !== id && turn(id)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: direction === id }}
+                style={({ pressed }) => [styles.chip, direction === id && styles.chipOn, pressed && styles.dimmed]}
+              >
+                <Text style={[styles.chipText, direction === id && styles.chipTextOn]}>{title}</Text>
+              </Pressable>
+            ))}
+          </View>
 
           <Text style={styles.editLabel}>За чем следить</Text>
           <View style={styles.chipRow}>
@@ -1102,7 +1163,7 @@ function ScreenFields({
             </Text>
           )}
 
-          <Text style={styles.editLabel}>Не больше</Text>
+          <Text style={styles.editLabel}>{direction === "atMost" ? "Не больше" : "Не меньше"}</Text>
           <View style={styles.stepRow}>
             <Pressable onPress={() => step(-1)} accessibilityLabel="Уменьшить лимит" style={styles.stepBtn}>
               <Feather name="minus" size={14} color={colors.textMuted} />
@@ -1443,6 +1504,7 @@ const styles = StyleSheet.create({
   editHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 4, flexShrink: 1 },
   // Тёплый — «сюда внимание», и превышенный лимит ровно такой случай.
   overLimit: { color: colors.accent },
+  reached: { color: colors.accentGreen },
   stepRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
   // Своя ширина, а не общая от счётчика раз: «2 ч 30 мин» в восемнадцать точек не влезает.
   limitValue: {
