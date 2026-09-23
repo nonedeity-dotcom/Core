@@ -1,0 +1,23 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  package="expo.modules.corewidget">
+
+  <!--
+    Виджет «Сегодня» на рабочем столе. Приёмник не экспортирован: обновления виджета ему
+    шлёт система от имени самого приложения, а нажатия на строки приходят через
+    PendingIntent этого же приложения — чужим сюда стучаться незачем.
+  -->
+  <application>
+    <receiver
+      android:name="expo.modules.corewidget.HabitsWidgetProvider"
+      android:exported="false"
+      android:label="Core — сегодня">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/core_habits_widget" />
+    </receiver>
+  </application>
+
+</manifest>

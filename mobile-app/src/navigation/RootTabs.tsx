@@ -38,6 +38,7 @@ import TabbedSection from "./TabbedSection";
 import MoreScreen from "../screens/MoreScreen";
 import { SECTION_TITLES, type Section } from "./sections";
 import { CHANNEL_LABELS, type ReminderChannel } from "../notifications/reminders";
+import { useWidgetSync } from "../integrations/widget";
 
 // Меню разделов живёт рядом с навигатором, а не внутри экрана, поэтому своего `navigation`
 // у него нет: переход в настройки идёт через ссылку на контейнер.
@@ -58,6 +59,9 @@ const navTheme = {
 // instead of competing for a seventh slot in the bottom bar — seven labels only
 // just fit at 320px, and an eighth does not fit at all.
 export default function RootTabs() {
+  // Виджет на рабочем столе: забрать нажатия, отдать свежий «сегодня».
+  useWidgetSync();
+
   /**
    * Разделы, через которые прошли, а не один текущий.
    *
