@@ -20,6 +20,7 @@ import { normalizeGoals, type PeriodGoal } from "../lib/goals";
 import { DEFAULT_LEVEL_RULE, normalizeLevelRule, type HabitLevel, type LevelRule } from "../lib/level";
 import { DEFAULT_GAME_STATS, mergeGameStats, normalizeGameStats, type GameStats } from "../lib/games/stats";
 import { mergeVillage, normalizeVillage, type VillageState } from "../lib/village/game";
+import { normalizeSettings, type VillageSettings } from "../lib/village/settings";
 import { EMPTY_PURSE, mergePurse, normalizePurse, type Purse } from "../lib/rewards/currency";
 import { STREAK_WINDOW_DAYS } from "../lib/streak";
 import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipLibrary";
@@ -680,12 +681,12 @@ export const api = {
   async saveVillage(state: VillageState): Promise<void> {
     await withKeyLock(KEYS.village, () => write(KEYS.village, state));
   },
-  /** Как держать телефон в «Опушке». Настройка этого телефона, в копию не едет. */
-  async getVillageLandscape(): Promise<boolean> {
-    return (await read<{ landscape?: unknown }>(KEYS.villageUi, {})).landscape === true;
+  /** Настройки «Опушки»: управление, звук, экран. Этого телефона, в копию не едут. */
+  async getVillageSettings(): Promise<VillageSettings> {
+    return normalizeSettings(await read<unknown>(KEYS.villageUi, {}));
   },
-  async setVillageLandscape(landscape: boolean): Promise<void> {
-    await write(KEYS.villageUi, { landscape });
+  async setVillageSettings(settings: VillageSettings): Promise<void> {
+    await write(KEYS.villageUi, normalizeSettings(settings));
   },
   /** Правка под блокировкой: колесо пишет после каждого слова, и записи не должны обгонять друг друга. */
   async updateGameStats(change: (stats: GameStats) => GameStats): Promise<GameStats> {

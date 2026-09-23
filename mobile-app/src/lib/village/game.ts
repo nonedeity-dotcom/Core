@@ -46,7 +46,41 @@ export interface Outcome {
   state: VillageState;
   /** Что сказать внизу экрана. null — сказать нечего (просто шаг). */
   message: string | null;
+  /** Каким звуком это отозвалось. Нет — тишина. */
+  sound?: SoundId;
+  /** Выполнена задача — поверх обычного звука играет короткая мелодия. */
+  goal?: boolean;
 }
+
+/**
+ * Звуки мира. Правила говорят, что случилось, а экран решает, играть ли вообще (звук можно
+ * выключить в настройках), — поэтому здесь только название, без файлов.
+ */
+export type SoundId =
+  | "step"
+  | "twig"
+  | "pebble"
+  | "chop"
+  | "stone"
+  | "berries"
+  | "water"
+  | "eat"
+  | "craft"
+  | "place"
+  | "pickup"
+  | "sleep"
+  | "goal"
+  | "nope"
+  | "ui"
+  | "bag";
+
+const GATHER_SOUND: Record<NatureId, SoundId> = {
+  tree: "chop",
+  bush: "berries",
+  rock: "stone",
+  pebble: "pebble",
+  branch: "twig",
+};
 
 export const DAY_MINUTES = 24 * 60;
 /** Первый день начинается утром, а не в полночь. */
@@ -229,7 +263,7 @@ export function move(state: VillageState, dir: Dir): Outcome {
   const stepped = pass({ ...turned, x, y }, STEP_MINUTES);
   const c = cellAt(stepped, x, y);
   if (c?.nature && !c.depleted && (c.nature === "branch" || c.nature === "pebble")) return gather(stepped, x, y, c.nature);
-  return { state: stepped, message: null };
+  return { state: stepped, message: null, sound: "step" };
 }
 
 /** Что сделает кнопка действия прямо сейчас — подпись для неё. null — делать нечего. */
@@ -267,19 +301,19 @@ export function act(state: VillageState): Outcome {
   if (c.built) {
     const s = STRUCTURES[c.built];
     if (s.sleep) return sleep(state, s.sleep);
-    if (s.station) return { state, message: `${s.name} рядом — в «Сумке» открылись новые рецепты` };
-    return { state, message: s.name };
+    if (s.station) return { state, message: `${s.name} рядом — в «Сумке» открылись новые рецепты`, sound: "ui" };
+    return { state, message: s.name, sound: "ui" };
   }
 
-  if (c.ground === "water" && !c.nature) return { state, message: "Тихая вода. Когда-нибудь здесь будет удочка" };
+  if (c.ground === "water" && !c.nature) return { state, message: "Тихая вода. Когда-нибудь здесь будет удочка", sound: "water" };
   if (!c.nature) return { state, message: null };
 
   const def = NATURE[c.nature];
   if (c.depleted) {
-    return { state, message: def.leaves === "stump" ? "Пень. Дерево отрастёт через пару дней" : `${def.name}: ещё не выросло` };
+    return { state, message: def.leaves === "stump" ? "Пень. Дерево отрастёт через пару дней" : `${def.name}: ещё не выросло`, sound: "nope" };
   }
   if (def.needs && !state.bag[def.needs]) {
-    return { state, message: `Нужен инструмент: ${ITEMS[def.needs].name.toLowerCase()}` };
+    return { state, message: `Нужен инструмент: ${ITEMS[def.needs].name.toLowerCase()}`, sound: "nope" };
   }
 
   return gather(state, x, y, c.nature);
@@ -298,23 +332,27 @@ function gather(state: VillageState, x: number, y: number, id: NatureId): Outcom
     },
     minutes,
   );
-  return withGoals(next, describe(def.gives));
+  return withGoals(next, describe(def.gives), GATHER_SOUND[id]);
 }
 
 function sleep(state: VillageState, kind: "rough" | "cozy"): Outcome {
-  if (!isNight(state.time)) return { state, message: "Спать ещё рано — ночь начнётся в 21:00" };
+  if (!isNight(state.time)) return { state, message: "Спать ещё рано — ночь начнётся в 21:00", sound: "nope" };
   const dayStart = state.time - (state.time % DAY_MINUTES);
   const morning = hourOf(state.time) >= 21 ? dayStart + DAY_MINUTES + 7 * 60 : dayStart + 7 * 60;
   // Во сне голод идёт медленнее — иначе после каждой ночи просыпался бы пустым.
   const slept = { ...state, time: morning, food: Math.max(0, state.food - 10) };
-  return { state: slept, message: kind === "cozy" ? "Выспался в домике. Доброе утро" : "Переночевал у костра. Утро" };
+  return { state: slept, message: kind === "cozy" ? "Выспался в домике. Доброе утро" : "Переночевал у костра. Утро", sound: "sleep" };
 }
 
 export function eat(state: VillageState, id: ItemId): Outcome {
   const food = ITEMS[id].food;
   if (!food || !state.bag[id]) return { state, message: null };
   const bag = { ...state.bag, [id]: (state.bag[id] ?? 0) - 1 };
-  return { state: pass({ ...state, bag, food: Math.min(100, state.food + food) }, 2), message: `Съел: ${ITEMS[id].name.toLowerCase()}` };
+  return {
+    state: pass({ ...state, bag, food: Math.min(100, state.food + food) }, 2),
+    message: `Съел: ${ITEMS[id].name.toLowerCase()}`,
+    sound: "eat",
+  };
 }
 
 /** Стоит ли рядом (в соседней клетке, включая углы) такая постройка. */
@@ -342,11 +380,11 @@ export function craft(state: VillageState, recipeId: string): Outcome {
   const recipe = RECIPES.find((r) => r.id === recipeId);
   if (!recipe) return { state, message: null };
   const check = canCraft(state, recipe);
-  if (check.ok === false) return { state, message: check.reason };
+  if (check.ok === false) return { state, message: check.reason, sound: "nope" };
   const bag = { ...state.bag };
   for (const [id, n] of Object.entries(recipe.needs) as [ItemId, number][]) bag[id] = (bag[id] ?? 0) - n;
   bag[recipe.makes] = (bag[recipe.makes] ?? 0) + recipe.count;
-  return withGoals(pass({ ...state, bag }, recipe.minutes), `Сделано: ${ITEMS[recipe.makes].name.toLowerCase()}`);
+  return withGoals(pass({ ...state, bag }, recipe.minutes), `Сделано: ${ITEMS[recipe.makes].name.toLowerCase()}`, "craft");
 }
 
 /** Поставить постройку из сумки на клетку перед собой. */
@@ -356,11 +394,11 @@ export function place(state: VillageState, id: ItemId): Outcome {
   const { x, y } = facingCell(state);
   const c = cellAt(state, x, y);
   if (!c || !walkable(state, x, y) || (c.nature && !c.depleted)) {
-    return { state, message: "Здесь не поставить — встань лицом к свободной земле" };
+    return { state, message: "Здесь не поставить — встань лицом к свободной земле", sound: "nope" };
   }
   const bag = { ...state.bag, [id]: (state.bag[id] ?? 0) - 1 };
   const next = pass({ ...state, bag, built: { ...state.built, [cellKey(x, y)]: structure } }, 15);
-  return withGoals(next, `Поставлено: ${STRUCTURES[structure].name.toLowerCase()}`);
+  return withGoals(next, `Поставлено: ${STRUCTURES[structure].name.toLowerCase()}`, "place");
 }
 
 /** Разобрать постройку перед собой — она вернётся в сумку целиком. */
@@ -372,7 +410,11 @@ export function pickUp(state: VillageState): Outcome {
   const built = { ...state.built };
   delete built[key];
   const item = (Object.values(ITEMS).find((i) => i.places === structure)?.id ?? structure) as ItemId;
-  return { state: pass({ ...state, built, bag: addTo(state.bag, { [item]: 1 }) }, 10), message: `Разобрано: ${STRUCTURES[structure].name.toLowerCase()}` };
+  return {
+    state: pass({ ...state, built, bag: addTo(state.bag, { [item]: 1 }) }, 10),
+    message: `Разобрано: ${STRUCTURES[structure].name.toLowerCase()}`,
+    sound: "pickup",
+  };
 }
 
 // --- задачи -----------------------------------------------------------------------
@@ -389,12 +431,14 @@ const GOAL_CHECK: Record<string, (s: VillageState) => boolean> = {
 };
 
 /** Отметить выполненные задачи. Выполненная остаётся выполненной, даже если костёр потом убрали. */
-function withGoals(state: VillageState, message: string): Outcome {
+function withGoals(state: VillageState, message: string, sound: SoundId): Outcome {
   const fresh = GOALS.filter((g) => !state.goalsDone.includes(g.id) && GOAL_CHECK[g.id]?.(state));
-  if (fresh.length === 0) return { state, message };
+  if (fresh.length === 0) return { state, message, sound };
   return {
     state: { ...state, goalsDone: [...state.goalsDone, ...fresh.map((g) => g.id)] },
     message: `${message} · Задача выполнена: ${fresh[fresh.length - 1].title.toLowerCase()}`,
+    sound,
+    goal: true,
   };
 }
 

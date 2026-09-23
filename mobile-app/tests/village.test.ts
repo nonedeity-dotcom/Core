@@ -21,6 +21,7 @@ import {
   type VillageState,
 } from "../src/lib/village/game";
 import { NATURE, RECIPES } from "../src/lib/village/content";
+import { DEFAULT_SETTINGS, STEP_MS, canTapWalk, normalizeSettings } from "../src/lib/village/settings";
 
 /** Поставить персонажа на свободную клетку лицом к клетке с нужным. */
 function faceNature(s: VillageState, id: string): VillageState | null {
@@ -189,4 +190,35 @@ test("дорога по касанию", () => {
     if (w.ground[i] === "water" && all) deep = [x, y];
   }
   if (deep) eq("в середину пруда не дойти", pathTo(s, deep[0], deep[1]), null);
+});
+
+test("настройки игры", () => {
+  const old = normalizeSettings({ landscape: true });
+  eq("старое «лечь набок» читается", old.landscape, true);
+  eq("остальное — по умолчанию", { ...old, landscape: false }, DEFAULT_SETTINGS);
+  eq("мусор — по умолчанию", normalizeSettings("x"), DEFAULT_SETTINGS);
+  eq("чужие значения выброшены", normalizeSettings({ control: "keyboard", speed: "turbo", sound: "yes" }), DEFAULT_SETTINGS);
+  const tap = normalizeSettings({ control: "tap", tapToWalk: false });
+  ok("без джойстика ходить касанием можно всегда", canTapWalk(tap));
+  ok("с джойстиком касание выключается", !canTapWalk({ ...DEFAULT_SETTINGS, tapToWalk: false }));
+  ok("быстро — чаще шагов", STEP_MS.fast < STEP_MS.normal && STEP_MS.normal < STEP_MS.slow);
+});
+
+test("звуки действий", () => {
+  const s = newVillage(42);
+  eq("шаг", move(s, "up").sound, "step");
+  const blocked = faceNature(s, "tree")!;
+  eq("в дерево — без звука шага", move(blocked, blocked.facing).sound, undefined);
+  eq("без топора — «нельзя»", act(blocked).sound, "nope");
+  eq("с топором — удар", act({ ...blocked, bag: { axe: 1 } }).sound, "chop");
+  eq("куст — ягоды", act(faceNature(s, "bush")!).sound, "berries");
+  eq("ветки под ногами — треск", move(move(move(s, "up").state, "right").state, "right").sound, "twig");
+  const fire = place({ ...s, bag: { campfire: 1 }, facing: "down" }, "campfire");
+  eq("поставил — звук постройки", fire.sound, "place");
+  eq("и задача отмечена мелодией", fire.goal, true);
+  eq("днём у костра — «рано»", act(fire.state).sound, "nope");
+  eq("ночью — сон", act({ ...fire.state, time: 23 * 60 }).sound, "sleep");
+  eq("еда", eat({ ...s, bag: { berries: 1 } }, "berries").sound, "eat");
+  eq("ремесло", craft({ ...s, bag: { stick: 3, stone: 2 } }, "axe").sound, "craft");
+  eq("не хватает на ремесло", craft(s, "axe").sound, "nope");
 });

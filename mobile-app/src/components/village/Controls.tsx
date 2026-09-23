@@ -3,76 +3,15 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
 import { ItemIcon } from "./ItemIcon";
-import type { ActionIcon, Dir } from "../../lib/village/game";
+import type { ActionIcon } from "../../lib/village/game";
 
 /**
- * Кнопки «Опушки»: крестовина слева, действие справа.
+ * Кнопки «Опушки» (ходьба — отдельно, в MovePad).
  *
- * Крестовина — один круг с четырьмя секторами, а не четыре отдельные кнопки: большим
- * пальцем легче попасть в сторону круга, чем в квадратик. Кнопка действия круглая и
+ * Кнопка действия круглая и
  * крупная, со значком того, что перед тобой, — топор у дерева, ягоды у куста, луна у
  * костра ночью. Подпись под ней, а не в ней: значок читается быстрее слова.
  */
-
-const ARROW: Record<Dir, "chevron-up" | "chevron-down" | "chevron-left" | "chevron-right"> = {
-  up: "chevron-up",
-  down: "chevron-down",
-  left: "chevron-left",
-  right: "chevron-right",
-};
-const DIR_NAME: Record<Dir, string> = { up: "Вверх", down: "Вниз", left: "Влево", right: "Вправо" };
-
-export function DPad({
-  size,
-  onStart,
-  onStop,
-  onTap,
-  floating = false,
-}: {
-  size: number;
-  onStart: (d: Dir) => void;
-  onStop: () => void;
-  onTap: (d: Dir) => void;
-  /** Поверх карты — полупрозрачная, чтобы не закрывать лес. */
-  floating?: boolean;
-}) {
-  const b = size * 0.36;
-  const pos: Record<Dir, { left: number; top: number }> = {
-    up: { left: (size - b) / 2, top: 2 },
-    down: { left: (size - b) / 2, top: size - b - 2 },
-    left: { left: 2, top: (size - b) / 2 },
-    right: { left: size - b - 2, top: (size - b) / 2 },
-  };
-  return (
-    <View
-      style={[
-        styles.pad,
-        { width: size, height: size, borderRadius: size / 2 },
-        floating && styles.padFloating,
-      ]}
-    >
-      <View style={[styles.padCenter, { width: b * 0.7, height: b * 0.7, borderRadius: b, left: (size - b * 0.7) / 2, top: (size - b * 0.7) / 2 }]} />
-      {(Object.keys(pos) as Dir[]).map((d) => (
-        <Pressable
-          key={d}
-          onPressIn={() => onStart(d)}
-          onPressOut={onStop}
-          onPress={() => onTap(d)}
-          accessibilityRole="button"
-          accessibilityLabel={DIR_NAME[d]}
-          hitSlop={6}
-          style={({ pressed }) => [
-            styles.padButton,
-            { width: b, height: b, borderRadius: b / 2, ...pos[d] },
-            pressed && styles.padPressed,
-          ]}
-        >
-          <Feather name={ARROW[d]} size={b * 0.62} color={colors.text} />
-        </Pressable>
-      ))}
-    </View>
-  );
-}
 
 export function ActionButton({
   size,
@@ -156,17 +95,6 @@ export function RoundButton({
 const styles = StyleSheet.create({
   muted: { color: colors.textMuted },
   shadowText: { textShadowColor: "rgba(0,0,0,0.8)", textShadowRadius: 4, textShadowOffset: { width: 0, height: 1 } },
-
-  pad: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.cardBorder },
-  padFloating: { backgroundColor: "rgba(18,21,26,0.55)", borderColor: "rgba(255,255,255,0.08)" },
-  padCenter: { position: "absolute", backgroundColor: "rgba(255,255,255,0.05)" },
-  padButton: {
-    position: "absolute",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.06)",
-  },
-  padPressed: { backgroundColor: "rgba(143,184,154,0.45)" },
 
   actionWrap: { alignItems: "center", gap: 6 },
   action: {

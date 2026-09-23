@@ -6,6 +6,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  Vibration,
   View,
   useWindowDimensions,
   type LayoutChangeEvent,
@@ -17,9 +18,20 @@ import { colors } from "../../theme/colors";
 import { lockLandscape, lockPortrait } from "../../lib/orientation";
 import VillageMap from "../../components/village/VillageMap";
 import BagSheet from "../../components/village/BagSheet";
+import SettingsSheet from "../../components/village/SettingsSheet";
+import MovePad from "../../components/village/MovePad";
 import { ItemIcon } from "../../components/village/ItemIcon";
-import { ActionButton, DPad, RoundButton } from "../../components/village/Controls";
+import { ActionButton, RoundButton } from "../../components/village/Controls";
 import { GOALS, ITEMS, type ItemId } from "../../lib/village/content";
+import { VillageSound } from "../../lib/village/sound";
+import {
+  BUTTON_SCALE,
+  DEFAULT_SETTINGS,
+  STEP_MS,
+  VOLUME,
+  canTapWalk,
+  type VillageSettings,
+} from "../../lib/village/settings";
 import {
   act,
   actionIcon,
@@ -39,14 +51,15 @@ import {
   place,
   type Dir,
   type Outcome,
+  type SoundId,
   type VillageState,
 } from "../../lib/village/game";
 
-/** Как часто делается шаг, пока кнопка зажата или персонаж идёт по касанию. */
-const STEP_MS = 150;
 /** Сколько клеток видно поперёк экрана: вертикально — по ширине, горизонтально — по высоте. */
 const PORTRAIT_COLS = 9;
 const LANDSCAPE_ROWS = 7.5;
+/** На что отзывается вибрация: на дело, а не на каждый шаг. */
+const BUZZ: Partial<Record<SoundId, number>> = { chop: 18, stone: 22, craft: 14, place: 20, pickup: 10, twig: 6, pebble: 6, berries: 8 };
 
 /**
  * «Опушка» — спокойная игра про лес и деревню.
@@ -54,13 +67,10 @@ const LANDSCAPE_ROWS = 7.5;
  * Время идёт только от действий: пока ничего не нажимаешь, в мире ничего не происходит.
  * Сохраняется само, через секунду после последнего действия и при уходе с экрана.
  *
- * Управлять можно двумя способами, и оба всегда под рукой: крестовиной (нажал — шаг,
- * держишь — идёт) или пальцем по карте — нажал на клетку, и персонаж сам дойдёт туда
- * самой короткой дорогой; нажал на дерево — дойдёт и встанет к нему лицом. Нажатие на
- * то, к чему уже стоишь лицом, — то же, что кнопка действия.
- *
- * Экран можно положить набок кнопкой в углу: тогда карта на весь экран, а кнопки лежат
- * поверх неё полупрозрачными. Выбор запоминается.
+ * Ходить можно джойстиком, крестовиной или касанием по карте — что выбрано в настройках.
+ * Нажал на клетку — персонаж сам дойдёт туда самой короткой дорогой; нажал на дерево —
+ * дойдёт и встанет к нему лицом; нажал на то, к чему уже стоишь лицом, — то же, что
+ * кнопка действия.
  */
 export default function VillageScreen({
   navigation,
@@ -73,12 +83,27 @@ export default function VillageScreen({
 
   const [state, setStateRaw] = useState<VillageState | null>(null);
   const stateRef = useRef<VillageState | null>(null);
-  const [bagOpen, setBagOpen] = useState(false);
+  const [sheet, setSheet] = useState<"bag" | "settings" | null>(null);
+  const [settings, setSettingsRaw] = useState<VillageSettings>(DEFAULT_SETTINGS);
+  const settingsRef = useRef<VillageSettings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
     navigation.setOptions({ headerShown: false });
     return () => navigation.setOptions({ headerShown: true });
   }, [navigation]);
+
+  // --- звук ------------------------------------------------------------------------
+
+  const sound = useRef<VillageSound | null>(null);
+  if (sound.current === null) sound.current = new VillageSound();
+  const applySoundSettings = (s: VillageSettings) =>
+    sound.current?.configure({
+      effects: s.sound,
+      volume: VOLUME[s.volume].effects,
+      ambience: s.ambience,
+      ambienceVolume: VOLUME[s.volume].ambience,
+    });
+  const play = useCallback((id: SoundId) => sound.current?.play(id), []);
 
   // --- всплывающая строка ---------------------------------------------------------
 
@@ -106,6 +131,14 @@ export default function VillageScreen({
   }, []);
 
   useEffect(() => {
+    const bank = sound.current!;
+    void api.getVillageSettings().then((s) => {
+      settingsRef.current = s;
+      setSettingsRaw(s);
+      applySoundSettings(s);
+      if (s.landscape) void lockLandscape();
+      void bank.load();
+    });
     void api.getVillage().then((saved) => {
       const s = saved ?? newVillage(Math.floor(Math.random() * 2 ** 31));
       stateRef.current = s;
@@ -115,35 +148,58 @@ export default function VillageScreen({
         say("Утро на опушке. Ветки и камешки лежат рядом — наступи на них");
       }
     });
-    void api.getVillageLandscape().then((on) => {
-      if (on) void lockLandscape();
-    });
     const sub = AppState.addEventListener("change", (s) => {
-      if (s !== "active") saveNow();
+      if (s === "active") bank.resume();
+      else {
+        saveNow();
+        bank.pause();
+      }
     });
     return () => {
       sub.remove();
       saveNow();
+      bank.unload();
       // Остальное приложение — вертикальное.
       void lockPortrait();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saveNow, say]);
 
-  const rotate = () => {
-    const next = !landscape;
-    void api.setVillageLandscape(next);
-    void (next ? lockLandscape() : lockPortrait());
+  const changeSettings = (next: VillageSettings) => {
+    const prev = settingsRef.current;
+    settingsRef.current = next;
+    setSettingsRaw(next);
+    applySoundSettings(next);
+    void api.setVillageSettings(next);
+    if (next.landscape !== prev.landscape) void (next.landscape ? lockLandscape() : lockPortrait());
   };
+
+  const night = state ? isNight(state.time) : false;
+  useEffect(() => {
+    if (state) sound.current?.setAmbience(night ? "night" : "day");
+  }, [night, state === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const apply = useCallback(
     (outcome: Outcome) => {
       stateRef.current = outcome.state;
       setStateRaw(outcome.state);
       if (outcome.message !== null) say(outcome.message);
+      if (outcome.sound) {
+        play(outcome.sound);
+        const buzz = BUZZ[outcome.sound];
+        if (buzz && settingsRef.current.vibration) {
+          try {
+            Vibration.vibrate(buzz);
+          } catch {
+            // вибрации нет — и ладно
+          }
+        }
+      }
+      if (outcome.goal) setTimeout(() => play("goal"), 260);
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(saveNow, 1000);
     },
-    [saveNow, say],
+    [saveNow, say, play],
   );
 
   const run = useCallback(
@@ -153,66 +209,92 @@ export default function VillageScreen({
     [apply],
   );
 
-  // --- ходьба: крестовиной и по касанию -------------------------------------------
+  // --- ходьба ---------------------------------------------------------------------
 
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const route = useRef<Dir[]>([]);
-  /** Сделан ли шаг за это нажатие — чтобы короткий тап не пропал и не сработал дважды. */
-  const stepped = useRef(false);
-  const stopWalk = useCallback(() => {
-    if (timer.current) clearInterval(timer.current);
-    timer.current = null;
-    route.current = [];
-  }, []);
-  useEffect(() => stopWalk, [stopWalk]);
-
-  const startWalk = (dir: Dir) => {
-    stopWalk();
-    stepped.current = true;
-    run((s) => move(s, dir));
-    timer.current = setInterval(() => run((s) => move(s, dir)), STEP_MS);
-  };
   /**
-   * Нажатие закончилось. Очень короткий тап иногда приходит без «нажал» — только «нажато»,
-   * и тогда шаг делается здесь. Без этого быстрые тапы по стрелке терялись.
+   * Одна очередь шагов на всё: и на удержание джойстика, и на дорогу по касанию.
+   *
+   * Следующий шаг ставится только после того, как сделан предыдущий, — таймером на один раз,
+   * а не повторяющимся. Повторяющийся на медленном телефоне копил шаги, пока карта
+   * рисовалась, и персонаж проезжал дальше, чем держали палец.
    */
-  const tapWalk = (dir: Dir) => {
-    stopWalk();
-    if (!stepped.current) run((s) => move(s, dir));
-    stepped.current = false;
+  const held = useRef<Dir | null>(null);
+  const route = useRef<Dir[]>([]);
+  const loop = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastStep = useRef(0);
+  const stopLoop = useCallback(() => {
+    if (loop.current) clearTimeout(loop.current);
+    loop.current = null;
+  }, []);
+
+  const tick = useCallback(() => {
+    loop.current = null;
+    const d = held.current ?? route.current.shift() ?? null;
+    if (!d) return;
+    lastStep.current = Date.now();
+    run((s) => move(s, d));
+    if (held.current || route.current.length > 0) loop.current = setTimeout(tick, STEP_MS[settingsRef.current.speed]);
+  }, [run]);
+
+  useEffect(() => () => stopLoop(), [stopLoop]);
+
+  const onDir = (d: Dir | null) => {
+    const was = held.current;
+    held.current = d;
+    if (!d) {
+      stopLoop();
+      return;
+    }
+    route.current = [];
+    if (d === was && loop.current) return;
+    // Новое направление — шаг сразу, но не чаще обычного темпа: иначе, покачивая пальцем,
+    // можно было бы бежать вдвое быстрее.
+    stopLoop();
+    const wait = STEP_MS[settingsRef.current.speed] * 0.7 - (Date.now() - lastStep.current);
+    if (wait > 0) loop.current = setTimeout(tick, wait);
+    else tick();
   };
 
   const follow = (steps: Dir[]) => {
-    stopWalk();
+    held.current = null;
+    stopLoop();
     route.current = [...steps];
-    const next = () => {
-      const d = route.current.shift();
-      if (!d) {
-        stopWalk();
-        return;
-      }
-      run((s) => move(s, d));
-    };
-    next();
-    if (route.current.length > 0) timer.current = setInterval(next, STEP_MS);
+    tick();
   };
 
   const onMapTap = (x: number, y: number) => {
     const s = stateRef.current;
-    if (!s || bagOpen) return;
+    if (!s || sheet) return;
     const f = facingCell(s);
     if (x === f.x && y === f.y && actionLabel(s)) {
-      stopWalk();
+      route.current = [];
+      stopLoop();
       run(act);
       return;
     }
-    if (x === s.x && y === s.y) return;
+    if (!canTapWalk(settingsRef.current) || (x === s.x && y === s.y)) return;
     const steps = pathTo(s, x, y);
     if (!steps) {
+      play("nope");
       say(cellAt(s, x, y)?.ground === "water" ? "Туда вплавь не добраться" : "Туда не пройти");
       return;
     }
     follow(steps);
+  };
+
+  const openSheet = (which: "bag" | "settings") => {
+    held.current = null;
+    route.current = [];
+    stopLoop();
+    play(which === "bag" ? "bag" : "ui");
+    setSheet(which);
+  };
+
+  const newWorld = () => {
+    const fresh = newVillage(Math.floor(Math.random() * 2 ** 31));
+    setSheet(null);
+    apply({ state: fresh, message: "Новый мир. Утро на опушке — ветки и камешки рядом", sound: "sleep" });
+    saveNow();
   };
 
   // --- размеры карты --------------------------------------------------------------
@@ -231,16 +313,18 @@ export default function VillageScreen({
 
   if (!state) return <View style={styles.container} />;
 
+  const scale = BUTTON_SCALE[settings.buttons];
   const label = actionLabel(state);
   const icon = actionIcon(state);
   const front = facingCell(state);
   const frontBuilt = cellAt(state, front.x, front.y)?.built ?? null;
-  const goal = currentGoal(state);
+  const goal = settings.showGoal ? currentGoal(state) : null;
   const goalNo = GOALS.findIndex((g) => g.id === goal?.id) + 1;
-  const night = isNight(state.time);
   const berries = state.bag.berries ?? 0;
   const hot = (Object.entries(state.bag) as [ItemId, number][]).filter(([, n]) => n > 0);
   const hotMax = landscape ? 6 : 7;
+  const padOn = settings.control !== "tap";
+  const padRight = settings.padSide === "right";
 
   const map =
     tile > 0 ? (
@@ -250,7 +334,7 @@ export default function VillageScreen({
         height={area.h}
         tile={tile}
         accent={colors.accent}
-        showTarget={!!label}
+        showTarget={settings.showTarget && !!label}
         onTap={onMapTap}
       />
     ) : null;
@@ -264,7 +348,7 @@ export default function VillageScreen({
   );
 
   const foodPill = (
-    <View style={[styles.pill, landscape && styles.pillFloating]} accessibilityLabel={`Сытость ${Math.round(state.food)} из 100`}>
+    <View style={[styles.pill, styles.pillTight, landscape && styles.pillFloating]} accessibilityLabel={`Сытость ${Math.round(state.food)} из 100`}>
       <ItemIcon id="berries" size={16} />
       <View style={styles.foodTrack}>
         <View
@@ -276,6 +360,13 @@ export default function VillageScreen({
         />
       </View>
     </View>
+  );
+
+  const hudButtons = (
+    <>
+      <RoundButton icon="smartphone" label="Повернуть экран" onPress={() => changeSettings({ ...settings, landscape: !landscape })} floating={landscape} size={40} />
+      <RoundButton icon="settings" label="Настройки игры" onPress={() => openSheet("settings")} floating={landscape} size={40} />
+    </>
   );
 
   const goalCard = goal && (
@@ -304,7 +395,7 @@ export default function VillageScreen({
 
   const hotbar = hot.length > 0 && (
     <Pressable
-      onPress={() => setBagOpen(true)}
+      onPress={() => openSheet("bag")}
       accessibilityRole="button"
       accessibilityLabel="Вещи в сумке"
       style={[styles.hotbar, landscape && styles.hotbarFloating]}
@@ -319,34 +410,48 @@ export default function VillageScreen({
     </Pressable>
   );
 
+  const small = Math.round(46 * scale);
   const sideButtons = (
     <>
-      <RoundButton icon="briefcase" label="Сумка" onPress={() => setBagOpen(true)} floating={landscape} />
+      <RoundButton icon="briefcase" label="Сумка" onPress={() => openSheet("bag")} floating={landscape} size={small} />
       {berries > 0 && state.food < 90 && (
-        <RoundButton label="Съесть ягоды" onPress={() => run((s) => eat(s, "berries"))} badge={String(berries)} floating={landscape}>
-          <ItemIcon id="berries" size={24} />
+        <RoundButton label="Съесть ягоды" onPress={() => run((s) => eat(s, "berries"))} badge={String(berries)} floating={landscape} size={small}>
+          <ItemIcon id="berries" size={24 * scale} />
         </RoundButton>
       )}
-      {frontBuilt && <RoundButton icon="rotate-ccw" label="Разобрать" onPress={() => run(pickUp)} floating={landscape} />}
+      {frontBuilt && <RoundButton icon="rotate-ccw" label="Разобрать" onPress={() => run(pickUp)} floating={landscape} size={small} />}
     </>
   );
 
-  const bag = bagOpen && (
-    <BagSheet
-      state={state}
-      side={landscape}
-      onClose={() => setBagOpen(false)}
-      onEat={(id) => run((s) => eat(s, id))}
-      onPlace={(id) => {
-        run((s) => place(s, id));
-        setBagOpen(false);
-      }}
-      onCraft={(id) => run((s) => craft(s, id))}
-    />
-  );
+  const sheetView =
+    sheet === "bag" ? (
+      <BagSheet
+        state={state}
+        side={landscape}
+        onClose={() => setSheet(null)}
+        onEat={(id) => run((s) => eat(s, id))}
+        onPlace={(id) => {
+          run((s) => place(s, id));
+          setSheet(null);
+        }}
+        onCraft={(id) => run((s) => craft(s, id))}
+      />
+    ) : sheet === "settings" ? (
+      <SettingsSheet
+        settings={settings}
+        state={state}
+        side={landscape}
+        onChange={changeSettings}
+        onClose={() => setSheet(null)}
+        onNewWorld={newWorld}
+      />
+    ) : null;
 
   if (landscape) {
-    const padSize = Math.min(150, winH * 0.42);
+    const padSize = Math.min(160, winH * 0.44) * scale;
+    const actionSize = Math.round(84 * scale);
+    const padSlot = padRight ? { right: insets.right + 20 } : { left: insets.left + 20 };
+    const actionSlot = padRight ? { left: insets.left + 20, flexDirection: "row-reverse" as const } : { right: insets.right + 20 };
     return (
       <View style={styles.containerFull}>
         <StatusBar hidden />
@@ -358,26 +463,36 @@ export default function VillageScreen({
           {foodPill}
           <View style={{ flex: 1 }} pointerEvents="none" />
           {goalCard}
-          <RoundButton icon="smartphone" label="Повернуть экран" onPress={rotate} floating size={40} />
+          {hudButtons}
         </View>
 
-        <View style={[styles.padFloat, { left: insets.left + 18 }]}>
-          <DPad size={padSize} onStart={startWalk} onStop={stopWalk} onTap={tapWalk} floating />
-        </View>
+        {padOn && (
+          <View style={[styles.padFloat, padSlot]}>
+            <MovePad mode={settings.control === "dpad" ? "dpad" : "stick"} size={padSize} onDir={onDir} floating />
+          </View>
+        )}
 
-        <View style={[styles.actionFloat, { right: insets.right + 18 }]} pointerEvents="box-none">
+        <View style={[styles.actionFloat, actionSlot]} pointerEvents="box-none">
           <View style={styles.sideCol}>{sideButtons}</View>
-          <ActionButton size={84} label={label} icon={icon} onPress={() => run(act)} floating />
+          <ActionButton size={actionSize} label={label} icon={icon} onPress={() => run(act)} floating />
         </View>
 
         <View style={styles.bottomCenter} pointerEvents="box-none">
           {toastView}
           {hotbar}
         </View>
-        {bag}
+        {sheetView}
       </View>
     );
   }
+
+  const padSize = Math.min(160, winW * 0.42) * scale;
+  const actionCol = (
+    <View style={styles.rightCol}>
+      <ActionButton size={Math.round(86 * scale)} label={label} icon={icon} onPress={() => run(act)} />
+      <View style={styles.sideRow}>{sideButtons}</View>
+    </View>
+  );
 
   return (
     <View style={[styles.container, { paddingTop: Math.max(insets.top, 10) + 4 }]}>
@@ -386,7 +501,7 @@ export default function VillageScreen({
         {dayPill}
         <View style={{ flex: 1 }} />
         {foodPill}
-        <RoundButton icon="smartphone" label="Повернуть экран" onPress={rotate} size={40} />
+        {hudButtons}
       </View>
       {goalCard}
 
@@ -399,14 +514,11 @@ export default function VillageScreen({
 
       <View style={styles.hotRow}>{hotbar}</View>
 
-      <View style={styles.controls}>
-        <DPad size={Math.min(160, winW * 0.42)} onStart={startWalk} onStop={stopWalk} onTap={tapWalk} />
-        <View style={styles.rightCol}>
-          <ActionButton size={86} label={label} icon={icon} onPress={() => run(act)} />
-          <View style={styles.sideRow}>{sideButtons}</View>
-        </View>
+      <View style={[styles.controls, padRight && styles.controlsFlip, !padOn && styles.controlsCenter]}>
+        {padOn && <MovePad mode={settings.control === "dpad" ? "dpad" : "stick"} size={padSize} onDir={onDir} />}
+        {actionCol}
       </View>
-      {bag}
+      {sheetView}
     </View>
   );
 }
@@ -415,22 +527,23 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: 12, paddingBottom: 14 },
   containerFull: { flex: 1, backgroundColor: "#000" },
 
-  top: { flexDirection: "row", alignItems: "center", gap: 8 },
+  top: { flexDirection: "row", alignItems: "center", gap: 6 },
   pill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
     height: 36,
-    paddingHorizontal: 12,
+    paddingHorizontal: 11,
     borderRadius: 18,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.cardBorder,
   },
+  pillTight: { paddingHorizontal: 9 },
   pillFloating: { backgroundColor: "rgba(18,21,26,0.62)", borderColor: "rgba(255,255,255,0.08)" },
   pillStrong: { color: colors.text, fontSize: 13, fontWeight: "700" },
   pillText: { color: colors.textMuted, fontSize: 13, fontVariant: ["tabular-nums"] },
-  foodTrack: { width: 58, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.08)", overflow: "hidden" },
+  foodTrack: { width: 40, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.08)", overflow: "hidden" },
   foodFill: { height: 6, borderRadius: 3, backgroundColor: colors.accentGreen },
 
   goal: {
@@ -443,7 +556,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: colors.card,
   },
-  goalFloating: { marginTop: 0, backgroundColor: "rgba(18,21,26,0.62)", maxWidth: 300, paddingVertical: 7 },
+  goalFloating: { marginTop: 0, backgroundColor: "rgba(18,21,26,0.62)", maxWidth: 280, paddingVertical: 7 },
   goalIcon: {
     width: 26,
     height: 26,
@@ -490,6 +603,8 @@ const styles = StyleSheet.create({
   hotCount: { color: colors.text, fontSize: 12, fontWeight: "700", fontVariant: ["tabular-nums"] },
 
   controls: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 10 },
+  controlsFlip: { flexDirection: "row-reverse" },
+  controlsCenter: { justifyContent: "center" },
   rightCol: { alignItems: "center", gap: 10, flex: 1 },
   sideRow: { flexDirection: "row", gap: 10 },
 
