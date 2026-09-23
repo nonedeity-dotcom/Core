@@ -33,6 +33,17 @@ jobs:
       - name: Install JS dependencies
         run: npm install
 
+      # Проверки — до нативной сборки, а не после. Раньше их не было вовсе: всё, что
+      # проверялось, проверялось одноразовыми скриптами, которые потом удалялись, и APK
+      # собирался даже со сломанной логикой начисления или серий. Теперь упавшая проверка
+      # останавливает сборку, и сломанная версия до телефона не доезжает. Стоят первыми
+      # ещё и потому, что это минута против десяти минут Gradle.
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Tests
+        run: npm test
+
       # Every build was versionCode 1 and version "1.0.0", so nothing on the phone could
       # say which one was installed — and "is the fix in the build you are running?" was a
       # question nobody could answer. Both now carry the run number, and the app shows them
