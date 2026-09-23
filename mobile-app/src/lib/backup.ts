@@ -25,6 +25,7 @@ import { normalizeLateRule, normalizeSchedule } from "./habitSchedule";
 import { normalizeScreenRule } from "./screenTime";
 import { normalizePurse } from "./rewards/currency";
 import { normalizeGameStats } from "./games/stats";
+import { normalizeVillage } from "./village/game";
 import { normalizeProfile } from "./balance/profile";
 import { normalizeDish, normalizeEntry, normalizeProduct } from "./balance/food";
 import { normalizeWeightEntry } from "./balance/weight";
@@ -91,6 +92,7 @@ const SCOPE_FIELDS: Record<Exclude<BackupScope, "all">, (keyof BackupData)[]> = 
     // Кошелёк и игры общие для всего приложения, а общее едет с «Sterzhen».
     "purse",
     "gameStats",
+    "village",
   ],
   calorix: [
     "balanceProfile",
@@ -157,6 +159,7 @@ function emptyData(): BackupData {
     // null, а не пустой кошелёк: пустой при восстановлении стёр бы настоящий.
     purse: null,
     gameStats: null,
+    village: null,
   };
 }
 
@@ -350,6 +353,7 @@ function parseData(raw: unknown): BackupData {
     // трогает. Пустой кошелёк вместо null стёр бы настоящий.
     purse: isObj(d.purse) ? normalizePurse(d.purse) : null,
     gameStats: isObj(d.gameStats) ? normalizeGameStats(d.gameStats) : null,
+    village: normalizeVillage(d.village),
     // Missing from every file written before the day rule was settable; normalizeDayRule
     // turns anything it does not recognise into the default.
     dayRule: normalizeDayRule(d.dayRule),

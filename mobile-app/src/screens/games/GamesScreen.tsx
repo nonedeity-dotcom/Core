@@ -34,6 +34,20 @@ export default function GamesScreen({
       </Text>
 
       <Pressable
+        onPress={() => navigation.navigate("Village")}
+        accessibilityRole="button"
+        accessibilityLabel="Опушка"
+        style={({ pressed }) => [styles.row, styles.spacedBottom, pressed && styles.pressed]}
+      >
+        <Feather name="home" size={18} color={colors.accentGreen} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle}>Опушка</Text>
+          <Text style={styles.rowHint}>Лес, поляна и свой домик. Спокойно, без спешки — время идёт, только когда ты что-то делаешь</Text>
+        </View>
+        <Text style={styles.chevron}>›</Text>
+      </Pressable>
+
+      <Pressable
         onPress={() => navigation.navigate("WordSearch")}
         accessibilityRole="button"
         accessibilityLabel="Найди слова"
@@ -92,6 +106,7 @@ const styles = StyleSheet.create({
   },
   pressed: { opacity: 0.7 },
   spaced: { marginTop: 10 },
+  spacedBottom: { marginBottom: 10 },
   rowTitle: { color: colors.text, fontSize: 15, fontWeight: "600" },
   rowHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 3 },
   chevron: { color: colors.textMuted, fontSize: 20 },

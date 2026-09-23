@@ -31,6 +31,7 @@ import HomeScreen from "../screens/HomeScreen";
 import GamesScreen from "../screens/games/GamesScreen";
 import WordSearchScreen from "../screens/games/WordSearchScreen";
 import WheelScreen from "../screens/games/WheelScreen";
+import VillageScreen from "../screens/games/VillageScreen";
 import ShopSection from "../screens/shop/ShopSection";
 import ProfileSection from "../screens/profile/ProfileSection";
 import SectionBar from "./SectionBar";
@@ -199,6 +200,7 @@ export default function RootTabs() {
         <Stack.Screen name="Goals" component={GoalsScreen} options={{ title: goalsScreenTitle() }} />
         <Stack.Screen name="WordSearch" component={WordSearchScreen} options={{ title: "Найди слова" }} />
         <Stack.Screen name="Wheel" component={WheelScreen} options={{ title: "Колесо букв" }} />
+        <Stack.Screen name="Village" component={VillageScreen} options={{ title: "Опушка" }} />
         {/* Заголовок называет месяц: экран открывается с любой клетки года, и «Цель» без
             имени оставляла бы вопрос, чья именно. */}
         <Stack.Screen

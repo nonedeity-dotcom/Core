@@ -19,6 +19,7 @@ import { DEFAULT_DAY_OFF, normalizeDayOff, pruneDates, type DayOffRule } from ".
 import { normalizeGoals, type PeriodGoal } from "../lib/goals";
 import { DEFAULT_LEVEL_RULE, normalizeLevelRule, type HabitLevel, type LevelRule } from "../lib/level";
 import { DEFAULT_GAME_STATS, mergeGameStats, normalizeGameStats, type GameStats } from "../lib/games/stats";
+import { mergeVillage, normalizeVillage, type VillageState } from "../lib/village/game";
 import { EMPTY_PURSE, mergePurse, normalizePurse, type Purse } from "../lib/rewards/currency";
 import { STREAK_WINDOW_DAYS } from "../lib/streak";
 import { DEFAULT_TIP_PREFS, normalizeTipPrefs, type TipPrefs } from "../lib/tipLibrary";
@@ -57,6 +58,7 @@ const KEYS = {
   skipRule: "skip-rule-v1",
   levelRule: "level-rule-v1",
   gameStats: "game-stats-v1",
+  village: "village-v1",
   purse: "rewards-purse-v1",
   daysOff: "days-off-v1",
   habitFreezes: "habit-freezes-v1",
@@ -666,6 +668,16 @@ export const api = {
     const clean = normalizeGameStats(stats);
     await write(KEYS.gameStats, clean);
     return clean;
+  },
+  /**
+   * «Опушка». null — игру ещё не начинали. Пишется целиком: мир хранится как зерно и список
+   * перемен, это несколько килобайт даже через год игры.
+   */
+  async getVillage(): Promise<VillageState | null> {
+    return normalizeVillage(await read<unknown>(KEYS.village, null));
+  },
+  async saveVillage(state: VillageState): Promise<void> {
+    await withKeyLock(KEYS.village, () => write(KEYS.village, state));
   },
   /** Правка под блокировкой: колесо пишет после каждого слова, и записи не должны обгонять друг друга. */
   async updateGameStats(change: (stats: GameStats) => GameStats): Promise<GameStats> {
@@ -1471,6 +1483,8 @@ export interface BackupData {
   purse: Purse | null;
   /** Решённые поля и рекорды. `null` — в файле нет, и своё не трогается. */
   gameStats: GameStats | null;
+  /** «Опушка» — мир целиком. `null` — в файле нет, и свой не трогается. */
+  village: VillageState | null;
 }
 
 /** What an import actually changed, so the UI can report it honestly. */
@@ -1545,7 +1559,7 @@ export async function exportData(): Promise<BackupData> {
       read<AppDay[]>(KEYS.screenApps, []),
       read<HourlyDay[]>(KEYS.screenHours, []),
     ]);
-  const [purse, gameStats] = await Promise.all([api.getPurse(), api.getGameStats()]);
+  const [purse, gameStats, village] = await Promise.all([api.getPurse(), api.getGameStats(), api.getVillage()]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
     habitLog,
@@ -1577,6 +1591,7 @@ export async function exportData(): Promise<BackupData> {
     screenHours,
     purse,
     gameStats,
+    village,
   };
 }
 
@@ -1615,6 +1630,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       // Нет в файле — значит, не про это: старая копия не должна стирать кошелёк.
       ...(data.purse ? [write(KEYS.purse, normalizePurse(data.purse))] : []),
       ...(data.gameStats ? [write(KEYS.gameStats, normalizeGameStats(data.gameStats))] : []),
+      ...(data.village ? [write(KEYS.village, data.village)] : []),
     ]);
     return {
       habits: data.habits.length,
@@ -1960,6 +1976,10 @@ export async function mergeData(data: BackupData): Promise<ImportStats> {
     if (data.gameStats) {
       const local = normalizeGameStats(await read<unknown>(KEYS.gameStats, DEFAULT_GAME_STATS));
       await write(KEYS.gameStats, mergeGameStats(local, normalizeGameStats(data.gameStats)));
+    }
+    if (data.village) {
+      const local = normalizeVillage(await read<unknown>(KEYS.village, null));
+      await write(KEYS.village, mergeVillage(local, data.village));
     }
 
     // The screen-time limit is a setting of *this* phone, not history — merging
