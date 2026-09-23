@@ -16,18 +16,18 @@ import { WORD_THEMES, themeItemId, themeOpen } from "../src/content/wordThemes";
 import { earnedAwards, SPARKS, type EarnState } from "../src/lib/rewards/earn";
 
 const empty: TitleState = {
-  bestStreak: 0, closedDays: 0, summaries: 0, goalsDone: 0, fields: 0, hardFields: 0,
+  bestStreak: 0, closedDays: 0, summaries: 0, goalsDone: 0, fields: 0, hardFields: 0, wheelLevels: 0,
   mealDays: 0, weights: 0, screenDays: 0, focusMinutes: 0,
 };
 
 test("титулы", () => {
   eq("на пустом месте нет", earnedTitles(empty).length, 0);
-  eq("всего двенадцать", TITLE_RULES.length, 12);
+  eq("всего тринадцать", TITLE_RULES.length, 13);
   eq("порог — даётся", earnedTitles({ ...empty, weights: 30 }).map((t) => t.id), ["t-weighed"]);
   eq("порог минус один — нет", earnedTitles({ ...empty, weights: 29 }).length, 0);
   eq("ближайший — по долям, а не штукам", nextTitle({ ...empty, weights: 29, closedDays: 1 })?.rule.id, "t-weighed");
   eq("всё взято — ближайшего нет", nextTitle({
-    bestStreak: 999, closedDays: 999, summaries: 9, goalsDone: 9, fields: 99, hardFields: 99,
+    bestStreak: 999, closedDays: 999, summaries: 9, goalsDone: 9, fields: 99, hardFields: 99, wheelLevels: 99,
     mealDays: 99, weights: 99, screenDays: 99, focusMinutes: 9999,
   }), null);
 });
@@ -68,6 +68,7 @@ test("начисление из CaloriX и Creker", () => {
     countedDates: [], today: "2026-09-22", bestStreak: 0, sessionsByDate: {},
     summaries: [], goalsDone: [], fields: { easy: 0, normal: 0, hard: 0 }, records: [],
     mealDates: ["2026-09-20", "2026-09-22"], weightDates: ["2026-09-21"], screenDates: ["2026-09-21", "2026-09-22"],
+    wheelLevels: 0, wheelBonus: 0,
   };
   const keys = earnedAwards(state).map((a) => a.key);
   ok("вчерашняя еда оплачена", keys.includes("meal:2026-09-20"));
@@ -75,4 +76,16 @@ test("начисление из CaloriX и Creker", () => {
   ok("вчерашний экран оплачен", keys.includes("screen:2026-09-21"));
   ok("сегодняшний — ещё нет", !keys.includes("screen:2026-09-22"));
   eq("сумма", earnedAwards(state).reduce((n, a) => n + a.sparks, 0), SPARKS.meal + SPARKS.weight + SPARKS.screen);
+});
+
+test("колесо: уровни и бонусные слова", () => {
+  const base: EarnState = {
+    countedDates: [], today: "2026-09-22", bestStreak: 0, sessionsByDate: {},
+    summaries: [], goalsDone: [], fields: { easy: 0, normal: 0, hard: 0 }, records: [],
+    mealDates: [], weightDates: [], screenDates: [], wheelLevels: 3, wheelBonus: 27,
+  };
+  const keys = earnedAwards(base).map((a) => a.key);
+  eq("по ключу на уровень", keys.filter((k) => k.startsWith("wheel:")), ["wheel:1", "wheel:2", "wheel:3"]);
+  eq("бонус — за каждый полный десяток", keys.filter((k) => k.startsWith("wheel-bonus:")), ["wheel-bonus:10", "wheel-bonus:20"]);
+  eq("«Словесник» за пятьдесят уровней", earnedTitles({ ...empty, wheelLevels: 50 }).map((t) => t.id), ["t-wordsmith"]);
 });

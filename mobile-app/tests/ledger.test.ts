@@ -38,6 +38,8 @@ function pass(purse: Purse, verdicts: Verdicts, today: string): Purse {
     mealDates: [],
     weightDates: [],
     screenDates: [...all.screen].sort(),
+    wheelLevels: 0,
+    wheelBonus: 0,
   };
   return applyAwards({ ...purse, ledger }, earnedAwards(state), today);
 }

@@ -19,7 +19,7 @@ import {
   type Cell,
   type Difficulty,
 } from "../../lib/games/wordsearch";
-import { emptyWordSearch, formatSeconds, recordKey, withSolved, type GameStats } from "../../lib/games/stats";
+import { emptyGameStats, formatSeconds, recordKey, withSolved, type GameStats } from "../../lib/games/stats";
 import { spend, type Purse } from "../../lib/rewards/currency";
 import { HINT_PRICES, paletteColors } from "../../lib/rewards/catalog";
 import { useSavePurse } from "../../lib/rewards/useSavePurse";
@@ -223,7 +223,7 @@ export default function WordSearchScreen({
   }, [found, playing, won, puzzle]);
 
   const finish = () => {
-    const base = stats ?? { wordsearch: emptyWordSearch() };
+    const base = stats ?? emptyGameStats();
     // Подсказка снимает время с зачёта, но не само поле: собранное собрано.
     const result = withSolved(base, theme.id, difficulty, timed && !hinted ? seconds : null, todayKey());
     setWon({ record: result.record });

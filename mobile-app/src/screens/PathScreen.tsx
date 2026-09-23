@@ -168,6 +168,12 @@ export default function PathScreen({
             : "Полей в словах пока не собрано"
         }
       />
+      {games.wheel > 0 && (
+        <Line
+          icon="disc"
+          text={`${games.wheel} ${plural(games.wheel, ["уровень", "уровня", "уровней"])} колеса букв`}
+        />
+      )}
 
       {/* CaloriX и Creker — одной строкой каждый: в «Пути» важно, что они вообще были. */}
       {(care.mealDays > 0 || care.weights > 0) && (

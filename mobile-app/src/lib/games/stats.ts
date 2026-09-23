@@ -4,8 +4,8 @@ import type { Difficulty } from "./wordsearch";
  * Что игра про себя помнит.
  *
  * Немного и намеренно: сколько полей решено и лучшее время по каждой паре «тема —
- * сложность». Ни очков, ни уровней, ни валюты — это игра на перерыв, а не вторая жизнь с
- * прогрессом, который жалко бросить.
+ * сложность», а у колеса — на каком уровне остановился. Это игры на перерыв, а не вторая
+ * жизнь с прогрессом, который жалко бросить.
  *
  * Со временем играют не всегда, поэтому рекорд есть не у каждой пары: поле, решённое без
  * секундомера, засчитывается в «решено», но ничьего рекорда не трогает — сравнивать его не
@@ -27,8 +27,33 @@ export interface WordSearchStats {
   lastAt: string;
 }
 
+/**
+ * «Колесо букв» — одна лестница уровней, а не поля по выбору.
+ *
+ * Недоигранный уровень хранится целиком: подсказки куплены за искры, и выход из игры не
+ * должен их сжигать. Уровень кончился — `progress` пустеет.
+ */
+export interface WheelStats {
+  /** Сколько уровней пройдено; он же номер текущего с нуля. */
+  level: number;
+  /** Бонусных слов за всё время. */
+  bonus: number;
+  lastAt: string;
+  progress: WheelProgress;
+}
+
+export interface WheelProgress {
+  /** Найденные слова сетки. */
+  found: string[];
+  /** Найденные бонусные слова этого уровня. */
+  bonus: string[];
+  /** Клетки, открытые подсказкой: [строка, столбец]. */
+  hinted: [number, number][];
+}
+
 export interface GameStats {
   wordsearch: WordSearchStats;
+  wheel: WheelStats;
 }
 
 const emptyByDifficulty = (): Record<Difficulty, number> => ({ easy: 0, normal: 0, hard: 0 });
@@ -45,17 +70,22 @@ export const emptyWordSearch = (): WordSearchStats => ({
   best: {},
   lastAt: "",
 });
-export const DEFAULT_GAME_STATS: GameStats = { wordsearch: emptyWordSearch() };
+export const emptyWheelProgress = (): WheelProgress => ({ found: [], bonus: [], hinted: [] });
+export const emptyWheel = (): WheelStats => ({ level: 0, bonus: 0, lastAt: "", progress: emptyWheelProgress() });
+export const emptyGameStats = (): GameStats => ({ wordsearch: emptyWordSearch(), wheel: emptyWheel() });
+export const DEFAULT_GAME_STATS: GameStats = emptyGameStats();
 
 /** Ключ рекорда. Тема и сложность вместе: одно поле 12×12 не сравнивают с полем 8×8. */
 export const recordKey = (themeId: string, difficulty: Difficulty): string => `${themeId}:${difficulty}`;
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : 0);
 
-export function normalizeGameStats(raw: unknown): GameStats {
-  if (typeof raw !== "object" || raw === null) return { wordsearch: emptyWordSearch() };
-  const o = (raw as Record<string, unknown>).wordsearch;
-  if (typeof o !== "object" || o === null) return { wordsearch: emptyWordSearch() };
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === "string" && x.length > 0))] : [];
+
+function normalizeWordSearch(o: unknown): WordSearchStats {
+  if (typeof o !== "object" || o === null) return emptyWordSearch();
   const w = o as Record<string, unknown>;
   const best: Record<string, number> = {};
   if (typeof w.best === "object" && w.best !== null) {
@@ -74,13 +104,35 @@ export function normalizeGameStats(raw: unknown): GameStats {
     hard: num(counts.hard),
   };
   return {
-    wordsearch: {
-      solved: num(w.solved),
-      byDifficulty,
-      best,
-      lastAt: typeof w.lastAt === "string" && /^\d{4}-\d{2}-\d{2}$/.test(w.lastAt) ? w.lastAt : "",
-    },
+    solved: num(w.solved),
+    byDifficulty,
+    best,
+    lastAt: typeof w.lastAt === "string" && DATE_RE.test(w.lastAt) ? w.lastAt : "",
   };
+}
+
+function normalizeWheel(o: unknown): WheelStats {
+  if (typeof o !== "object" || o === null) return emptyWheel();
+  const w = o as Record<string, unknown>;
+  const p = (typeof w.progress === "object" && w.progress !== null ? w.progress : {}) as Record<string, unknown>;
+  const hinted = Array.isArray(p.hinted)
+    ? p.hinted.filter(
+        (c): c is [number, number] =>
+          Array.isArray(c) && c.length === 2 && c.every((n) => Number.isInteger(n) && n >= 0),
+      )
+    : [];
+  return {
+    level: num(w.level),
+    bonus: num(w.bonus),
+    lastAt: typeof w.lastAt === "string" && DATE_RE.test(w.lastAt) ? w.lastAt : "",
+    progress: { found: strings(p.found), bonus: strings(p.bonus), hinted },
+  };
+}
+
+export function normalizeGameStats(raw: unknown): GameStats {
+  if (typeof raw !== "object" || raw === null) return emptyGameStats();
+  const o = raw as Record<string, unknown>;
+  return { wordsearch: normalizeWordSearch(o.wordsearch), wheel: normalizeWheel(o.wheel) };
 }
 
 /**
@@ -103,6 +155,13 @@ export function mergeGameStats(a: GameStats, b: GameStats): GameStats {
       best,
       lastAt: a.wordsearch.lastAt > b.wordsearch.lastAt ? a.wordsearch.lastAt : b.wordsearch.lastAt,
     },
+    // Колесо — лестница: кто дальше ушёл, тот и прав, вместе с недоигранным уровнем.
+    // Смешивать найденное с двух разных уровней нельзя — слова одного не лягут в другой.
+    wheel: {
+      ...(b.wheel.level > a.wheel.level ? b.wheel : a.wheel),
+      bonus: Math.max(a.wheel.bonus, b.wheel.bonus),
+      lastAt: a.wheel.lastAt > b.wheel.lastAt ? a.wheel.lastAt : b.wheel.lastAt,
+    },
   };
 }
 
@@ -124,6 +183,7 @@ export function withSolved(
   const record = seconds !== null && seconds > 0 && (previous === undefined || seconds < previous);
   return {
     stats: {
+      ...stats,
       wordsearch: {
         solved: stats.wordsearch.solved + 1,
         byDifficulty: {

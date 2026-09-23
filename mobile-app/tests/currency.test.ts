@@ -88,4 +88,12 @@ test("слияние игр при переносе", () => {
   eq("поля не складываются — большее", m.wordsearch.solved, 10);
   eq("по сложностям — большее", m.wordsearch.byDifficulty, { easy: 6, normal: 4, hard: 2 });
   eq("рекорд — лучший", m.wordsearch.best, { "food:easy": 70, "home:hard": 300 });
+  const far = normalizeGameStats({ wheel: { level: 12, bonus: 30, progress: { found: ["КОТ"], bonus: [], hinted: [[0, 1]] } } });
+  const near = normalizeGameStats({ wheel: { level: 5, bonus: 44, progress: { found: ["ЛЕС"], bonus: [], hinted: [] } } });
+  const w = mergeGameStats(near, far).wheel;
+  eq("колесо — кто дальше ушёл", w.level, 12);
+  eq("вместе с его недоигранным уровнем", w.progress.found, ["КОТ"]);
+  eq("бонусные — большее", w.bonus, 44);
+  eq("старая копия без колеса читается", normalizeGameStats({ wordsearch: { solved: 1 } }).wheel.level, 0);
+  eq("кривые клетки подсказок выброшены", normalizeGameStats({ wheel: { progress: { hinted: [[1, 2], [-1, 0], "x", [1]] } } }).wheel.progress.hinted, [[1, 2]]);
 });

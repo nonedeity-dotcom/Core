@@ -179,6 +179,8 @@ export interface TitleState {
   goalsDone: number;
   fields: number;
   hardFields: number;
+  /** Пройденные уровни колеса букв. */
+  wheelLevels: number;
   /** Дни с записанной едой, записи веса, дни в пределах экранного лимита, минуты фокуса. */
   mealDays: number;
   weights: number;
@@ -224,6 +226,7 @@ export const TITLE_RULES: TitleRule[] = [
   { id: "t-finisher", title: "Доводящий", hint: "Цель месяца закрыта целиком", need: 1, have: (s) => s.goalsDone },
   { id: "t-seeker", title: "Искатель", hint: "50 собранных полей", need: 50, have: (s) => s.fields },
   { id: "t-untangler", title: "Распутыватель", hint: "10 полей на сложном", need: 10, have: (s) => s.hardFields },
+  { id: "t-wordsmith", title: "Словесник", hint: "50 уровней колеса букв", need: 50, have: (s) => s.wheelLevels },
   // Эти четыре — из CaloriX, Creker и фокуса: раньше титулы знали только про привычки,
   // цели и игру, хотя приложение состоит не только из них.
   { id: "t-weighed", title: "Взвешенный", hint: "30 записей веса", need: 30, have: (s) => s.weights },

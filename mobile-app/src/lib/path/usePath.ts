@@ -48,7 +48,7 @@ export interface PathView {
   goals: { planned: number; summaries: number; done: number };
   /** CaloriX и Creker: дни с записанной едой, записи веса, дни в пределах экранного лимита. */
   care: { mealDays: number; weights: number; screenDays: number };
-  games: { fields: number; hard: number; records: number };
+  games: { fields: number; hard: number; records: number; wheel: number };
 }
 
 export function usePath(): PathView {
@@ -135,6 +135,7 @@ export function usePath(): PathView {
       fields: games?.wordsearch.solved ?? 0,
       hard: games?.wordsearch.byDifficulty.hard ?? 0,
       records: Object.keys(games?.wordsearch.best ?? {}).length,
+      wheel: games?.wheel.level ?? 0,
     },
   };
 }

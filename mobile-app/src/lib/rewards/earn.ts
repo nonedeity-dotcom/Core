@@ -42,6 +42,11 @@ export const SPARKS = {
    * (ledger.ts), так что поднятый лимит решает только про будущие дни, а не про вчерашние.
    */
   screen: 5,
+  /** Пройденный уровень колеса букв. Уровни короткие, поэтому дешевле поля. */
+  wheelLevel: 5,
+  /** Каждые десять бонусных слов — то, что нашёл сверх нужного. */
+  wheelBonus: 5,
+  wheelBonusEvery: 10,
 };
 
 /** Сколько ядер. Ядра редкие: только за крупное и неповторимое. */
@@ -75,6 +80,9 @@ export interface EarnState {
   weightDates: string[];
   /** Дни, в которые все экранные привычки удержались. */
   screenDates: string[];
+  /** Сколько уровней колеса пройдено и сколько бонусных слов найдено за всё время. */
+  wheelLevels: number;
+  wheelBonus: number;
 }
 
 export const MILESTONES = [7, 14, 30, 66];
@@ -155,6 +163,19 @@ export function earnedAwards(state: EarnState): Award[] {
 
   for (const key of state.records) {
     out.push({ key: `record:${key}`, title: "Рекорд в игре", sparks: SPARKS.record, cores: 0 });
+  }
+
+  // Колесо — как поля: счётчик, ключ на каждый уровень по счёту.
+  for (let n = 1; n <= state.wheelLevels; n++) {
+    out.push({ key: `wheel:${n}`, title: `Колесо: уровень ${n}`, sparks: SPARKS.wheelLevel, cores: 0 });
+  }
+  for (let k = 1; k <= Math.floor(state.wheelBonus / SPARKS.wheelBonusEvery); k++) {
+    out.push({
+      key: `wheel-bonus:${k * SPARKS.wheelBonusEvery}`,
+      title: `${k * SPARKS.wheelBonusEvery} бонусных слов`,
+      sparks: SPARKS.wheelBonus,
+      cores: 0,
+    });
   }
 
   /*

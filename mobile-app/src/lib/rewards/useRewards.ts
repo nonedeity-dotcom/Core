@@ -161,6 +161,8 @@ export function useRewards(): RewardsView {
       mealDates,
       weightDates: weights.map((w) => w.date),
       screenDates: [...all.screen].sort(),
+      wheelLevels: games?.wheel.level ?? 0,
+      wheelBonus: games?.wheel.bonus ?? 0,
     };
   };
 
@@ -205,6 +207,7 @@ export function useRewards(): RewardsView {
     goalsDone: goalsDone.length,
     fields: games?.wordsearch.solved ?? 0,
     hardFields: games?.wordsearch.byDifficulty.hard ?? 0,
+    wheelLevels: games?.wheel.level ?? 0,
     mealDays: mealDates.length,
     weights: weights.length,
     screenDays: state?.screenDates.length ?? 0,

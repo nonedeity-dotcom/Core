@@ -667,6 +667,14 @@ export const api = {
     await write(KEYS.gameStats, clean);
     return clean;
   },
+  /** Правка под блокировкой: колесо пишет после каждого слова, и записи не должны обгонять друг друга. */
+  async updateGameStats(change: (stats: GameStats) => GameStats): Promise<GameStats> {
+    return withKeyLock(KEYS.gameStats, async () => {
+      const clean = normalizeGameStats(change(normalizeGameStats(await read<unknown>(KEYS.gameStats, DEFAULT_GAME_STATS))));
+      await write(KEYS.gameStats, clean);
+      return clean;
+    });
+  },
 
   /**
    * Сколько привычек каждого уровня нужно закрыть — за день и за неделю.
