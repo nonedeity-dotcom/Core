@@ -15,6 +15,8 @@ import {
   pickUp,
   place,
   walkable,
+  pathTo,
+  actionIcon,
   type Dir,
   type VillageState,
 } from "../src/lib/village/game";
@@ -140,4 +142,51 @@ test("сохранение", () => {
   const b = { ...newVillage(2), time: 9000 };
   eq("слияние — где прожито больше", mergeVillage(a, b)?.seed, 2);
   eq("ключ клетки", cellKey(3, 4), "3:4");
+});
+
+test("дорога по касанию", () => {
+  const s = newVillage(42);
+  const walk = (st: VillageState, steps: Dir[]) => steps.reduce((acc, d) => move(acc, d).state, st);
+
+  const free = { x: s.x + 1, y: s.y + 1 };
+  const steps = pathTo(s, free.x, free.y)!;
+  eq("до свободной клетки — ровно два шага", steps.length, 2);
+  const there = walk(s, steps);
+  eq("и пришёл", [there.x, there.y], [free.x, free.y]);
+
+  // Ближайшее к старту дерево, до которого есть дорога: дальние могут стоять в глухой чаще.
+  const w0 = makeWorld(42);
+  const trees: [number, number][] = [];
+  for (let i = 0; i < w0.size * w0.size; i++) if (w0.nature[i] === "tree") trees.push([i % w0.size, Math.floor(i / w0.size)]);
+  trees.sort((a, b) => Math.hypot(a[0] - s.x, a[1] - s.y) - Math.hypot(b[0] - s.x, b[1] - s.y));
+  const near = trees.slice(0, 5).find(([x, y]) => pathTo(s, x, y) !== null);
+  ok("до одного из ближних деревьев дорога есть", near !== undefined);
+  const t = { x: near![0], y: near![1] };
+  const route = pathTo(s, t.x, t.y);
+  ok("до дерева дорога есть", route !== null && route.length > 0);
+  const arrived = walk(s, route!);
+  const f = facingCell(arrived);
+  eq("стоит рядом и смотрит на дерево", [f.x, f.y], [t.x, t.y]);
+  eq("кнопка покажет топор", actionIcon(arrived), "axe");
+
+  // Дорога никогда не идёт сквозь то, что стоит.
+  let cur = s;
+  for (const d of route!.slice(0, -1)) {
+    const next = move(cur, d).state;
+    ok(`шаг ${d} — настоящий шаг`, next.x !== cur.x || next.y !== cur.y);
+    cur = next;
+  }
+  eq("на своей клетке идти некуда", pathTo(s, s.x, s.y), null);
+  eq("за краем мира — некуда", pathTo(s, -1, 5), null);
+
+  // Клетка посреди воды, к которой нет берега.
+  const w = makeWorld(42);
+  let deep: [number, number] | null = null;
+  for (let i = 0; i < w.size * w.size && !deep; i++) {
+    const x = i % w.size;
+    const y = Math.floor(i / w.size);
+    const all = [[1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dy]) => w.ground[(y + dy) * w.size + x + dx] === "water");
+    if (w.ground[i] === "water" && all) deep = [x, y];
+  }
+  if (deep) eq("в середину пруда не дойти", pathTo(s, deep[0], deep[1]), null);
 });

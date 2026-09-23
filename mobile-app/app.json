@@ -4,7 +4,7 @@
     "slug": "no-burnout",
     "scheme": "no-burnout",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#12151a",
     "icon": "./assets/icon.png",

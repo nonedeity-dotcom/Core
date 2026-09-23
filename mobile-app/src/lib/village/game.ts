@@ -138,6 +138,79 @@ export function facingCell(state: VillageState): { x: number; y: number } {
   return { x: state.x + dx, y: state.y + dy };
 }
 
+/**
+ * Дорога до клетки, по которой нажали: список шагов.
+ *
+ * Если на клетке что-то стоит (дерево, костёр), дорога ведёт к соседней свободной и
+ * кончается поворотом лицом к цели — шаг в занятую клетку только поворачивает. Поиск в
+ * ширину: мир маленький, 64×64, и самая короткая дорога находится мгновенно. null — не
+ * дойти (цель за водой или в чаще).
+ */
+export function pathTo(state: VillageState, tx: number, ty: number): Dir[] | null {
+  if (!inBounds(tx, ty) || (tx === state.x && ty === state.y)) return null;
+  const goalFree = walkable(state, tx, ty);
+  const dirs = Object.entries(DELTA) as [Dir, [number, number]][];
+  // Куда нужно прийти: на саму клетку, если на неё можно встать, иначе — рядом с ней.
+  const ends = new Map<string, Dir | null>();
+  if (goalFree) ends.set(cellKey(tx, ty), null);
+  else {
+    for (const [dir, [dx, dy]] of dirs) {
+      // Стоя на (tx-dx, ty-dy), к цели поворачиваются в сторону dir.
+      const sx = tx - dx;
+      const sy = ty - dy;
+      if ((sx === state.x && sy === state.y) || walkable(state, sx, sy)) ends.set(cellKey(sx, sy), dir);
+    }
+  }
+  if (ends.size === 0) return null;
+
+  const start = cellKey(state.x, state.y);
+  const prev = new Map<string, [string, Dir] | null>([[start, null]]);
+  const queue: [number, number][] = [[state.x, state.y]];
+  let found: string | null = ends.has(start) ? start : null;
+  while (queue.length > 0 && found === null) {
+    const [x, y] = queue.shift()!;
+    for (const [dir, [dx, dy]] of dirs) {
+      const nx = x + dx;
+      const ny = y + dy;
+      const k = cellKey(nx, ny);
+      if (prev.has(k) || !walkable(state, nx, ny)) continue;
+      prev.set(k, [cellKey(x, y), dir]);
+      if (ends.has(k)) {
+        found = k;
+        break;
+      }
+      queue.push([nx, ny]);
+    }
+  }
+  if (found === null) return null;
+
+  const steps: Dir[] = [];
+  for (let k = found; prev.get(k); k = prev.get(k)![0]) steps.unshift(prev.get(k)![1]);
+  const turn = ends.get(found);
+  if (turn) steps.push(turn);
+  return steps;
+}
+
+/** К чему повернулся персонаж — чтобы нарисовать на кнопке действия его значок. */
+export type ActionIcon = ItemId | "sleep" | "water" | null;
+
+export function actionIcon(state: VillageState): ActionIcon {
+  const { x, y } = facingCell(state);
+  const c = cellAt(state, x, y);
+  if (!c) return null;
+  if (c.built) {
+    const s = STRUCTURES[c.built];
+    if (s.sleep && isNight(state.time)) return "sleep";
+    return (Object.values(ITEMS).find((i) => i.places === c.built)?.id ?? null) as ItemId | null;
+  }
+  if (c.nature && !c.depleted) {
+    const def = NATURE[c.nature];
+    return def.needs ?? ((Object.keys(def.gives)[0] as ItemId | undefined) ?? null);
+  }
+  if (c.ground === "water") return "water";
+  return null;
+}
+
 // --- действия ---------------------------------------------------------------------
 
 /**

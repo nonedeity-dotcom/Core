@@ -59,6 +59,7 @@ const KEYS = {
   levelRule: "level-rule-v1",
   gameStats: "game-stats-v1",
   village: "village-v1",
+  villageUi: "village-ui-v1",
   purse: "rewards-purse-v1",
   daysOff: "days-off-v1",
   habitFreezes: "habit-freezes-v1",
@@ -678,6 +679,13 @@ export const api = {
   },
   async saveVillage(state: VillageState): Promise<void> {
     await withKeyLock(KEYS.village, () => write(KEYS.village, state));
+  },
+  /** Как держать телефон в «Опушке». Настройка этого телефона, в копию не едет. */
+  async getVillageLandscape(): Promise<boolean> {
+    return (await read<{ landscape?: unknown }>(KEYS.villageUi, {})).landscape === true;
+  },
+  async setVillageLandscape(landscape: boolean): Promise<void> {
+    await write(KEYS.villageUi, { landscape });
   },
   /** Правка под блокировкой: колесо пишет после каждого слова, и записи не должны обгонять друг друга. */
   async updateGameStats(change: (stats: GameStats) => GameStats): Promise<GameStats> {

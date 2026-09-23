@@ -23,19 +23,21 @@ export interface ItemDef {
   food?: number;
   /** Что ставится на землю, если это постройка. */
   places?: StructureId;
+  /** Строчка в сумке: зачем эта вещь. */
+  hint: string;
 }
 
 export const ITEMS: Record<ItemId, ItemDef> = {
-  stick: { id: "stick", name: "Ветка", forms: ["ветка", "ветки", "веток"] },
-  stone: { id: "stone", name: "Камень", forms: ["камень", "камня", "камней"] },
-  log: { id: "log", name: "Бревно", forms: ["бревно", "бревна", "брёвен"] },
-  berries: { id: "berries", name: "Ягоды", forms: ["ягода", "ягоды", "ягод"], food: 12 },
-  axe: { id: "axe", name: "Топор", tool: true },
-  pickaxe: { id: "pickaxe", name: "Кирка", tool: true },
-  campfire: { id: "campfire", name: "Костёр", places: "campfire" },
-  workbench: { id: "workbench", name: "Верстак", places: "workbench" },
-  fence: { id: "fence", name: "Забор", places: "fence" },
-  house: { id: "house", name: "Домик", places: "house" },
+  stick: { id: "stick", name: "Ветка", forms: ["ветка", "ветки", "веток"], hint: "Для инструментов и костра" },
+  stone: { id: "stone", name: "Камень", forms: ["камень", "камня", "камней"], hint: "Для инструментов и домика" },
+  log: { id: "log", name: "Бревно", forms: ["бревно", "бревна", "брёвен"], hint: "Главный строительный материал" },
+  berries: { id: "berries", name: "Ягоды", forms: ["ягода", "ягоды", "ягод"], food: 12, hint: "Съесть — сытость +12" },
+  axe: { id: "axe", name: "Топор", tool: true, hint: "Рубит деревья. Не тратится" },
+  pickaxe: { id: "pickaxe", name: "Кирка", tool: true, hint: "Разбивает валуны на камни. Не тратится" },
+  campfire: { id: "campfire", name: "Костёр", places: "campfire", hint: "Свет ночью, у него можно переночевать" },
+  workbench: { id: "workbench", name: "Верстак", places: "workbench", hint: "Рядом с ним делаются забор и домик" },
+  fence: { id: "fence", name: "Забор", places: "fence", hint: "Огородить своё место" },
+  house: { id: "house", name: "Домик", places: "house", hint: "Свой дом. Ночлег лучше, чем у костра" },
 };
 
 /** Что стоит на клетке само по себе: росло или лежало до тебя. */
@@ -75,6 +77,8 @@ export type StructureId = "campfire" | "workbench" | "fence" | "house";
 export interface StructureDef {
   id: StructureId;
   name: string;
+  /** «у верстака» — для подписи рецепта, которому она нужна. */
+  near: string;
   /** Можно ли возле неё переспать ночь. */
   sleep?: "rough" | "cozy";
   /** Рядом с ней открываются рецепты, которым она нужна. */
@@ -82,10 +86,10 @@ export interface StructureDef {
 }
 
 export const STRUCTURES: Record<StructureId, StructureDef> = {
-  campfire: { id: "campfire", name: "Костёр", sleep: "rough" },
-  workbench: { id: "workbench", name: "Верстак", station: true },
-  fence: { id: "fence", name: "Забор" },
-  house: { id: "house", name: "Домик", sleep: "cozy" },
+  campfire: { id: "campfire", name: "Костёр", near: "у костра", sleep: "rough" },
+  workbench: { id: "workbench", name: "Верстак", near: "у верстака", station: true },
+  fence: { id: "fence", name: "Забор", near: "у забора" },
+  house: { id: "house", name: "Домик", near: "у домика", sleep: "cozy" },
 };
 
 export interface Recipe {

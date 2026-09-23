@@ -8,6 +8,7 @@ import { accentColor } from "./src/lib/rewards/catalog";
 import { restoreReminder } from "./src/notifications/reminders";
 import { checkAndNotify } from "./src/notifications/watchers";
 import { setBackgroundCheck } from "./src/notifications/background";
+import { lockPortrait } from "./src/lib/orientation";
 
 /**
  * Разделы грузятся отложенно — и только ради акцентного цвета.
@@ -47,6 +48,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Экран в манифесте теперь может поворачиваться — ради игр. Всё остальное держим
+    // вертикальным, как было.
+    void lockPortrait();
     restoreReminder();
 
     /**
