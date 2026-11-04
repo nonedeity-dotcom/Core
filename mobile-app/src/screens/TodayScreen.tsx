@@ -832,7 +832,7 @@ function HabitRow({
       const isDone = logs.find(l => l.habitId === sub.id)?.done ?? false;
       return (
         <View key={sub.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-          <Pressable onPress={() => onBump(sub)} style={{ marginRight: 8 }}>
+          <Pressable onPress={() => onBumpSubtask(sub)} style={{ marginRight: 8 }}>
             <Feather name={isDone ? "check-circle" : "circle"} size={18} color={isDone ? colors.accentGreen : colors.textMuted} />
           </Pressable>
           <Text style={{ color: isDone ? colors.textMuted : colors.text, textDecorationLine: isDone ? 'line-through' : 'none' }}>
