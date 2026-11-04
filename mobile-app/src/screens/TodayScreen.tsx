@@ -1121,10 +1121,20 @@ function HabitEditor({
       <ScreenFields screen={screen} onScreen={onScreen} apps={apps} />
       <Pressable 
   onPress={() => onHasSubtasks(!hasSubtasks)} 
-  style={{ flexDirection: 'row', alignItems: 'center', padding: 10, marginTop: 10 }}
+  style={[styles.editRow, { marginTop: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.cardBorder }]}
 >
-  <Feather name={hasSubtasks ? "check-square" : "square"} size={20} color={colors.textMuted} />
-  <Text style={{ marginLeft: 8, color: colors.text, fontSize: 16 }}>Есть подзадачи (сложная привычка)</Text>
+  <View style={[
+    styles.checkbox, 
+    hasSubtasks && styles.checkboxChecked,
+    { marginTop: 0 }
+  ]}>
+    {hasSubtasks && <Feather name="check" size={12} color={colors.bg} />}
+  </View>
+  
+  <View style={{ flex: 1, marginLeft: 8 }}>
+    <Text style={styles.label}>Подзадачи</Text>
+    <Text style={styles.hint}>Разбить на шаги</Text>
+  </View>
 </Pressable>
     </View>
   );
