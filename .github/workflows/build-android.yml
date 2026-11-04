@@ -108,7 +108,7 @@ jobs:
         run: |
           echo "tag=android-build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "title=Core — сборка ${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "note=Обычная сборка Core." >> "$GITHjava-versj
+          echo "note=Обычная сборка Core." >> "$GITHUB_OUTPUT"
       - name: Publish release with APK
         uses: softprops/action-gh-release@v2
         with:
