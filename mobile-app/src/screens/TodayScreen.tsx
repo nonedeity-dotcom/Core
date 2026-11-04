@@ -564,7 +564,7 @@ export default function TodayScreen() {
               onReset={() => resetDay.mutate(h.id)}
             />
           );
-
+        };
         return (
           <View key={group.id} style={styles.group}>
             <Text style={styles.groupTitle}>{group.title}</Text>
