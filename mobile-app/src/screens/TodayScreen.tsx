@@ -685,6 +685,9 @@ function HabitRow({
   subtasks: Habit[];
 }) {
   const target = habitTarget(habit);
+  const [expanded, setExpanded] = useState(false);
+  const hasSub = subtasks.length > 0;
+  const doneCount = subtasks.filter(s => logs.find(l => l.habitId === s.id)?.done).length;
   const level = habitLevel(habit);
   const perDay = perDayTarget(habit);
   const doneToday = count >= perDay;
