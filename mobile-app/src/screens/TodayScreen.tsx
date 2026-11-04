@@ -544,6 +544,8 @@ export default function TodayScreen() {
               icons={iconChoices}
               onSave={saveEdit}
               onCancel={() => setEditingId(null)}
+              hasSubtasks={editHasSubtasks}
+              onHasSubtasks={setEditHasSubtasks}
             />
           ) : (
             <HabitRow
