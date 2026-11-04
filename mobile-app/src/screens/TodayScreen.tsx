@@ -258,13 +258,16 @@ export default function TodayScreen() {
   });
 
   const addHabit = useMutation({
-    mutationFn: (label: string) => api.addHabit(label),
-    onSuccess: () => {
-      setNewLabel("");
-      setAdding(false);
-      invalidateHabits();
-    },
-  });
+  // Теперь принимаем объект, чтобы можно было передать parentId
+  mutationFn: (data: { label: string; parentId?: string }) =>
+    api.addHabit(data.label, undefined, data.parentId),
+  onSuccess: () => {
+    setNewLabel("");
+    setAdding(false);
+    setNewSubtaskParentId(null); // Сбрасываем ID родителя после создания
+    invalidateHabits();
+  },
+});
 
   const updateHabit = useMutation({
     mutationFn: (data: {
