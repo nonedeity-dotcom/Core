@@ -972,6 +972,8 @@ function HabitEditor({
   icons: IconName[];
   onSave: () => void;
   onCancel: () => void;
+  hasSubtasks: boolean;
+  onHasSubtasks: (v: boolean) => void;
 }) {
   const bumpCount = (delta: number) =>
     onTarget({ ...target, count: Math.min(MAX_TARGET_COUNT, Math.max(1, target.count + delta)) });
