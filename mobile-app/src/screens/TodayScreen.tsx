@@ -800,8 +800,10 @@ function HabitRow({
               )}
               <Text style={[styles.label, { flexShrink: 1 }, !tickable && styles.labelLater]}>{habit.label}</Text>
               {habit.hasSubtasks && subtasks.length > 0 && !editing && (
-
-  <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 'auto', paddingLeft: 10 }}>
+<View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 'auto', paddingLeft: 10 }}>
+  <Text style={{ color: colors.textMuted, fontSize: 11, marginRight: 6 }}>
+    {doneCount}/{subtasks.length}
+  </Text>
     <View style={{ width: 36, height: 4, backgroundColor: colors.cardBorder, borderRadius: 2, marginRight: 8, overflow: 'hidden' }}>
       <View style={{ width: `${(doneCount / (subtasks.length || 1)) * 100}%`, height: '100%', backgroundColor: colors.accentGreen }} />
     </View>
