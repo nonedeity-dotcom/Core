@@ -896,15 +896,16 @@ function HabitRow({
       );
     })}
     
-    <Pressable onPress={onAddSubtask} style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 2 }}>
-      <Feather name="plus" size={16} color={colors.textMuted} />
-      <Text style={{ fontSize: 14, color: colors.textMuted, marginLeft: 6, fontWeight: 'Vi }}>Добавить подзадачу</Text>
-    </Pressable>
+<Pressable onPress={onAddSubtask} style={{ flexDirection: "row", alignItems: "center", marginTop: 4, minHeight: 24 }}>
+  <View style={{ position: "absolute", left: -36, backgroundColor: closed ? "rgba(143, 184, 154, 0.12)" : colors.card, zIndex: 1 }}>
+    <Feather name="plus" size={16} color={colors.textMuted} />
   </View>
+  <Text style={{ fontSize: 14, color: colors.textMuted, fontWeight: "500" }}>Добавить подзадачу</Text>
+</Pressable>
 )}
     </View>
     </View>
-   </View>
+  </View> {/
   );
 }
 
