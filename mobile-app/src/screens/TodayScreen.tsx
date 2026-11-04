@@ -766,6 +766,16 @@ function HabitRow({
                 <Feather name={habit.icon as IconName} size={13} color={colors.textMuted} />
               )}
               <Text style={[styles.label, { flexShrink: 1 }, !tickable && styles.labelLater]}>{habit.label}</Text>
+              {habit.hasSubtasks && !editing && (
+  <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 'auto', paddingLeft: 10 }}>
+    <View style={{ width: 36, height: 4, backgroundColor: colors.cardBorder, borderRadius: 2, marginRight: 8, overflow: 'hidden' }}>
+      <View style={{ width: `${(doneCount / (subtasks.length || 1)) * 100}%`, height: '100%', backgroundColor: colors.accentGreen }} />
+    </View>
+    <Pressable onPress={() => setExpanded(!expanded)} style={{ padding: 2 }}>
+      <Feather name={expanded ? "chevron-up" : "chevron-down"} size={20} color={colors.textMuted} />
+    </Pressable>
+  </View>
+)}
               {/* Метка уровня стоит у названия, а не в конце строки: уровень — свойство самой
                   привычки, и читается он вместе с ней. Приглушённая заливка на то и нужна,
                   чтобы метка была видна, но не спорила с названием за взгляд. */}
