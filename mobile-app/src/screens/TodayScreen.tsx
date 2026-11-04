@@ -750,14 +750,7 @@ function HabitRow({
           }
           style={styles.cardMain}
         >
-          {habit.hasSubtasks && (
-  <Pressable onPress={() => setExpanded(!expanded)} style={{ paddingRight: 10, justifyContent: 'center', alignItems: 'center' }}>
-    <Feather name={expanded ? "chevron-down" : "chevron-right"} size={18} color={colors.textMuted} />
-    {subtasks.length > 0 && (
-      <Text style={{ fontSize: 10, color: colors.textMuted }}>{doneCount}/{subtasks.length}</Text>
-    )}
-  </Pressable>
-)}
+
           {perDay > 1 ? (
             <View style={[styles.counter, doneToday && styles.counterDone]}>
               <Text style={[styles.counterText, doneToday && styles.counterTextDone]}>{count}</Text>
