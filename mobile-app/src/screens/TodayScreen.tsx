@@ -257,6 +257,41 @@ export default function TodayScreen() {
     onSettled: () => qc.invalidateQueries({ queryKey: ["habitLog"] }),
   });
 
+  const handleBump = (habit: Habit, minimal: boolean = false) => {
+  // 1. Если это подзадача
+  if (habit.parentId) {
+    bump.mutate({ habit, minimal });
+    const siblings = habits.filter(h => h.parentId === habit.parentId);
+    const isLast = siblings.filter(s => s.id !== habit.id).every(s => allLogs.find(l => l.habitId === s.id)?.done);
+    
+    if (isLast && !minimal) {
+      const parent = habits.find(h => h.id === habit.parentId);
+      if (parent) bump.mutate({ habit: parent, minimal: false });
+    }
+  } 
+  // 2. Если это родитель с подзадачами
+  else {
+    const subs = habits.filter(h => h.parentId === habit.id);
+    if (subs.length > 0) {
+      const allDone = subs.every(s => allLogs.find(l => l.habitId === s.id)?.done);
+      if (allDone) {
+        subs.forEach(s => resetDay.mutate(s.id));
+        resetDay.mutate(habit.id);
+      } else {
+        subs.forEach(s => {
+          if (!allLogs.find(l => l.habitId === s.id)?.done) {
+            bump.mutate({ habit: s, minimal: false });
+          }
+        });
+        bump.mutate({ habit, minimal: false });
+      }
+    } else {
+      // 3. Обычная привычка
+      bump.mutate({ habit, minimal });
+    }
+  }
+};
+
   const addHabit = useMutation({
   // Теперь принимаем объект, чтобы можно было передать parentId
   mutationFn: (data: { label: string; parentId?: string }) =>
