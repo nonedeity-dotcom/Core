@@ -425,9 +425,9 @@ export default function TodayScreen() {
       lateRule,
     });
 
-  const nowHabits = habits.filter((h) => habitGroup(h) === "now" && !h.parentid);
+  const nowHabits = habits.filter((h) => habitGroup(h) === "now" && !h.parentId);
   const deciding = habitsThatDecideTheDay(habits.filter (h => !
-h.parentld));
+h.parentId));
   const closed = deciding.filter((h) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h)).length;
   const required = requiredForDay(dayRule, deciding.length);
 
@@ -505,7 +505,7 @@ h.parentld));
       />
 
       {GROUPS.map((group) => {
-        const inGroup = habits.filter((h) => habitGroup(h) === group.id && !h.parentid);
+        const inGroup = habits.filter((h) => habitGroup(h) === group.id && !h.parentId);
         // An empty pile is only worth a heading while you are sorting things into it.
         if (inGroup.length === 0 && !editing) return null;
 
