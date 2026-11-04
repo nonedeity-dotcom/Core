@@ -826,6 +826,28 @@ function HabitRow({
           <Text style={styles.minimalText}>{`Минимум: ${habit.minimal}`}</Text>
         </Pressable>
       )}
+      {expanded && hasSub && (
+  <View style={{ paddingLeft: 40, paddingTop: 8, paddingBottom: 8 }}>
+    {subtasks.map(sub => {
+      const isDone = logs.find(l => l.habitId === sub.id)?.done ?? false;
+      return (
+        <View key={sub.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+          <Pressable onPress={() => onBump(sub)} style={{ marginRight: 8 }}>
+            <Feather name={isDone ? "check-circle" : "circle"} size={18} color={isDone ? colors.accentGreen : colors.textMuted} />
+          </Pressable>
+          <Text style={{ color: isDone ? colors.textMuted : colors.text, textDecorationLine: isDone ? 'line-through' : 'none' }}>
+            {sub.label}
+          </Text>
+        </View>
+      );
+    })}
+    
+    <Pressable onPress={onAddSubtask} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+      <Feather name="plus" size={14} color={colors.textMuted} />
+      <Text style={{ fontSize: 12, color: colors.textMuted, marginLeft: 4 }}>Добавить подзадачу</Text>
+    </Pressable>
+  </View>
+)}
     </View>
   );
 }
