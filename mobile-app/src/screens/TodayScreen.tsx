@@ -1114,6 +1114,13 @@ function HabitEditor({
 
       <ScheduleFields target={target} schedule={schedule} onSchedule={onSchedule} />
       <ScreenFields screen={screen} onScreen={onScreen} apps={apps} />
+      <Pressable 
+  onPress={() => onHasSubtasks(!hasSubtasks)} 
+  style={{ flexDirection: 'row', alignItems: 'center', padding: 10, marginTop: 10 }}
+>
+  <Feather name={hasSubtasks ? "check-square" : "square"} size={20} color={colors.textMuted} />
+  <Text style={{ marginLeft: 8, color: colors.text, fontSize: 16 }}>Есть подзадачи (сложная привычка)</Text>
+</Pressable>
     </View>
   );
 }
