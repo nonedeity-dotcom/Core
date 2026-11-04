@@ -554,6 +554,11 @@ h.parentId));
               habit={h}
               group={group.id}
               editing={editing}
+              editingId={editingId}
+              editDraft={editDraft}
+              setEditDraft={setEditDraft}
+              saveEdit={saveEdit}
+              setEditingId={setEditingId}
               standing={standings.get(h.id)!}
               markable={canMarkNow(h, lateRule, minutes)}
               count={logCount(logs.find((l) => l.habitId === h.id))}
