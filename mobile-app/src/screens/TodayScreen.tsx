@@ -504,7 +504,7 @@ export default function TodayScreen() {
       />
 
       {GROUPS.map((group) => {
-        const inGroup = habits.filter((h) => habitGroup(h) === group.id);
+        const inGroup = habits.filter((h) => habitGroup(h) === group.id && !h.parentid);
         // An empty pile is only worth a heading while you are sorting things into it.
         if (inGroup.length === 0 && !editing) return null;
 
