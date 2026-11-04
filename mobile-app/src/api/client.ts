@@ -378,7 +378,7 @@ export const api = {
     const habits = await read<Habit[]>(KEYS.habits, []);
     return [...habits].sort((a, b) => a.sortOrder - b.sortOrder);
   },
-  async addHabit(label: string, hint?: string, parentId?: string): Promise<Habit> {
+  async addHabit(label: string, hint?: string, parentId?: string, hasSubtasks?:boolean): Promise<Habit> {
     return withKeyLock(KEYS.habits, async () => {
       await ensureSeeded();
       const habits = await read<Habit[]>(KEYS.habits, []);
