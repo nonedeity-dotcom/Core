@@ -945,6 +945,8 @@ function HabitEditor({
   icons,
   onSave,
   onCancel,
+  hasSubtasks,
+  onHasSubtasks,
 }: {
   label: string;
   onLabel: (v: string) => void;
