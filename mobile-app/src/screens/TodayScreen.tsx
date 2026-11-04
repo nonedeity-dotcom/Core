@@ -879,7 +879,7 @@ function HabitRow({
           <Text style={styles.minimalText}>{`Минимум: ${habit.minimal}`}</Text>
         </Pressable>
       )}
-{expanded && (
+{expanded && habit.hasSubtasks && subtasks.length > 0 && (
   <View style={{ paddingLeft: 40, paddingRight: 16, paddingBottom: 12, marginTop: -2 }}>
     
     {/* Вертикальная линия (скрывается при редактировании) */}
