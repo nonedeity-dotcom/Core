@@ -516,7 +516,7 @@ export default function TodayScreen() {
         const row = (h: Habit) => {
          const mySubtasks = habits.filter(sub => sub.parentId === h.id);
   
-         return editingId === h.id ? (};
+         return editingId === h.id ? (
             <HabitEditor
               key={h.id}
               label={editDraft}
