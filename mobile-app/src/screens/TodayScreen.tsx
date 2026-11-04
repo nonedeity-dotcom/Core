@@ -553,6 +553,7 @@ export default function TodayScreen() {
               week={weeklyProgress(h, weekLogs, weekDates)}
               used={h.screen ? usedFor(h.screen) : null}
               onBump={(minimal) => handleBump(h, minimal)}
+              onBumpSubtask={(sub) => handleBump(sub)}
               subtasks={mySubtasks}
               logs={allLogs}
               onAddSubtask={() => {
