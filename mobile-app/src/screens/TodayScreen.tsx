@@ -568,6 +568,8 @@ export default function TodayScreen() {
               onEdit={() => startEdit(h)}
               onArchive={() => confirmArchive(h)}
               onReset={() => resetDay.mutate(h.id)}
+              hasSubtasks={editHasSubtasks}
+              onHasSubtasks={setEditHasSubtasks}
             />
           );
         };
