@@ -349,9 +349,16 @@ export default function TodayScreen() {
   };
 
   const submitNew = () => {
-    if (newLabel.trim()) addHabit.mutate(newLabel.trim());
-    else setAdding(false);
-  };
+  if (newLabel.trim()) {
+    addHabit.mutate({ 
+      label: newLabel.trim(), 
+      parentId: newSubtaskParentId || undefined 
+    });
+  } else {
+    setAdding(false);
+    setNewSubtaskParentId(null);
+  }
+};
 
   /**
    * Where each habit stands — which decides both how its row looks and where it sits, so it
