@@ -21,14 +21,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: "17"
+         distribution: temurin
+         java-version: "17"
 
       - name: Install JS dependencies
         run: npm install
@@ -98,8 +108,7 @@ jobs:
         run: |
           echo "tag=android-build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "title=Core — сборка ${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "note=Обычная сборка Core." >> "$GITHUB_OUTPUT"
-
+          echo "note=Обычная сборка Core." >> "$GITHjava-versj
       - name: Publish release with APK
         uses: softprops/action-gh-release@v2
         with:
