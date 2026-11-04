@@ -838,7 +838,7 @@ function HabitRow({
           <Text style={styles.minimalText}>{`Минимум: ${habit.minimal}`}</Text>
         </Pressable>
       )}
-      {expanded && hasSub && (
+      {expanded && (
   <View style={{ paddingLeft: 40, paddingTop: 8, paddingBottom: 8 }}>
     {subtasks.map(sub => {
       const isDone = logs.find(l => l.habitId === sub.id)?.done ?? false;
