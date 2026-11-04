@@ -216,4 +216,5 @@ export interface Reward {
   id: string;
   date: string;
   text: string;
+  parentId?: string | null;
 }
