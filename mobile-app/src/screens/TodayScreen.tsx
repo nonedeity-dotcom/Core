@@ -513,8 +513,10 @@ export default function TodayScreen() {
         const done = inGroup.filter((h) => standings.get(h.id)!.bucket === "done");
         const doneOpen = folds.isOpen(group.id);
 
-        const row = (h: Habit) =>
-          editingId === h.id ? (
+        const row = (h: Habit) => {
+         const mySubtasks = habits.filter(sub => sub.parentId === h.id);
+  
+         return editingId === h.id ? (};
             <HabitEditor
               key={h.id}
               label={editDraft}
@@ -550,7 +552,13 @@ export default function TodayScreen() {
               minimalDone={!!logs.find((l) => l.habitId === h.id)?.minimal}
               week={weeklyProgress(h, weekLogs, weekDates)}
               used={h.screen ? usedFor(h.screen) : null}
-              onBump={(minimal) => bump.mutate({ habit: h, minimal })}
+              onBump={(minimal) => handleBump(h, minimal)}
+              subtasks={mySubtasks}
+              logs={allLogs}
+              onAddSubtask={() => {
+              setNewSubtaskParentId(h.id);
+              setAdding(true);
+              }}
               onEdit={() => startEdit(h)}
               onArchive={() => confirmArchive(h)}
               onReset={() => resetDay.mutate(h.id)}
