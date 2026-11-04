@@ -416,6 +416,7 @@ export const api = {
     id: string,
     data: {
       label?: string;
+      parentId?: string | null;
       hint?: string;
       minimal?: string | null;
       group?: ItemGroup;
