@@ -138,6 +138,7 @@ export interface Habit {
    */
   archivedAt?: string | null;
   parentId?: string | null;
+  hasSubtasks?: boolean;
 }
 
 export interface HabitLog {
