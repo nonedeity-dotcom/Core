@@ -849,9 +849,6 @@ function HabitRow({
             </Pressable>
           </>
         )}
-                  <Pressable onPress={onArchive} style={styles.iconBtn} accessibilityLabel={`Убрать в архив: ${habit.label}`}>
-
-    )}
       </View>
 
       {/* Only where a minimal version was declared, and only while the full one is still
@@ -906,7 +903,8 @@ function HabitRow({
   </View>
 )}
     </View>
-   </View> {/
+    </View>
+   </View>
   );
 }
 
