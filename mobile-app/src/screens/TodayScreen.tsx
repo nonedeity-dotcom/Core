@@ -849,6 +849,9 @@ function HabitRow({
             </Pressable>
           </>
         )}
+                  <Pressable onPress={onArchive} style={styles.iconBtn} accessibilityLabel={`Убрать в архив: ${habit.label}`}>
+
+    )}
       </View>
 
       {/* Only where a minimal version was declared, and only while the full one is still
@@ -898,7 +901,7 @@ function HabitRow({
     
     <Pressable onPress={onAddSubtask} style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 2 }}>
       <Feather name="plus" size={16} color={colors.textMuted} />
-      <Text style={{ fontSize: 14, color: colors.textMuted, marginLeft: 6, fontWeight: '500' }}>Добавить подзадачу</Text>
+      <Text style={{ fontSize: 14, color: colors.textMuted, marginLeft: 6, fontWeight: 'Vi }}>Добавить подзадачу</Text>
     </Pressable>
   </View>
 )}
