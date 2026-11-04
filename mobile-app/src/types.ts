@@ -137,6 +137,7 @@ export interface Habit {
    * second, deliberate step, taken from the archive.
    */
   archivedAt?: string | null;
+  parentId?: string | null;
 }
 
 export interface HabitLog {
@@ -216,5 +217,4 @@ export interface Reward {
   id: string;
   date: string;
   text: string;
-  parentId?: string | null;
 }
