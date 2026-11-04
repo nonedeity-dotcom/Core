@@ -307,6 +307,7 @@ export default function TodayScreen() {
 
   const updateHabit = useMutation({
     mutationFn: (data: {
+      hasSubtasks: boolean;
       id: string;
       label: string;
       minimal: string | null;
