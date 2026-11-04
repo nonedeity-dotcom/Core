@@ -319,6 +319,7 @@ export default function TodayScreen() {
       icon: string | null;
     }) =>
       api.updateHabit(data.id, {
+        hasSubtasks: data.hasSubtasks,
         label: data.label,
         minimal: data.minimal,
         group: data.group,
