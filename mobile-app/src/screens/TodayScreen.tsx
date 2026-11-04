@@ -672,11 +672,11 @@ function HabitRow({
   onAddSubtask,
   logs,
   subtasks,
-  еditingld,
+  еditingId,
   editDraft,
   setEditDraft,
   saveEdit,
-  setEditingld
+  setEditingId
 }: {
   habit: Habit;
   /** Сколько минут уже потрачено сегодня на то, за чем следит привычка. */
