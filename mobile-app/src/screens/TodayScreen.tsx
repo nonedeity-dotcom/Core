@@ -427,7 +427,7 @@ export default function TodayScreen() {
 
   const nowHabits = habits.filter((h) => habitGroup(h) === "now" && !h.parentid);
   const deciding = habitsThatDecideTheDay(habits.filter (h => !
-h.parentld)););
+h.parentld));
   const closed = deciding.filter((h) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h)).length;
   const required = requiredForDay(dayRule, deciding.length);
 
