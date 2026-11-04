@@ -741,6 +741,7 @@ function HabitRow({
         style={[
           styles.card,
           styles.cardInBlock,
+          { flexDirection: "column", paddingHorizontal: 0, paddingVertical: 0 },
           
           closed && styles.cardChecked,
           urgent && styles.cardUrgent,
@@ -748,6 +749,7 @@ function HabitRow({
           !tickable && styles.cardLater,
         ]}
       >
+        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14 }}>
         <Pressable
           // Still tappable on a met week if today has no mark on it: a fourth run in a
           // week of three is a real thing that happened and should be recordable. What
