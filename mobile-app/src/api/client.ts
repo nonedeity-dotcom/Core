@@ -397,6 +397,7 @@ export const api = {
         // one until you ticked it. A habit is something you start keeping from the next
         // day — ticking it earlier still counts, it just isn't owed yet.
         parentId: parentId ?? undefined,
+        hasSubtasks: hasSubtasks ?? undefined,
         createdAt: tomorrowKey(),
       };
       await write(KEYS.habits, [...habits, habit]);
