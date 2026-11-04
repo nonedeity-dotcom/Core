@@ -672,7 +672,7 @@ function HabitRow({
   onAddSubtask,
   logs,
   subtasks,
-  еditingId,
+  editingId,
   editDraft,
   setEditDraft,
   saveEdit,
