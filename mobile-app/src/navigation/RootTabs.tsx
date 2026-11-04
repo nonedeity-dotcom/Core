@@ -199,7 +199,7 @@ export default function RootTabs() {
         <Stack.Screen name="Goals" component={GoalsScreen} options={{ title: goalsScreenTitle() }} />
         <Stack.Screen name="WordSearch" component={WordSearchScreen} options={{ title: "Найди слова" }} />
         <Stack.Screen name="Wheel" component={WheelScreen} options={{ title: "Колесо букв" }} />
-        <Stack.Screen name="Village" component={VillageScreen} options={{ title: "Опушка" }} />
+       
         {/* Заголовок называет месяц: экран открывается с любой клетки года, и «Цель» без
             имени оставляла бы вопрос, чья именно. */}
         <Stack.Screen
