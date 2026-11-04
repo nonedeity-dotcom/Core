@@ -418,6 +418,7 @@ export const api = {
     data: {
       label?: string;
       parentId?: string | null;
+      hasSubtasks?: boolean;
       hint?: string;
       minimal?: string | null;
       group?: ItemGroup;
