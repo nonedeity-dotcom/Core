@@ -651,6 +651,9 @@ function HabitRow({
   onEdit,
   onArchive,
   onReset,
+  onAddSubtask,
+  logs,
+  subtasks,
 }: {
   habit: Habit;
   /** Сколько минут уже потрачено сегодня на то, за чем следит привычка. */
@@ -677,6 +680,9 @@ function HabitRow({
   onEdit: () => void;
   onArchive: () => void;
   onReset: () => void;
+  onAddSubtask: () => void;
+  logs: HabitLog[];
+  subtasks: Habit[];
 }) {
   const target = habitTarget(habit);
   const level = habitLevel(habit);
