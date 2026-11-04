@@ -906,6 +906,7 @@ function HabitRow({
   </View>
 )}
     </View>
+   </View> {/
   );
 }
 
