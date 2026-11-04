@@ -846,25 +846,41 @@ function HabitRow({
           <Text style={styles.minimalText}>{`Минимум: ${habit.minimal}`}</Text>
         </Pressable>
       )}
-      {expanded && (
-  <View style={{ paddingLeft: 40, paddingTop: 8, paddingBottom: 8 }}>
+{expanded && (
+  <View style={{ paddingLeft: 40, paddingRight: 16, paddingBottom: 12, marginTop: -2 }}>
+    
+    {/* Вертикальная линия (скрывается при редактировании) */}
+    {!editing && (
+      <View style={{ 
+        position: 'absolute', left: 24, top: -8, bottom: 36, width: 1.5, backgroundColor: colors.cardBorder, borderRadius: 1 
+      }} />
+    )}
+
     {subtasks.map(sub => {
       const isDone = logs.find(l => l.habitId === sub.id)?.done ?? false;
       return (
-        <View key={sub.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-          <Pressable onPress={() => onBumpSubtask(sub)} style={{ marginRight: 8 }}>
+        <View key={sub.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+          <Pressable onPress={() => onBumpSubtask(sub)} style={{ marginRight: 12, backgroundColor: colors.card, zIndex: 1 }}>
             <Feather name={isDone ? "check-circle" : "circle"} size={18} color={isDone ? colors.accentGreen : colors.textMuted} />
           </Pressable>
-          <Text style={{ color: isDone ? colors.textMuted : colors.text, textDecorationLine: isDone ? 'line-through' : 'none' }}>
+          
+          <Text style={{ flex: 1, fontSize: 15, color: isDone ? colors.textMuted : colors.text, textDecorationLine: isDone ? 'line-through' : 'none' }}>
             {sub.label}
           </Text>
+          
+          {/* Карандаш редактирования подзадачи */}
+          {editing && (
+            <Pressable onPress={() => onEditSubtask(sub)} style={{ padding: 4 }}>
+              <Feather name="edit-2" size={16} color={colors.textMuted} />
+            </Pressable>
+          )}
         </View>
       );
     })}
     
-    <Pressable onPress={onAddSubtask} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-      <Feather name="plus" size={14} color={colors.textMuted} />
-      <Text style={{ fontSize: 12, color: colors.textMuted, marginLeft: 4 }}>Добавить подзадачу</Text>
+    <Pressable onPress={onAddSubtask} style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 2 }}>
+      <Feather name="plus" size={16} color={colors.textMuted} />
+      <Text style={{ fontSize: 14, color: colors.textMuted, marginLeft: 6, fontWeight: '500' }}>Добавить подзадачу</Text>
     </Pressable>
   </View>
 )}
