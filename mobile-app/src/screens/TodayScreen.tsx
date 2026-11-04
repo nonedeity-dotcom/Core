@@ -104,6 +104,7 @@ export default function TodayScreen() {
   const [editingId, setEditingId] = useState<string | null>(null);
   /** Whether the per-row controls and the add row are on show. Off by default. */
   const [editing, setEditing] = useState(false);
+  const [editHasSubtasks, setEditHasSubtasks] = useState(false);
   const [editDraft, setEditDraft] = useState("");
   const [editMinimal, setEditMinimal] = useState("");
   const [editGroup, setEditGroup] = useState<ItemGroup>("now");
