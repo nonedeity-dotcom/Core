@@ -663,6 +663,7 @@ function HabitRow({
   onEdit,
   onArchive,
   onReset,
+  onEditSubtask,
   onAddSubtask,
   logs,
   subtasks,
@@ -692,6 +693,7 @@ function HabitRow({
   onBump: (minimal?: boolean) => void;
   onEdit: () => void;
   onArchive: () => void;
+  onEditSubtask: (sub: Habit) => void;
   onReset: () => void;
   onAddSubtask: () => void;
   logs: HabitLog[];
