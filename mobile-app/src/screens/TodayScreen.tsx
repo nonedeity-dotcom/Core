@@ -367,6 +367,7 @@ export default function TodayScreen() {
     setEditSchedule(h.schedule ?? null);
     setEditScreen(h.screen ?? null);
     setEditIcon(h.icon ?? null);
+    setEditHasSubtasks(h.hasSubtasks ?? false);
   };
 
   const saveEdit = () => {
