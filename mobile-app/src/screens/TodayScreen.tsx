@@ -902,10 +902,10 @@ function HabitRow({
   </View>
   <Text style={{ fontSize: 14, color: colors.textMuted, fontWeight: "500" }}>Добавить подзадачу</Text>
 </Pressable>
+    </View>
 )}
     </View>
     </View>
-  </View> {/
   );
 }
 
