@@ -562,6 +562,7 @@ h.parentld)););
               used={h.screen ? usedFor(h.screen) : null}
               onBump={(minimal) => handleBump(h, minimal)}
               onBumpSubtask={(sub) => handleBump(sub)}
+              onEditSubtask={(sub) => startEdit(sub)}
               subtasks={mySubtasks}
               logs={allLogs}
               onAddSubtask={() => {
