@@ -648,6 +648,7 @@ function HabitRow({
   minimalDone,
   week,
   onBump,
+  onBumpSubtask,
   onEdit,
   onArchive,
   onReset,
@@ -676,6 +677,7 @@ function HabitRow({
   /** The day was closed with the small version — shown as a ring rather than a filled dot. */
   minimalDone: boolean;
   week: { count: number; target: number };
+  onBumpSubtask: (sub: Habit) => void;
   onBump: (minimal?: boolean) => void;
   onEdit: () => void;
   onArchive: () => void;
