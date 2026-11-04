@@ -91,6 +91,7 @@ const GROUPS: { id: ItemGroup; title: string; blurb: string }[] = [
 ];
 
 export default function TodayScreen() {
+  const [newSubtaskParentId, setNewSubtaskParentId] = useState<string | null>(null);
   const qc = useQueryClient();
   const today = useTodayKey();
   // Re-reads once a minute, so a window closing at 23:00 closes on the screen you are
