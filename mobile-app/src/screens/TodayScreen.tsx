@@ -425,7 +425,7 @@ export default function TodayScreen() {
       lateRule,
     });
 
-  const nowHabits = habits.filter((h) => habitGroup(h) === "now");
+  const nowHabits = habits.filter((h) => habitGroup(h) === "now" && !h.parentid);
   const deciding = habitsThatDecideTheDay(habits);
   const closed = deciding.filter((h) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h)).length;
   const required = requiredForDay(dayRule, deciding.length);
