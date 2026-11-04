@@ -886,11 +886,17 @@ function HabitRow({
   <View style={{ paddingLeft: 40, paddingRight: 16, paddingBottom: 12, marginTop: -2 }}>
     
     {/* Вертикальная линия (скрывается при редактировании) */}
-    {!editing && (
-      <View style={{ 
-        position: 'absolute', left: 24, top: -8, bottom: 36, width: 1.5, backgroundColor: colors.cardBorder, borderRadius: 1 
-      }} />
-    )}
+    {!editing && subtasks.length > 1 && (
+  <View style={{ 
+    position: 'absolute', 
+    left: 26, 
+    top: 8, 
+    bottom: 40, 
+    width: 1.5, 
+    backgroundColor: colors.cardBorder, 
+    borderRadius: 1 
+  }} />
+)}
 
     {subtasks.map(sub => {
       const isDone = logs.find(l => l.habitId === sub.id)?.done ?? false;
