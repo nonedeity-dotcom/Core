@@ -383,6 +383,7 @@ export default function TodayScreen() {
         schedule: editSchedule,
         screen: editScreen,
         icon: editIcon,
+        hasSubtasks: editHasSubtasks,
       });
     } else setEditingId(null);
   };
