@@ -708,6 +708,11 @@ function HabitRow({
   onAddSubtask: () => void;
   logs: HabitLog[];
   subtasks: Habit[];
+  editingId: string | null;
+  editDraft: string;
+  setEditDraft: (v: string) => void;
+  saveEdit: () => void;
+  setEditingId: (v: string | null) => void;
 }) {
   const target = habitTarget(habit);
   const [expanded, setExpanded] = useState(false);
@@ -736,6 +741,7 @@ function HabitRow({
         style={[
           styles.card,
           styles.cardInBlock,
+          
           closed && styles.cardChecked,
           urgent && styles.cardUrgent,
           parked && styles.cardParked,
