@@ -611,8 +611,9 @@ export default function TodayScreen() {
 
       {/* Adding is an edit, so it lives with the other edits rather than sitting under the
           list every day of the year. */}
-      {editing &&
-        (adding ? (
+      {(editing || adding) && (
+        adding ? (
+        
           <View style={[styles.card, styles.cardEditing]}>
             <TextInput
               value={newLabel}
