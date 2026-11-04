@@ -258,18 +258,33 @@ export default function TodayScreen() {
     onSettled: () => qc.invalidateQueries({ queryKey: ["habitLog"] }),
   });
 
-  const handleBump = (habit: Habit, minimal: boolean = false) => {
-  // 1. Если это подзадача
+const handleBump = (habit: Habit, minimal: boolean = false) => {
   if (habit.parentId) {
     bump.mutate({ habit, minimal });
-    const siblings = habits.filter(h => h.parentId === habit.parentId);
-    const isLast = siblings.filter(s => s.id !== habit.id).every(s => allLogs.find(l => l.habitId === s.id)?.done);
     
-    if (isLast && !minimal) {
-      const parent = habits.find(h => h.id === habit.parentId);
-      if (parent) bump.mutate({ habit: parent, minimal: false });
+    const siblings = habits.filter(h => h.parentId === habit.parentId);
+    const parent = habits.find(h => h.id === habit.parentId);
+    
+    // Проверяем: все ли подзадачи теперь выполнены (включая текущую)
+    const allSubsDone = siblings.every(s => 
+      s.id === habit.id ? true : allLogs.find(l => l.habitId === s.id)?.done
+    );
+    
+    if (allSubsDone && !minimal && parent) {
+      // Отмечаем родителя только если он ещё не отмечен
+      const parentDone = allLogs.find(l => l.habitId === parent.id)?.done;
+      if (!parentDone) {
+        bump.mutate({ habit: parent, minimal: false });
+      }
+    }
+    
+    // Если снимаем отметку с подзадачи — сбрасываем и родителя
+    const wasDone = allLogs.find(l => l.habitId === habit.id)?.done;
+    if (wasDone && parent) {
+      resetDay.mutate(parent.id);
     }
   } 
+
   // 2. Если это родитель с подзадачами
   else {
     const subs = habits.filter(h => h.parentId === habit.id);
