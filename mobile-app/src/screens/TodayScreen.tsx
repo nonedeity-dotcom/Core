@@ -691,7 +691,8 @@ function HabitRow({
   editDraft,
   setEditDraft,
   saveEdit,
-  setEditingId
+  setEditingId,
+  renderEditor,
 }: {
   habit: Habit;
   /** Сколько минут уже потрачено сегодня на то, за чем следит привычка. */
@@ -728,6 +729,7 @@ function HabitRow({
   setEditDraft: (v: string) => void;
   saveEdit: () => void;
   setEditingId: (v: string | null) => void;
+  renderEditor: (id: string) => ReactNode;
 }) {
   const target = habitTarget(habit);
   const [expanded, setExpanded] = useState(false);
