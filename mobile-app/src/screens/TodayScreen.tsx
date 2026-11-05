@@ -684,6 +684,7 @@ function HabitRow({
   onArchive,
   onReset,
   onEditSubtask,
+  onResetSubtask,
   onAddSubtask,
   logs,
   subtasks,
@@ -720,6 +721,7 @@ function HabitRow({
   onEdit: () => void;
   onArchive: () => void;
   onEditSubtask: (sub: Habit) => void;
+  onResetSubtask: (sub: Habit) => void;
   onReset: () => void;
   onAddSubtask: () => void;
   logs: HabitLog[];
@@ -735,6 +737,7 @@ function HabitRow({
   const [expanded, setExpanded] = useState(false);
   const hasSub = subtasks.length > 0;
   const doneCount = subtasks.filter(s => logs.find(l => l.habitId === s.id)?.done).length;
+  const blockedBySubs = hasSub && doneCount < subtasks.length;
   const level = habitLevel(habit);
   const perDay = perDayTarget(habit);
   const doneToday = count >= perDay;
