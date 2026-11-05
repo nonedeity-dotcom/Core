@@ -1024,6 +1024,7 @@ function HabitEditor({
   onCancel,
   hasSubtasks,
   onHasSubtasks,
+  isSubtask,
 }: {
   label: string;
   onLabel: (v: string) => void;
@@ -1051,6 +1052,7 @@ function HabitEditor({
   onCancel: () => void;
   hasSubtasks: boolean;
   onHasSubtasks: (v: boolean) => void;
+  isSubtask?: boolean;
 }) {
   const bumpCount = (delta: number) =>
     onTarget({ ...target, count: Math.min(MAX_TARGET_COUNT, Math.max(1, target.count + delta)) });
