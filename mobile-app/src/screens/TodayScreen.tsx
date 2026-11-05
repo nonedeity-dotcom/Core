@@ -889,7 +889,7 @@ function HabitRow({
         </Pressable>
       )}
 {expanded && habit.hasSubtasks && (
-  <View>
+  <View style={{ alignSelf: 'stretch', width: '100%' }}>
     {/* Лёгкая линия между привычкой и подзадачами */}
     <View style={{ height: 1, backgroundColor: colors.cardBorder, marginHorizontal: 12, opacity: 0.6 }} />
 
