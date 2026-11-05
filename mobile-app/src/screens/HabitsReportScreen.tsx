@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { View, Text, ScrollView, Pressable, StyleSheet } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -32,6 +33,8 @@ const GROUPS: { id: ItemGroup; title: string }[] = [
   { id: "extra", title: "Дополнительно" },
 ];
 
+type Row = { habit: Habit; stats: ReturnType<typeof habitStats>; standing: HabitStanding };
+
 export default function HabitsReportScreen({
   navigation,
 }: {
@@ -50,7 +53,16 @@ export default function HabitsReportScreen({
   // Monday through today — what a weekly habit's count is taken over.
   const weekDates = weekDatesThrough(today);
 
-  const rows = habits.map((habit) => {
+  // Какие родители раскрыты (вторая стрелка в строке).
+  const [openIds, setOpenIds] = useState<string[]>([]);
+  const toggle = (id: string) =>
+    setOpenIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  // Подзадачи показываются только внутри родителя, отдельной строкой их нет. Родитель в
+  // архиве пропадает из списка, и вместе с ним пропадают его подзадачи, как в чек-листе;
+  // вернёшь родителя из архива, и они вернутся с историей.
+  const isTop = (h: Habit) => !h.parentId;
+
+  const rows: Row[] = habits.map((habit): Row => {
     const excused = frozenDaysFor(habit.id, freezes, habitFreezes);
     const own = habitFreezes[habit.id] ?? [];
     return {
@@ -69,7 +81,7 @@ export default function HabitsReportScreen({
     };
   });
 
-  const urgent = rows.filter((r) => r.standing.bucket === "urgent").length;
+  const urgent = rows.filter((r) => isTop(r.habit) && r.standing.bucket === "urgent").length;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
@@ -81,7 +93,7 @@ export default function HabitsReportScreen({
 
       {GROUPS.map((group) => {
         const inGroup = rows
-          .filter((r) => habitGroup(r.habit) === group.id)
+          .filter((r) => isTop(r.habit) && habitGroup(r.habit) === group.id)
           // Stable: rank first, and the checklist's own order inside each rank.
           .sort((a, b) => standingRank(a.standing.bucket) - standingRank(b.standing.bucket));
         if (inGroup.length === 0) return null;
@@ -91,17 +103,40 @@ export default function HabitsReportScreen({
             {/* Named even when only one pile has anything in it: "Дополнительно" not
                 counting towards the day is the whole reason these are separated. */}
             <Text style={styles.groupLabel}>{group.title}</Text>
-            {inGroup.map(({ habit, stats, standing }) => (
-              <HabitRow
-                key={habit.id}
-                habit={habit}
-                streak={stats.streak}
-                unit={stats.unit}
-                week={stats.week}
-                standing={standing}
-                onPress={() => navigation.navigate("HabitReport", { habitId: habit.id, title: habit.label })}
-              />
-            ))}
+            {inGroup.map(({ habit, stats, standing }) => {
+              const subs = rows.filter((r) => r.habit.parentId === habit.id);
+              const open = openIds.includes(habit.id);
+              return (
+                <View key={habit.id}>
+                  <HabitRow
+                    habit={habit}
+                    streak={stats.streak}
+                    unit={stats.unit}
+                    week={stats.week}
+                    standing={standing}
+                    onPress={() => navigation.navigate("HabitReport", { habitId: habit.id, title: habit.label })}
+                    hasSubs={subs.length > 0}
+                    expanded={open}
+                    onToggle={() => toggle(habit.id)}
+                  />
+                  {open &&
+                    subs.map((sub) => (
+                      <HabitRow
+                        key={sub.habit.id}
+                        habit={sub.habit}
+                        streak={sub.stats.streak}
+                        unit={sub.stats.unit}
+                        week={sub.stats.week}
+                        standing={sub.standing}
+                        isSub
+                        onPress={() =>
+                          navigation.navigate("HabitReport", { habitId: sub.habit.id, title: sub.habit.label })
+                        }
+                      />
+                    ))}
+                </View>
+              );
+            })}
           </View>
         );
       })}
@@ -118,6 +153,10 @@ function HabitRow({
   week,
   standing,
   onPress,
+  hasSubs,
+  expanded,
+  onToggle,
+  isSub,
 }: {
   habit: Habit;
   streak: number;
@@ -125,6 +164,10 @@ function HabitRow({
   week: boolean[];
   standing: HabitStanding;
   onPress: () => void;
+  hasSubs?: boolean;
+  expanded?: boolean;
+  onToggle?: () => void;
+  isSub?: boolean;
 }) {
   const urgent = standing.bucket === "urgent";
   const done = standing.bucket === "done";
@@ -136,6 +179,7 @@ function HabitRow({
       accessibilityLabel={`${habit.label}: ${streak}${standing.note ? `, ${standing.note}` : ""}`}
       style={({ pressed }) => [
         styles.habitRow,
+        isSub && styles.subRow,
         urgent && styles.habitRowUrgent,
         done && styles.habitRowDone,
         pressed && styles.pressedRow,
@@ -165,7 +209,19 @@ function HabitRow({
           <View key={i} style={[styles.stripDot, day && styles.stripDotOn]} />
         ))}
       </View>
+      {/* Первая стрелка: открыть экран самой привычки (нажатие на строку делает то же). */}
       <Feather name="chevron-right" size={16} color={colors.textMuted} />
+      {/* Вторая стрелка: раскрыть подзадачи. Есть только у привычки, у которой они есть. */}
+      {hasSubs && (
+        <Pressable
+          onPress={onToggle}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? "Скрыть подзадачи" : "Показать подзадачи"}
+        >
+          <Feather name={expanded ? "chevron-up" : "chevron-down"} size={20} color={colors.textMuted} />
+        </Pressable>
+      )}
     </Pressable>
   );
 }
@@ -191,6 +247,8 @@ const styles = StyleSheet.create({
   // Finished ones stay readable but stop competing: they are at the bottom for a reason.
   habitRowDone: { opacity: 0.55 },
   pressedRow: { opacity: 0.75 },
+  // Подзадача: сдвинута вправо и чуть компактнее родителя.
+  subRow: { marginLeft: 18, paddingVertical: 10 },
   habitName: { color: colors.text, fontSize: 14, fontWeight: "500" },
   noteRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 3 },
   note: { color: colors.textMuted, fontSize: 11 },
