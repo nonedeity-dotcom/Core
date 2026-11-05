@@ -799,7 +799,7 @@ function HabitRow({
                 <Feather name={habit.icon as IconName} size={13} color={colors.textMuted} />
               )}
               <Text style={[styles.label, { flexShrink: 1 }, !tickable && styles.labelLater]}>{habit.label}</Text>
-              {habit.hasSubtasks && subtasks.length > 0 && !editing && (
+              {habit.hasSubtasks && !editing && (
 <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 'auto', paddingLeft: 10 }}>
   <Text style={{ color: colors.textMuted, fontSize: 11, marginRight: 6 }}>
     {doneCount}/{subtasks.length}
