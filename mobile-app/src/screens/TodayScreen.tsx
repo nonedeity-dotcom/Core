@@ -455,7 +455,6 @@ h.parentId));
   };
   const weeklyClosed = weeklyLevels(nowHabits, weekClosedDays);
 
-  return (
     // Один и тот же редактор для привычки и для подзадачи.
   const renderEditor = (id: string, isSubtask: boolean) => (
     <HabitEditor
@@ -485,6 +484,7 @@ h.parentId));
       isSubtask={isSubtask}
     />
   );
+  return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 20 }}>
       {/* Чек-лист в выходной не прячется: захочется — отметишь, но никто не просит.
           Спрятать список значило бы решить за человека, что в выходной он ничего не
