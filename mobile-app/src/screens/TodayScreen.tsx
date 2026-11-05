@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from "react-native";
+import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, Alert } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -132,6 +132,15 @@ const GROUPS: { id: ItemGroup; title: string; blurb: string }[] = [
   { id: "later", title: "Потом", blurb: "план на будущее, отмечать пока нечего" },
 ];
 
+/** Почему клиент отказал сделать привычку подзадачей. С экрана до этих случаев почти не дойти. */
+const MAKE_SUBTASK_ERRORS: Record<string, string> = {
+  not_found: "Привычка или её новый родитель уже не найдены — возможно, их убрали в архив.",
+  same: "Привычку нельзя сделать подзадачей самой себя.",
+  already_subtask: "Это уже подзадача.",
+  has_subtasks: "У этой привычки есть свои подзадачи — сначала разберись с ними.",
+  parent_is_subtask: "Подзадача не может быть родителем: вложенность только в один уровень.",
+};
+
 export default function TodayScreen() {
   const [newSubtaskParentId, setNewSubtaskParentId] = useState<string | null>(null);
   const qc = useQueryClient();
@@ -159,6 +168,16 @@ export default function TodayScreen() {
   const [editIcon, setEditIcon] = useState<string | null>(null);
   const [newLabel, setNewLabel] = useState("");
   const [adding, setAdding] = useState(false);
+  /** Какая привычка сейчас выбирает, внутрь какой другой переехать. null — никакая. */
+  const [movingId, setMovingId] = useState<string | null>(null);
+  /*
+   * Какие кучки раскрыты. «Ввожу сейчас» раскрыта всегда — это и есть список дня, прятать его
+   * незачем. «Дополнительно» и «Потом» по умолчанию свёрнуты: по ним день не решается, и два
+   * длинных списка под главным только отодвигали то, ради чего экран открывают.
+   */
+  const [openGroups, setOpenGroups] = useState<ItemGroup[]>([]);
+  const toggleGroup = (id: ItemGroup) =>
+    setOpenGroups((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   // One per group, and closed again the moment you leave the tab.
   const folds = useFoldSet();
   /*
@@ -453,6 +472,33 @@ export default function TodayScreen() {
     },
   });
 
+  /*
+   * Привычка → подзадача. Отметки не трогаются: они лежат под id привычки, а он не меняется,
+   * так что вся история переезжает вместе с ней. Саму запись делает клиент одним вызовом —
+   * см. api.makeSubtask, там же объяснено, почему не двумя updateHabit подряд.
+   */
+  const makeSubtask = useMutation({
+    mutationFn: (v: { id: string; parentId: string }) => api.makeSubtask(v.id, v.parentId),
+    onSuccess: (res, v) => {
+      setMovingId(null);
+      if (!res.ok) {
+        Alert.alert("Не получилось", MAKE_SUBTASK_ERRORS[res.reason] ?? "Не удалось сделать подзадачей.");
+        return;
+      }
+      // Показать, куда она уехала: раскрыть кучку родителя и самого родителя, иначе привычка
+      // просто исчезла бы из списка, а искать её пришлось бы в свёрнутом.
+      const parent = habits.find((h) => h.id === v.parentId);
+      if (parent) {
+        const g = habitGroup(parent);
+        setOpenGroups((prev) => (prev.includes(g) ? prev : [...prev, g]));
+      }
+      setExpandedFor(v.parentId, true);
+      invalidateHabits();
+      // Привычка перестала решать день сама по себе — приговор дня надо пересчитать.
+      qc.invalidateQueries({ queryKey: ["habitLog"] });
+    },
+  });
+
   const archiveHabit = useMutation({
     mutationFn: (id: string) => api.archiveHabit(id),
     onSuccess: () => {
@@ -563,6 +609,42 @@ h.parentId));
   };
   const weeklyClosed = weeklyLevels(nowHabits, weekClosedDays);
 
+  /*
+   * Форма новой привычки и форма новой подзадачи — одна и та же, различаются подсказкой и
+   * местом. Привычка добавляется сверху, а подзадача — прямо в панели своего родителя:
+   * форма наверху, пока родитель где-то посередине списка, осталась бы за краем экрана.
+   */
+  const renderNewForm = (inline: boolean) => (
+    <View style={[styles.card, styles.cardEditing, inline && { marginBottom: 0 }]}>
+      <TextInput
+        value={newLabel}
+        onChangeText={setNewLabel}
+        autoFocus
+        placeholder={newSubtaskParentId ? "Новая подзадача…" : "Новая привычка…"}
+        placeholderTextColor={colors.textMuted}
+        style={styles.editInput}
+        onSubmitEditing={submitNew}
+      />
+      <Pressable
+        onPress={submitNew}
+        style={styles.iconBtn}
+        accessibilityLabel={newSubtaskParentId ? "Сохранить подзадачу" : "Сохранить привычку"}
+      >
+        <Feather name="check" size={16} color={colors.accentGreen} />
+      </Pressable>
+      <Pressable
+        onPress={() => {
+          setAdding(false);
+          setNewSubtaskParentId(null);
+        }}
+        style={styles.iconBtn}
+        accessibilityLabel="Отменить"
+      >
+        <Feather name="x" size={16} color={colors.textMuted} />
+      </Pressable>
+    </View>
+  );
+
     // Один и тот же редактор для привычки и для подзадачи.
   const renderEditor = (id: string, isSubtask: boolean) => (
     <HabitEditor
@@ -628,6 +710,8 @@ h.parentId));
             setEditing((v) => !v);
             setEditingId(null);
             setAdding(false);
+            setNewSubtaskParentId(null);
+            setMovingId(null);
           }}
           accessibilityRole="button"
           accessibilityLabel={editing ? "Выйти из редактирования" : "Редактировать список"}
@@ -639,6 +723,29 @@ h.parentId));
           </Text>
         </Pressable>
       </View>
+
+      {/* Добавление — это правка, поэтому появляется вместе с остальными правками, но теперь
+          наверху: в длинном списке кнопку внизу приходилось искать прокруткой. Пока идёт
+          добавление подзадачи, форма стоит внутри её родителя, а здесь ничего нет. */}
+      {(editing || adding) && !(adding && newSubtaskParentId) && (
+        <View style={styles.addTop}>
+          {adding ? (
+            renderNewForm(false)
+          ) : (
+            <Pressable
+              onPress={() => {
+                setNewSubtaskParentId(null);
+                setAdding(true);
+              }}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.addRow, pressed && styles.dimmed]}
+            >
+              <Feather name="plus" size={16} color={colors.textMuted} />
+              <Text style={styles.addRowText}>Добавить привычку</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
 
       {/* Норма по уровням появляется, только если она поставлена: нули — это «уровни ничего
           не требуют», и карточка с тремя нулями значила бы ровно ничего. */}
@@ -667,6 +774,21 @@ h.parentId));
 
         const row = (h: Habit) => {
          const mySubtasks = habits.filter(sub => sub.parentId === h.id);
+         // Кандидаты в родители — любые другие верхние привычки: подзадача у подзадачи не
+         // рисуется, поэтому вложенность ровно в один уровень.
+         const parentCandidates = habits.filter((p) => !p.parentId && p.id !== h.id);
+
+         if (movingId === h.id) {
+           return (
+             <SubtaskParentPicker
+               key={h.id}
+               habit={h}
+               candidates={parentCandidates}
+               onPick={(parentId) => makeSubtask.mutate({ id: h.id, parentId })}
+               onCancel={() => setMovingId(null)}
+             />
+           );
+         }
   
          return editingId === h.id ? (
 renderEditor(h.id, false)
@@ -703,12 +825,42 @@ renderEditor(h.id, false)
               onArchive={() => confirmArchive(h)}
               onReset={() => handleResetHabit(h)}
               renderEditor={(id) => renderEditor(id, true)}
+              weekLogs={weekLogs}
+              weekDates={weekDates}
+              addForm={adding && newSubtaskParentId === h.id ? renderNewForm(true) : null}
+              // Только та, у которой своих подзадач нет, и только если есть, куда её убрать.
+              canMakeSubtask={mySubtasks.length === 0 && parentCandidates.length > 0}
+              onMakeSubtask={() => {
+                setEditingId(null);
+                setAdding(false);
+                setMovingId(h.id);
+              }}
             />
           );
         };
+        // «Ввожу сейчас» не сворачивается; остальные две по умолчанию закрыты.
+        const collapsible = group.id !== "now";
+        const groupOpen = !collapsible || openGroups.includes(group.id);
+
         return (
-          <View key={group.id} style={styles.group}>
-            <Text style={styles.groupTitle}>{group.title}</Text>
+          <View key={group.id} style={[styles.group, collapsible && !groupOpen && styles.groupCollapsed]}>
+            {collapsible ? (
+              <Pressable
+                onPress={() => toggleGroup(group.id)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: groupOpen }}
+                accessibilityLabel={`${group.title}: ${inGroup.length}`}
+                style={({ pressed }) => [styles.groupHeader, pressed && styles.dimmed]}
+              >
+                <Feather name={groupOpen ? "chevron-down" : "chevron-right"} size={15} color={colors.textMuted} />
+                <Text style={styles.groupTitle}>{group.title}</Text>
+                <Text style={styles.groupCount}>{inGroup.length}</Text>
+              </Pressable>
+            ) : (
+              <Text style={styles.groupTitle}>{group.title}</Text>
+            )}
+            {groupOpen && (
+              <>
             <Text style={styles.groupBlurb}>{group.blurb}</Text>
             {inGroup.length === 0 && <Text style={styles.groupEmpty}>пусто</Text>}
 
@@ -738,42 +890,12 @@ renderEditor(h.id, false)
                 {doneOpen && done.map(row)}
               </>
             )}
+              </>
+            )}
           </View>
         );
       })}
 
-      {/* Adding is an edit, so it lives with the other edits rather than sitting under the
-          list every day of the year. */}
-      {(editing || adding) && (
-        adding ? (
-        
-          <View style={[styles.card, styles.cardEditing]}>
-            <TextInput
-              value={newLabel}
-              onChangeText={setNewLabel}
-              autoFocus
-              placeholder={newSubtaskParentId ? "Новая подзадача…" : "Новая привычка…"}
-              placeholderTextColor={colors.textMuted}
-              style={styles.editInput}
-              onSubmitEditing={submitNew}
-            />
-            <Pressable onPress={submitNew} style={styles.iconBtn} accessibilityLabel="Сохранить привычку">
-              <Feather name="check" size={16} color={colors.accentGreen} />
-            </Pressable>
-            <Pressable onPress={() => { setAdding(false); setNewSubtaskParentId(null); }} style={styles.iconBtn} accessibilityLabel="Отменить">
-              <Feather name="x" size={16} color={colors.textMuted} />
-            </Pressable>
-          </View>
-        ) : (
-          <Pressable
-            onPress={() => setAdding(true)}
-            accessibilityRole="button"
-            style={({ pressed }) => [styles.addRow, pressed && styles.dimmed]}
-          >
-            <Feather name="plus" size={16} color={colors.textMuted} />
-            <Text style={styles.addRowText}>Добавить привычку</Text>
-          </Pressable>
-        ))}
     </ScrollView>
   );
 }
@@ -807,6 +929,11 @@ function HabitRow({
   saveEdit,
   setEditingId,
   renderEditor,
+  weekLogs,
+  weekDates,
+  addForm,
+  canMakeSubtask,
+  onMakeSubtask,
 }: {
   habit: Habit;
   /** Сколько минут уже потрачено сегодня на то, за чем следит привычка. */
@@ -848,6 +975,14 @@ function HabitRow({
   saveEdit: () => void;
   setEditingId: (v: string | null) => void;
   renderEditor: (id: string) => ReactNode;
+  /** Отметки за неделю и её дни — чтобы подзадача с недельной целью показала свой счёт. */
+  weekLogs: HabitLog[];
+  weekDates: string[];
+  /** Форма новой подзадачи вместо кнопки «Добавить подзадачу». null — показывается кнопка. */
+  addForm: ReactNode;
+  /** Можно ли превратить эту привычку в подзадачу другой. */
+  canMakeSubtask: boolean;
+  onMakeSubtask: () => void;
 }) {
   const target = habitTarget(habit);
   const hasSub = subtasks.length > 0;
@@ -995,6 +1130,15 @@ function HabitRow({
             <Pressable onPress={onEdit} style={styles.iconBtn} accessibilityLabel={`Изменить: ${habit.label}`}>
               <Feather name="edit-2" size={14} color={colors.textMuted} />
             </Pressable>
+            {canMakeSubtask && (
+              <Pressable
+                onPress={onMakeSubtask}
+                style={styles.iconBtn}
+                accessibilityLabel={`Сделать подзадачей: ${habit.label}`}
+              >
+                <Feather name="git-merge" size={14} color={colors.textMuted} />
+              </Pressable>
+            )}
             <Pressable onPress={onArchive} style={styles.iconBtn} accessibilityLabel={`Убрать в архив: ${habit.label}`}>
               <Feather name="archive" size={14} color={colors.textMuted} />
             </Pressable>
@@ -1030,6 +1174,18 @@ function HabitRow({
         }
         const isDone = logs.find(l => l.habitId === sub.id)?.done ?? false;
         const canTick = tickable && markable && !isDone;
+        // То же, что у привычки: уровень и «сколько раз». Своя цель у подзадачи есть — её
+        // задают в том же редакторе, — но в строке она нигде не показывалась.
+        const subLevel = levelChoiceOf(sub);
+        const subTarget = habitTarget(sub);
+        const subPerDay = perDayTarget(sub);
+        const subCount = logCount(logs.find(l => l.habitId === sub.id));
+        const subWeek = subTarget.kind === "weekly" ? weeklyProgress(sub, weekLogs, weekDates) : null;
+        const subFreq = subWeek
+          ? `${subWeek.count}/${subWeek.target} в неделю`
+          : subPerDay > 1
+            ? `${subCount}/${subPerDay} в день`
+            : "1 раз в день";
         return (
           // Закрытая подзадача зеленеет целиком — как закрытая привычка: и подложка с рамкой,
           // и залитый кружок, и текст, а не один значок среди серого.
@@ -1039,13 +1195,27 @@ function HabitRow({
               disabled={!canTick}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: isDone, disabled: !canTick }}
-              accessibilityLabel={sub.label}
+              accessibilityLabel={`${sub.label}: ${subFreq}`}
               style={styles.subtaskMain}
             >
               <View style={[styles.subtaskCheck, isDone && styles.subtaskCheckDone]}>
-                {isDone && <Feather name="check" size={12} color={colors.bg} />}
+                {isDone ? (
+                  <Feather name="check" size={12} color={colors.bg} />
+                ) : subPerDay > 1 ? (
+                  // Нужно несколько раз — в кружке счёт, как у привычки, иначе тап не отвечает ничем.
+                  <Text style={styles.counterText}>{subCount}</Text>
+                ) : null}
               </View>
               <Text style={[styles.subtaskLabel, isDone && styles.subtaskLabelDone]}>{sub.label}</Text>
+              {/* Справа: метка уровня и сколько раз нужно — день, неделя. */}
+              <View style={styles.subtaskMeta}>
+                {hasLevel(subLevel) && (
+                  <View style={[styles.levelTag, { backgroundColor: levelTint[subLevel] }]}>
+                    <Text style={[styles.levelTagText, { color: levelInk[subLevel] }]}>{LEVEL_SHORT[subLevel]}</Text>
+                  </View>
+                )}
+                <Text style={[styles.subtaskMetaText, isDone && styles.subtaskMetaTextDone]}>{subFreq}</Text>
+              </View>
             </Pressable>
 
             {editing && (
@@ -1071,7 +1241,7 @@ function HabitRow({
 
       {/* Кнопка добавления только в режиме «Изменить». Своя рамка и отступы со всех сторон:
           голая строка с плюсом прилипала к краю карточки и к последней подзадаче. */}
-      {editing && (
+      {addForm ?? (editing && (
         <Pressable
           onPress={onAddSubtask}
           accessibilityRole="button"
@@ -1081,7 +1251,7 @@ function HabitRow({
           <Feather name="plus" size={16} color={colors.textMuted} />
           <Text style={styles.subtaskAddText}>Добавить подзадачу</Text>
         </Pressable>
-      )}
+      ))}
   </View>
 )}
     </View>
@@ -1149,6 +1319,64 @@ function LevelQuotaBoard({
           закрыт.
         </Text>
       )}
+    </View>
+  );
+}
+
+/**
+ * Куда убрать привычку, которая становится подзадачей.
+ *
+ * Отметки остаются при ней: они записаны под её id, а он не меняется, — история переезжает
+ * вместе с привычкой, ничего не копируется. Меняется только то, где она живёт: из верхнего
+ * списка внутрь родителя. Обратного хода здесь нет, поэтому выбор в два шага — иконка в
+ * режиме правки, а потом этот список, где родителя называют прямо.
+ *
+ * Строки во всю ширину, а не чипы: названия привычек длинные, и чип длиннее строки
+ * вылезает за край, а не переносится.
+ */
+function SubtaskParentPicker({
+  habit,
+  candidates,
+  onPick,
+  onCancel,
+}: {
+  habit: Habit;
+  candidates: Habit[];
+  onPick: (parentId: string) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <View style={styles.editCard}>
+      <View style={styles.editRow}>
+        <Text style={[styles.label, { flex: 1 }]}>{`Сделать подзадачей: «${habit.label}»`}</Text>
+        <Pressable onPress={onCancel} style={styles.iconBtn} accessibilityLabel="Отменить">
+          <Feather name="x" size={16} color={colors.textMuted} />
+        </Pressable>
+      </View>
+      <Text style={styles.editNote}>
+        Выбери привычку, внутрь которой она переедет. Все отметки сохранятся — история останется как была.
+      </Text>
+      {GROUPS.map((g) => {
+        const inGroup = candidates.filter((p) => habitGroup(p) === g.id);
+        if (inGroup.length === 0) return null;
+        return (
+          <View key={g.id} style={{ gap: 6 }}>
+            <Text style={styles.editLabel}>{g.title}</Text>
+            {inGroup.map((p) => (
+              <Pressable
+                key={p.id}
+                onPress={() => onPick(p.id)}
+                accessibilityRole="button"
+                accessibilityLabel={`Внутрь: ${p.label}`}
+                style={({ pressed }) => [styles.pickRow, pressed && styles.dimmed]}
+              >
+                <Feather name="corner-down-right" size={13} color={colors.textMuted} />
+                <Text style={styles.pickRowText}>{p.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -1793,6 +2021,10 @@ const styles = StyleSheet.create({
 
   subtle: { color: colors.textMuted, fontSize: 13, flexShrink: 1 },
   group: { marginTop: 22 },
+  // Свёрнутые кучки стоят плотнее: от них видно только заголовок.
+  groupCollapsed: { marginTop: 12 },
+  groupHeader: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 4 },
+  groupCount: { color: colors.textMuted, fontSize: 11 },
   groupTitle: { color: colors.text, fontSize: 13, fontWeight: "600" },
   groupBlurb: { color: colors.textMuted, fontSize: 11, marginTop: 2, marginBottom: 10 },
   subHeading: { color: colors.textMuted, fontSize: 11, marginBottom: 6 },
@@ -1836,6 +2068,22 @@ const styles = StyleSheet.create({
   subtaskCheckDone: { backgroundColor: colors.accentGreen, borderWidth: 0 },
   subtaskLabel: { flex: 1, color: colors.text, fontSize: 15 },
   subtaskLabelDone: { color: colors.accentGreen, textDecorationLine: "line-through" },
+  // Правый край строки подзадачи: метка уровня и «сколько раз».
+  subtaskMeta: { alignItems: "flex-end", gap: 3, marginLeft: 8 },
+  subtaskMetaText: { color: colors.textMuted, fontSize: 10 },
+  subtaskMetaTextDone: { color: colors.accentGreen },
+  pickRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.bg,
+  },
+  pickRowText: { flex: 1, color: colors.text, fontSize: 14 },
   subtaskHint: { color: colors.textMuted, fontSize: 14, paddingHorizontal: 10, paddingVertical: 6 },
   subtaskAdd: {
     flexDirection: "row",
@@ -2039,11 +2287,13 @@ const styles = StyleSheet.create({
   autoTagText: { color: colors.textMuted, fontSize: 9, fontWeight: "600" },
   iconBtn: { padding: 6 },
   editInput: { flex: 1, color: colors.text, fontSize: 15, paddingVertical: 2 },
+  // Кнопка стоит наверху, под шапкой; отступ снизу отделяет её от нормы по уровням.
+  addTop: { marginTop: 12, marginBottom: 2 },
   addRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    marginTop: 16,
+    marginBottom: 8,
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderRadius: 16,
