@@ -489,7 +489,7 @@ export const api = {
     id: string,
     parentId: string,
   ): Promise<
-    | { ok: true }
+    | { ok: true; reason?: undefined }
     | { ok: false; reason: "not_found" | "same" | "already_subtask" | "has_subtasks" | "parent_is_subtask" }
   > {
     return withKeyLock(KEYS.habits, async () => {
