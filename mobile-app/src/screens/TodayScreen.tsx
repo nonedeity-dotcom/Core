@@ -772,10 +772,17 @@ function HabitRow({
           // week of three is a real thing that happened and should be recordable. What
           // stops a tap is today already being marked, which is the case where it would
           // do nothing.
-          onPress={() => tickable && markable && !doneToday && onBump()}
+          onPress={() => {
+            if (!tickable || !markable || doneToday) return;
+            if (blockedBySubs) {
+              setExpanded(true);
+              return;
+            }
+            onBump();
+          }}
           disabled={!tickable || !markable || doneToday}
           accessibilityRole={perDay > 1 ? "button" : "checkbox"}
-          accessibilityState={{ checked: closed, disabled: !tickable || !markable || doneToday }}
+          accessibilityState={{ checked: closed, disabled: !tickable || !markable || doneToday || blockedBySubs }}
           accessibilityLabel={
             weekly
               ? `${habit.label}: за неделю ${week.count} из ${week.target}`
