@@ -901,10 +901,7 @@ function HabitRow({
       )}
 {expanded && habit.hasSubtasks && (
   <View style={{ alignSelf: 'stretch', width: '100%' }}>
-    {/* Лёгкая линия между привычкой и подзадачами */}
-    <View style={{ height: 1, backgroundColor: colors.cardBorder, marginHorizontal: 12, opacity: 0.6 }} />
-
-    <View style={{ paddingLeft: 24, paddingRight: 16, paddingTop: 14, paddingBottom: 12 }}>
+<View style={{ paddingHorizontal: 10, paddingTop: 8, paddingBottom: 2 }}>
       {subtasks.map(sub => {
         // Подзадача правится в полном редакторе, на месте своей строки
         if (editingId === sub.id) {
