@@ -914,25 +914,43 @@ function HabitRow({
             </View>
           );
         }
-const isDone = logs.find(l => l.habitId === sub.id)?.done ?? false;
+const isDone = logs.find((l) => l.habitId === sub.id)?.done ?? false;
         const canTick = tickable && markable && !isDone;
         return (
-          <View key={sub.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+          <View
+            key={sub.id}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              backgroundColor: "rgba(255,255,255,0.05)",
+              borderRadius: 14,
+              paddingLeft: 12,
+              paddingRight: 6,
+              marginBottom: 8,
+            }}
+          >
             <Pressable
               onPress={() => canTick && onBumpSubtask(sub)}
               disabled={!canTick}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: isDone, disabled: !canTick }}
               accessibilityLabel={sub.label}
-              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', paddingVertical: 4 }}
+              style={{ flex: 1, flexDirection: "row", alignItems: "center", paddingVertical: 14 }}
             >
               <Feather
                 name={isDone ? "check-circle" : "circle"}
-                size={18}
+                size={22}
                 color={isDone ? colors.accentGreen : colors.textMuted}
                 style={{ marginRight: 12 }}
               />
-              <Text style={{ flex: 1, fontSize: 15, color: isDone ? colors.textMuted : colors.text, textDecorationLine: isDone ? 'line-through' : 'none' }}>
+              <Text
+                style={{
+                  flex: 1,
+                  fontSize: 15,
+                  color: isDone ? colors.textMuted : colors.text,
+                  textDecorationLine: isDone ? "line-through" : "none",
+                }}
+              >
                 {sub.label}
               </Text>
             </Pressable>
