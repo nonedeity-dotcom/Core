@@ -592,6 +592,7 @@ h.parentId));
               onEdit={() => startEdit(h)}
               onArchive={() => confirmArchive(h)}
               onReset={() => resetDay.mutate(h.id)}
+              renderEditor={(id) => renderEditor(id, true)}
             />
           );
         };
@@ -641,7 +642,7 @@ h.parentId));
               value={newLabel}
               onChangeText={setNewLabel}
               autoFocus
-              placeholder="Новая привычка…"
+              placeholder={newSubtaskParentId ? "Новая подзадача…" : "Новая привычка…"}
               placeholderTextColor={colors.textMuted}
               style={styles.editInput}
               onSubmitEditing={submitNew}
@@ -649,7 +650,7 @@ h.parentId));
             <Pressable onPress={submitNew} style={styles.iconBtn} accessibilityLabel="Сохранить привычку">
               <Feather name="check" size={16} color={colors.accentGreen} />
             </Pressable>
-            <Pressable onPress={() => setAdding(false)} style={styles.iconBtn} accessibilityLabel="Отменить">
+            <Pressable onPress={() => { setAdding(false); setNewSubtaskParentId(null); }} style={styles.iconBtn} accessibilityLabel="Отменить">
               <Feather name="x" size={16} color={colors.textMuted} />
             </Pressable>
           </View>
