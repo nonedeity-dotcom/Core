@@ -481,11 +481,10 @@ export default function TodayScreen() {
     mutationFn: (v: { id: string; parentId: string }) => api.makeSubtask(v.id, v.parentId),
     onSuccess: (res, v) => {
       setMovingId(null);
-if (!res.ok) {
-  Alert.alert("Не получилось", MAKE_SUBTASK_ERRORS[res.reason] ?? "Не удалось сделать подзадачей.");
-  return;
-}
-
+      if (!res.ok) {
+        Alert.alert("Не получилось", MAKE_SUBTASK_ERRORS[res.reason] ?? "Не удалось сделать подзадачей.");
+        return;
+      }
       // Показать, куда она уехала: раскрыть кучку родителя и самого родителя, иначе привычка
       // просто исчезла бы из списка, а искать её пришлось бы в свёрнутом.
       const parent = habits.find((h) => h.id === v.parentId);
@@ -590,10 +589,15 @@ if (!res.ok) {
     });
 
   const nowHabits = habits.filter((h) => habitGroup(h) === "now" && !h.parentId);
-  const deciding = habitsThatDecideTheDay(habits.filter (h => !
-h.parentId));
-  const closed = deciding.filter((h) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h)).length;
-  const required = requiredForDay(dayRule, deciding.length);
+  const deciding = habitsThatDecideTheDay(habits.filter((h) => !h.parentId));
+  // Подзадачи — отдельные пункты нормы дня. Родитель с подзадачами сам в счёт не идёт
+  // (он закрывается автоматически, когда готовы все подзадачи), иначе он считался бы дважды.
+  const units = deciding.flatMap((p) => {
+    const subs = habits.filter((s) => s.parentId === p.id);
+    return subs.length > 0 ? subs : [p];
+  });
+  const closed = units.filter((h) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h)).length;
+  const required = requiredForDay(dayRule, units.length);
 
   // Норма по уровням — вторая половина того же приговора дня. Считается здесь, потому что
   // здесь же стоит и первая: два числа, которые решают день, человек должен видеть рядом,
@@ -696,12 +700,12 @@ h.parentId));
           {/* Only daily habits decide a day, so the count is over those. With nothing but
               weekly ones in the pile "ни одной привычки в работе" was flatly wrong — there
               are habits there, they just are not owed today. */}
-          {deciding.length > 0
-            ? required < deciding.length
+          {units.length > 0
+            ? required < units.length
               // With a partial rule "закрыто 2 из 5" is only half the sentence — it does not
               // say whether the day is already held.
-              ? `Сегодня закрыто ${closed} из ${deciding.length} · нужно ${required}`
-              : `Сегодня закрыто ${closed} из ${deciding.length}`
+              ? `Сегодня закрыто ${closed} из ${units.length} · нужно ${required}`
+              : `Сегодня закрыто ${closed} из ${units.length}`
             : nowHabits.length > 0
               ? "В работе только недельные — день по ним не засчитывается"
               : "Ни одной привычки в работе"}
@@ -755,7 +759,7 @@ h.parentId));
         dailyClosed={dailyClosed}
         weeklyQuota={levelRule.weekly}
         weeklyClosed={weeklyClosed}
-        countMet={deciding.length > 0 && closed >= required}
+        countMet={units.length > 0 && closed >= required}
       />
 
       {GROUPS.map((group) => {
