@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -11,7 +11,6 @@ import { DEFAULT_LATE_RULE, type LateRule } from "../lib/habitSchedule";
 import { dayOffReason, isDayOff } from "../lib/dayOff";
 import { plural } from "../lib/plural";
 import {
-  DEFAULT_LEVEL,
   LEVELS,
   LEVEL_LABELS,
   LEVEL_SHORT,
@@ -84,6 +83,49 @@ const DEFAULT_SCREEN_HABIT_LIMIT_MIN = 120;
 const DEFAULT_SCREEN_HABIT_MINIMUM_MIN = 20;
 const MAX_SCREEN_HABIT_LIMIT_MIN = 16 * 60;
 
+/** Один шаг отметки: сколько раз и с каким вариантом. Несколько шагов идут одной мутацией. */
+type BumpStep = { habit: Habit; minimal?: boolean; times?: number };
+
+/**
+ * Все записи отметок — нажатие, закрытие родителя, сброс — идут через одну очередь.
+ *
+ * Раньше каждая мутация ходила на сервер сама по себе. Сбросил подзадачу и тут же отметил
+ * её снова — два запроса обгоняли друг друга: отметка могла дойти раньше сброса и тут же
+ * им стереться. На экране это выглядело как «родитель зелёный, а подзадача не выполнена».
+ * Очередь держит порядок записей ровно таким, каким были нажатия.
+ */
+let writeQueue: Promise<unknown> = Promise.resolve();
+function enqueueWrite<T>(task: () => Promise<T>): Promise<T> {
+  const run = writeQueue.then(task);
+  // Упавшая запись не должна заклинивать очередь для следующих.
+  writeQueue = run.catch(() => undefined);
+  return run;
+}
+
+/**
+ * «Без уровня» — привычка не участвует в норме по уровням и метки не показывает.
+ * Это не уровень из LEVELS (те считаются в норме), а отдельное значение, поэтому оно
+ * живёт здесь, а не в списке, по которому строятся чипы нормы.
+ */
+const NO_LEVEL = "none";
+type LevelChoice = HabitLevel | typeof NO_LEVEL;
+const hasLevel = (l: LevelChoice): l is HabitLevel => l !== NO_LEVEL;
+
+/**
+ * Уровень привычки так, как его выбирают в редакторе и рисуют в строке.
+ *
+ * «Без уровня» — состояние по умолчанию: у привычки, которой уровень не ставили, поле пустое,
+ * и редактор открывается на «Без уровня», а в строке нет метки. Раньше туда подставлялся
+ * уровень «по умолчанию» из habitLevel, и «ничего не отображать» было не выбрать — после
+ * сохранения метка возвращалась. Смотрим на сохранённое значение: не из LEVELS — значит,
+ * без уровня.
+ */
+const levelChoiceOf = (h: Habit): LevelChoice => {
+  const raw = (h as unknown as { level?: string | null }).level;
+  if (!raw || !(LEVELS as readonly string[]).includes(raw)) return NO_LEVEL;
+  return habitLevel(h) as LevelChoice;
+};
+
 const GROUPS: { id: ItemGroup; title: string; blurb: string }[] = [
   { id: "now", title: "Ввожу сейчас", blurb: "по ним засчитывается день — держи этот список коротким" },
   { id: "extra", title: "Дополнительно", blurb: "можно отмечать, на зачёт дня не влияет" },
@@ -108,7 +150,7 @@ export default function TodayScreen() {
   const [editDraft, setEditDraft] = useState("");
   const [editMinimal, setEditMinimal] = useState("");
   const [editGroup, setEditGroup] = useState<ItemGroup>("now");
-  const [editLevel, setEditLevel] = useState<HabitLevel>(DEFAULT_LEVEL);
+  const [editLevel, setEditLevel] = useState<LevelChoice>(NO_LEVEL);
   const [editTarget, setEditTarget] = useState<HabitTarget>({ kind: "daily", count: 1 });
   const [editSchedule, setEditSchedule] = useState<HabitSchedule | null>(null);
   /** Правило «считать из Creker». null — привычка отмечается руками, как все остальные. */
@@ -119,6 +161,17 @@ export default function TodayScreen() {
   const [adding, setAdding] = useState(false);
   // One per group, and closed again the moment you leave the tab.
   const folds = useFoldSet();
+  /*
+   * Какие привычки раскрыты (показывают подзадачи) — хранится здесь, а не в самой строке.
+   *
+   * Строка переезжает между «Осталось» и «Выполнено», когда закрывается последняя подзадача
+   * или когда её сбрасывают, и при переезде пересоздаётся. Состояние внутри строки при этом
+   * терялось: список подзадач схлопывался сам, «на секунду что-то происходило». Здесь оно
+   * переживает любые переезды.
+   */
+  const [expandedIds, setExpandedIds] = useState<string[]>([]);
+  const setExpandedFor = (id: string, open: boolean) =>
+    setExpandedIds((prev) => (open ? (prev.includes(id) ? prev : [...prev, id]) : prev.filter((x) => x !== id)));
 
   const { data: habits = [] } = useQuery<Habit[]>({
     queryKey: ["habits"],
@@ -200,6 +253,24 @@ export default function TodayScreen() {
   const invalidateHabits = () => qc.invalidateQueries({ queryKey: ["habits"] });
 
   /*
+   * Сколько записей отметок сейчас в полёте.
+   *
+   * Перезагрузка нужна один раз — когда записано всё. Если каждая запись перезагружала сама,
+   * то перезагрузка первой приходила со старыми данными, пока вторая ещё писалась, и
+   * затирала оптимистичное состояние: на секунду всё откатывалось и прыгало обратно.
+   * Теперь перезагружает только последняя. Она же заодно и откатывает то, что сервер
+   * не принял, — отдельный откат по снимку при нескольких записях сам бы ломал картину.
+   */
+  const pendingWrites = useRef(0);
+  const finishWrite = () => {
+    pendingWrites.current = Math.max(0, pendingWrites.current - 1);
+    if (pendingWrites.current > 0) return Promise.resolve();
+    // The whole habitLog prefix: the report keeps its own week and streak queries, and
+    // ticking here used to leave them showing yesterday's numbers.
+    return qc.invalidateQueries({ queryKey: ["habitLog"] });
+  };
+
+  /*
    * Пересчёт идёт и тогда, когда правило только что поменяли.
    *
    * Сначала он смотрел лишь на число привычек и на дату — и привычка, которой прямо сейчас
@@ -228,34 +299,66 @@ export default function TodayScreen() {
    * complaint about the old checkbox, where the same tap that marked a habit done also
    * un-did it. Correcting a mis-tap lives in edit mode instead.
    */
+  /*
+   * Подзадача и родитель закрываются ОДНОЙ мутацией, а запросы идут по очереди.
+   *
+   * Раньше это были два отдельных `bump.mutate` подряд: первый уже на сервере и сразу
+   * запускал перезагрузку отметок, пока второй ещё летел. Перезагрузка приходила со
+   * старыми данными и затирала оптимистичную отметку — родитель горел зелёным, а
+   * подзадача писала «не выполнена». Теперь кэш обновляется за один раз, перезагрузка
+   * одна и только после того, как всё записано.
+   */
   const bump = useMutation({
-    mutationFn: ({ habit, minimal }: { habit: Habit; minimal?: boolean }) =>
-      api.bumpHabit(habit.id, today, perDayTarget(habit), minimal ?? false),
+    mutationFn: (steps: BumpStep[]) =>
+      enqueueWrite(async () => {
+        for (const { habit, minimal, times = 1 } of steps) {
+          for (let i = 0; i < times; i++) {
+            await api.bumpHabit(habit.id, today, perDayTarget(habit), minimal ?? false);
+          }
+        }
+      }),
     // Optimistic, so the number moves under the finger instead of after a round trip.
-    onMutate: async ({ habit, minimal }) => {
+    onMutate: async (steps) => {
+      pendingWrites.current += 1;
       await qc.cancelQueries({ queryKey: ["habitLog", today] });
       const prev = qc.getQueryData<HabitLog[]>(["habitLog", today]) || [];
-      const target = perDayTarget(habit);
-      const current = logCount(prev.find((l) => l.habitId === habit.id));
-      const next = Math.min(target, current + 1);
-      const done = next >= target;
-      const rows = prev.some((l) => l.habitId === habit.id)
-        ? prev.map((l) => (l.habitId === habit.id ? { ...l, count: next, done, minimal: done && !!minimal } : l))
-        : [...prev, { id: "temp", habitId: habit.id, date: today, count: next, done, minimal: done && !!minimal }];
+      let rows = prev;
+      for (const { habit, minimal, times = 1 } of steps) {
+        const target = perDayTarget(habit);
+        const current = logCount(rows.find((l) => l.habitId === habit.id));
+        const next = Math.min(target, current + times);
+        const done = next >= target;
+        rows = rows.some((l) => l.habitId === habit.id)
+          ? rows.map((l) => (l.habitId === habit.id ? { ...l, count: next, done, minimal: done && !!minimal } : l))
+          : [...rows, { id: "temp", habitId: habit.id, date: today, count: next, done, minimal: done && !!minimal }];
+      }
       qc.setQueryData(["habitLog", today], rows);
-      return { prev };
     },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) qc.setQueryData(["habitLog", today], ctx.prev);
-    },
-    // The whole habitLog prefix: the report keeps its own week and streak queries, and
-    // ticking here used to leave them showing yesterday's numbers.
-    onSettled: () => qc.invalidateQueries({ queryKey: ["habitLog"] }),
+    onSettled: finishWrite,
   });
 
+  /*
+   * Сброс за сегодня — тоже оптимистичный и тоже одной мутацией на всех.
+   *
+   * Без оптимизма после нажатия секунду ничего не менялось, а потом всё прыгало разом:
+   * строка оставалась «выполненной», пока не придёт перезагрузка. Теперь отметки
+   * пропадают сразу, а если сервер откажет — возвращаются.
+   */
   const resetDay = useMutation({
-    mutationFn: (habitId: string) => api.resetHabitDay(habitId, today),
-    onSettled: () => qc.invalidateQueries({ queryKey: ["habitLog"] }),
+    mutationFn: (habitIds: string[]) =>
+      enqueueWrite(async () => {
+        for (const id of habitIds) await api.resetHabitDay(id, today);
+      }),
+    onMutate: async (habitIds) => {
+      pendingWrites.current += 1;
+      await qc.cancelQueries({ queryKey: ["habitLog", today] });
+      const prev = qc.getQueryData<HabitLog[]>(["habitLog", today]) || [];
+      qc.setQueryData(
+        ["habitLog", today],
+        prev.filter((l) => !habitIds.includes(l.habitId)),
+      );
+    },
+    onSettled: finishWrite,
   });
 
 // Отметка берётся только за сегодня: в allLogs лежат 4 месяца, и find вернул бы самую старую запись.
@@ -267,15 +370,20 @@ export default function TodayScreen() {
       // Уже отмечена — в обычном режиме не снимается
       if (isDoneToday(habit.id)) return;
 
-      bump.mutate({ habit, minimal: false });
+      const steps: BumpStep[] = [{ habit, minimal: false }];
 
-      // Остальные подзадачи тоже готовы — родитель закрывается сам
+      // Остальные подзадачи тоже готовы — родитель закрывается сам. Если у самой подзадачи
+      // цель больше одного раза, этот тап её ещё не закрывает — тогда и родителю рано.
       const parent = habits.find((h) => h.id === habit.parentId);
       const siblings = habits.filter((h) => h.parentId === habit.parentId);
+      const closesThis = logCount(logs.find((l) => l.habitId === habit.id)) + 1 >= perDayTarget(habit);
       const othersDone = siblings.every((s) => s.id === habit.id || isDoneToday(s.id));
-      if (othersDone && parent && !isDoneToday(parent.id)) {
-        bump.mutate({ habit: parent, minimal: false });
+      if (closesThis && othersDone && parent && !isDoneToday(parent.id)) {
+        // Родитель добирается до своей цели целиком, а не на один шаг.
+        const left = perDayTarget(parent) - logCount(logs.find((l) => l.habitId === parent.id));
+        steps.push({ habit: parent, minimal: false, times: Math.max(1, left) });
       }
+      bump.mutate(steps);
       return;
     }
 
@@ -283,24 +391,23 @@ export default function TodayScreen() {
     const subs = habits.filter((h) => h.parentId === habit.id);
     if (subs.length > 0 && !subs.every((s) => isDoneToday(s.id))) return;
 
-    bump.mutate({ habit, minimal });
+    bump.mutate([{ habit, minimal }]);
   };
 
   // Сброс подзадачи в режиме «Изменить»; закрытый родитель тоже сбрасывается
   const handleResetSubtask = (sub: Habit) => {
-    resetDay.mutate(sub.id);
+    const ids = [sub.id];
     const parent = habits.find((h) => h.id === sub.parentId);
-    if (parent && logCount(logs.find((l) => l.habitId === parent.id)) > 0) {
-      resetDay.mutate(parent.id);
-    }
+    if (parent && logCount(logs.find((l) => l.habitId === parent.id)) > 0) ids.push(parent.id);
+    resetDay.mutate(ids);
   };
 
   // Сброс привычки за сегодня; у родителя сбрасываются и подзадачи
   const handleResetHabit = (h: Habit) => {
-    habits
+    const ids = habits
       .filter((s) => s.parentId === h.id && logCount(logs.find((l) => l.habitId === s.id)) > 0)
-      .forEach((s) => resetDay.mutate(s.id));
-    resetDay.mutate(h.id);
+      .map((s) => s.id);
+    resetDay.mutate([...ids, h.id]);
   };
   const addHabit = useMutation({
   // Теперь принимаем объект, чтобы можно было передать parentId
@@ -371,7 +478,7 @@ export default function TodayScreen() {
     setEditDraft(h.label);
     setEditMinimal(h.minimal ?? "");
     setEditGroup(habitGroup(h));
-    setEditLevel(habitLevel(h));
+    setEditLevel(levelChoiceOf(h));
     setEditTarget(habitTarget(h));
     setEditSchedule(h.schedule ?? null);
     setEditScreen(h.screen ?? null);
@@ -387,7 +494,8 @@ export default function TodayScreen() {
         // Empty means "no minimal version", not an empty string to render.
         minimal: editMinimal.trim() || null,
         group: editGroup,
-        level: editLevel,
+        // «Без уровня» — отдельное значение, которого может не быть в типе HabitLevel из lib/level.
+        level: editLevel as HabitLevel,
         target: editTarget,
         schedule: editSchedule,
         screen: editScreen,
@@ -585,6 +693,8 @@ renderEditor(h.id, false)
               onResetSubtask={handleResetSubtask}
               subtasks={mySubtasks}
               logs={logs}
+              expanded={expandedIds.includes(h.id)}
+              setExpanded={(open) => setExpandedFor(h.id, open)}
               onAddSubtask={() => {
               setNewSubtaskParentId(h.id);
               setAdding(true);
@@ -689,6 +799,8 @@ function HabitRow({
   onAddSubtask,
   logs,
   subtasks,
+  expanded,
+  setExpanded,
   editingId,
   editDraft,
   setEditDraft,
@@ -727,6 +839,9 @@ function HabitRow({
   onAddSubtask: () => void;
   logs: HabitLog[];
   subtasks: Habit[];
+  /** Раскрыт ли список подзадач. Живёт в экране, чтобы переезд строки между группами его не терял. */
+  expanded: boolean;
+  setExpanded: (open: boolean) => void;
   editingId: string | null;
   editDraft: string;
   setEditDraft: (v: string) => void;
@@ -735,11 +850,10 @@ function HabitRow({
   renderEditor: (id: string) => ReactNode;
 }) {
   const target = habitTarget(habit);
-  const [expanded, setExpanded] = useState(false);
   const hasSub = subtasks.length > 0;
   const doneCount = subtasks.filter(s => logs.find(l => l.habitId === s.id)?.done).length;
   const blockedBySubs = hasSub && doneCount < subtasks.length;
-  const level = habitLevel(habit);
+  const level = levelChoiceOf(habit);
   const perDay = perDayTarget(habit);
   const doneToday = count >= perDay;
   const weekly = target.kind === "weekly";
@@ -832,9 +946,11 @@ function HabitRow({
               {/* Метка уровня стоит у названия, а не в конце строки: уровень — свойство самой
                   привычки, и читается он вместе с ней. Приглушённая заливка на то и нужна,
                   чтобы метка была видна, но не спорила с названием за взгляд. */}
-              <View style={[styles.levelTag, { backgroundColor: levelTint[level] }]}>
-                <Text style={[styles.levelTagText, { color: levelInk[level] }]}>{LEVEL_SHORT[level]}</Text>
-              </View>
+              {hasLevel(level) && (
+                <View style={[styles.levelTag, { backgroundColor: levelTint[level] }]}>
+                  <Text style={[styles.levelTagText, { color: levelInk[level] }]}>{LEVEL_SHORT[level]}</Text>
+                </View>
+              )}
               {habit.auto === "screentime" && (
                 <View style={styles.autoTag}>
                   <Feather name="smartphone" size={9} color={colors.textMuted} />
@@ -900,56 +1016,36 @@ function HabitRow({
         </Pressable>
       )}
 {expanded && habit.hasSubtasks && (
-  <View style={{ alignSelf: 'stretch', width: '100%' }}>
-<View style={{ paddingHorizontal: 10, paddingTop: 8, paddingBottom: 2 }}>
+  /* Подзадачи лежат на своей полупрозрачной подложке внутри карточки родителя: она читается
+     как «внутри», а не как ещё одна карточка, и не перекрашивается вместе с родителем. */
+  <View style={styles.subtaskPanel}>
       {subtasks.map(sub => {
         // Подзадача правится в полном редакторе, на месте своей строки
         if (editingId === sub.id) {
           return (
-            <View key={sub.id} style={{ marginBottom: 12 }}>
+            <View key={sub.id}>
               {renderEditor(sub.id)}
             </View>
           );
         }
-const isDone = logs.find((l) => l.habitId === sub.id)?.done ?? false;
+        const isDone = logs.find(l => l.habitId === sub.id)?.done ?? false;
         const canTick = tickable && markable && !isDone;
         return (
-          <View
-            key={sub.id}
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              backgroundColor: "rgba(255,255,255,0.05)",
-              borderRadius: 14,
-              paddingLeft: 12,
-              paddingRight: 6,
-              marginBottom: 8,
-            }}
-          >
+          // Закрытая подзадача зеленеет целиком — как закрытая привычка: и подложка с рамкой,
+          // и залитый кружок, и текст, а не один значок среди серого.
+          <View key={sub.id} style={[styles.subtaskRow, isDone && styles.subtaskRowDone]}>
             <Pressable
               onPress={() => canTick && onBumpSubtask(sub)}
               disabled={!canTick}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: isDone, disabled: !canTick }}
               accessibilityLabel={sub.label}
-              style={{ flex: 1, flexDirection: "row", alignItems: "center", paddingVertical: 14 }}
+              style={styles.subtaskMain}
             >
-              <Feather
-                name={isDone ? "check-circle" : "circle"}
-                size={22}
-                color={isDone ? colors.accentGreen : colors.textMuted}
-                style={{ marginRight: 12 }}
-              />
-              <Text
-                style={{
-                  flex: 1,
-                  fontSize: 15,
-                  color: isDone ? colors.textMuted : colors.text,
-                  textDecorationLine: isDone ? "line-through" : "none",
-                }}
-              >
-                {sub.label}
-              </Text>
+              <View style={[styles.subtaskCheck, isDone && styles.subtaskCheckDone]}>
+                {isDone && <Feather name="check" size={12} color={colors.bg} />}
+              </View>
+              <Text style={[styles.subtaskLabel, isDone && styles.subtaskLabelDone]}>{sub.label}</Text>
             </Pressable>
 
             {editing && (
@@ -970,19 +1066,22 @@ const isDone = logs.find((l) => l.habitId === sub.id)?.done ?? false;
 
       {/* Подзадач нет и режим «Изменить» выключен: подсказка */}
       {!hasSub && !editing && (
-        <Text style={{ fontSize: 14, color: colors.textMuted }}>
-          Нажми «Изменить», чтобы добавить подзадачу
-        </Text>
+        <Text style={styles.subtaskHint}>Нажми «Изменить», чтобы добавить подзадачу</Text>
       )}
 
-      {/* Кнопка добавления только в режиме «Изменить» */}
+      {/* Кнопка добавления только в режиме «Изменить». Своя рамка и отступы со всех сторон:
+          голая строка с плюсом прилипала к краю карточки и к последней подзадаче. */}
       {editing && (
-        <Pressable onPress={onAddSubtask} style={{ flexDirection: 'row', alignItems: 'center', minHeight: 24 }}>
-          <Feather name="plus" size={18} color={colors.textMuted} style={{ marginRight: 12 }} />
-          <Text style={{ fontSize: 14, color: colors.textMuted, fontWeight: '500' }}>Добавить подзадачу</Text>
+        <Pressable
+          onPress={onAddSubtask}
+          accessibilityRole="button"
+          accessibilityLabel={`Добавить подзадачу: ${habit.label}`}
+          style={({ pressed }) => [styles.subtaskAdd, pressed && styles.dimmed]}
+        >
+          <Feather name="plus" size={16} color={colors.textMuted} />
+          <Text style={styles.subtaskAddText}>Добавить подзадачу</Text>
         </Pressable>
       )}
-    </View>
   </View>
 )}
     </View>
@@ -1085,8 +1184,8 @@ function HabitEditor({
   onMinimal: (v: string) => void;
   group: ItemGroup;
   onGroup: (v: ItemGroup) => void;
-  level: HabitLevel;
-  onLevel: (v: HabitLevel) => void;
+  level: LevelChoice;
+  onLevel: (v: LevelChoice) => void;
   target: HabitTarget;
   onTarget: (v: HabitTarget) => void;
   /** null when the habit can be done whenever, which is the default and usually the answer. */
@@ -1169,26 +1268,40 @@ function HabitEditor({
       </View>
       <Text style={styles.editHint}>Новые наборы значков — за ядра, в «Наградах».</Text>
 
-      <Text style={styles.editLabel}>Куда</Text>
-      <View style={styles.chipRow}>
-        {GROUPS.map((g) => (
-          <Pressable
-            key={g.id}
-            onPress={() => onGroup(g.id)}
-            accessibilityRole="radio"
-            accessibilityState={{ selected: group === g.id }}
-            style={({ pressed }) => [styles.chip, group === g.id && styles.chipOn, pressed && styles.dimmed]}
-          >
-            <Text style={[styles.chipText, group === g.id && styles.chipTextOn]}>{g.title}</Text>
-          </Pressable>
-        ))}
-      </View>
+      {/* У подзадачи «куда» нет: она живёт внутри родителя и едет туда же, куда он. */}
+      {!isSubtask && (
+        <>
+          <Text style={styles.editLabel}>Куда</Text>
+          <View style={styles.chipRow}>
+            {GROUPS.map((g) => (
+              <Pressable
+                key={g.id}
+                onPress={() => onGroup(g.id)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: group === g.id }}
+                style={({ pressed }) => [styles.chip, group === g.id && styles.chipOn, pressed && styles.dimmed]}
+              >
+                <Text style={[styles.chipText, group === g.id && styles.chipTextOn]}>{g.title}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </>
+      )}
 
       {/* Уровень — не про то, сколько времени это занимает, а про то, сколько стоит усилия.
           Нужен ради нормы: «каждый день одна сложная» — требование, которое общим числом
           привычек не выразить. Пока норма нулевая, уровень просто виден и ничего не решает. */}
       <Text style={styles.editLabel}>Уровень</Text>
       <View style={styles.chipRow}>
+        {/* Первым стоит «Без уровня»: метки нет, в норму по уровням привычка не идёт. */}
+        <Pressable
+          onPress={() => onLevel(NO_LEVEL)}
+          accessibilityRole="radio"
+          accessibilityState={{ selected: level === NO_LEVEL }}
+          style={({ pressed }) => [styles.chip, level === NO_LEVEL && styles.chipOn, pressed && styles.dimmed]}
+        >
+          <Text style={[styles.chipText, level === NO_LEVEL && styles.chipTextOn]}>Без уровня</Text>
+        </Pressable>
         {LEVELS.map((l) => (
           <Pressable
             key={l}
@@ -1256,7 +1369,7 @@ function HabitEditor({
     hasSubtasks && styles.checkboxChecked,
     { marginTop: 0 }
   ]}>
-
+    {hasSubtasks && <Feather name="check" size={12} color={colors.bg} />}
   </View>
   
   <View style={{ flex: 1, marginLeft: 8 }}>
@@ -1688,6 +1801,54 @@ const styles = StyleSheet.create({
   groupEmpty: { color: colors.textMuted, fontSize: 12, fontStyle: "italic", marginBottom: 10 },
 
   habitBlock: { marginBottom: 10 },
+
+  // Подзадачи: прозрачная подложка внутри карточки родителя. Отступ по бокам и снизу —
+  // чтобы ни строки, ни кнопка добавления не липли к краю карточки.
+  subtaskPanel: {
+    alignSelf: "stretch",
+    marginHorizontal: 12,
+    marginBottom: 12,
+    padding: 8,
+    gap: 6,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  subtaskRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  // Тот же зелёный, что у закрытой привычки (cardChecked).
+  subtaskRowDone: { backgroundColor: "rgba(143,184,154,0.12)", borderColor: colors.accentGreenDark },
+  subtaskMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10 },
+  subtaskCheck: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: "#4a5058",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  subtaskCheckDone: { backgroundColor: colors.accentGreen, borderWidth: 0 },
+  subtaskLabel: { flex: 1, color: colors.text, fontSize: 15 },
+  subtaskLabelDone: { color: colors.accentGreen, textDecorationLine: "line-through" },
+  subtaskHint: { color: colors.textMuted, fontSize: 14, paddingHorizontal: 10, paddingVertical: 6 },
+  subtaskAdd: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderStyle: "dashed",
+  },
+  subtaskAddText: { color: colors.textMuted, fontSize: 14, fontWeight: "500" },
   editCard: {
     backgroundColor: colors.card,
     borderRadius: 16,
