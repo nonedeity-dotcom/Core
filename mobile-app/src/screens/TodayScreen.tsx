@@ -1191,6 +1191,7 @@ function HabitEditor({
 
       <ScheduleFields target={target} schedule={schedule} onSchedule={onSchedule} />
       <ScreenFields screen={screen} onScreen={onScreen} apps={apps} />
+      {!isSubtask && (
       <Pressable 
   onPress={() => onHasSubtasks(!hasSubtasks)} 
   style={[styles.editRow, { marginTop: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.cardBorder }]}
@@ -1208,6 +1209,7 @@ function HabitEditor({
     <Text style={styles.hint}>Разбить на шаги</Text>
   </View>
 </Pressable>
+      )}
     </View>
   );
 }
