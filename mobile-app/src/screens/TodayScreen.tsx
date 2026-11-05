@@ -582,6 +582,7 @@ renderEditor(h.id, false)
               onBump={(minimal) => handleBump(h, minimal)}
               onBumpSubtask={(sub) => handleBump(sub)}
               onEditSubtask={(sub) => startEdit(sub)}
+              onResetSubtask={handleResetSubtask}
               subtasks={mySubtasks}
               logs={logs}
               onAddSubtask={() => {
