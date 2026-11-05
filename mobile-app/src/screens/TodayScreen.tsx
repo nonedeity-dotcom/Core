@@ -462,6 +462,35 @@ h.parentId));
   const weeklyClosed = weeklyLevels(nowHabits, weekClosedDays);
 
   return (
+    // Один и тот же редактор для привычки и для подзадачи.
+  const renderEditor = (id: string, isSubtask: boolean) => (
+    <HabitEditor
+      key={id}
+      label={editDraft}
+      onLabel={setEditDraft}
+      minimal={editMinimal}
+      onMinimal={setEditMinimal}
+      group={editGroup}
+      onGroup={setEditGroup}
+      level={editLevel}
+      onLevel={setEditLevel}
+      target={editTarget}
+      onTarget={setEditTarget}
+      schedule={editSchedule}
+      onSchedule={setEditSchedule}
+      screen={editScreen}
+      onScreen={setEditScreen}
+      apps={appChoices}
+      icon={editIcon}
+      onIcon={setEditIcon}
+      icons={iconChoices}
+      onSave={saveEdit}
+      onCancel={() => setEditingId(null)}
+      hasSubtasks={editHasSubtasks}
+      onHasSubtasks={setEditHasSubtasks}
+      isSubtask={isSubtask}
+    />
+  );
     <ScrollView style={styles.container} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 20 }}>
       {/* Чек-лист в выходной не прячется: захочется — отметишь, но никто не просит.
           Спрятать список значило бы решить за человека, что в выходной он ничего не
@@ -538,31 +567,7 @@ h.parentId));
          const mySubtasks = habits.filter(sub => sub.parentId === h.id);
   
          return editingId === h.id ? (
-            <HabitEditor
-              key={h.id}
-              label={editDraft}
-              onLabel={setEditDraft}
-              minimal={editMinimal}
-              onMinimal={setEditMinimal}
-              group={editGroup}
-              onGroup={setEditGroup}
-              level={editLevel}
-              onLevel={setEditLevel}
-              target={editTarget}
-              onTarget={setEditTarget}
-              schedule={editSchedule}
-              onSchedule={setEditSchedule}
-              screen={editScreen}
-              onScreen={setEditScreen}
-              apps={appChoices}
-              icon={editIcon}
-              onIcon={setEditIcon}
-              icons={iconChoices}
-              onSave={saveEdit}
-              onCancel={() => setEditingId(null)}
-              hasSubtasks={editHasSubtasks}
-              onHasSubtasks={setEditHasSubtasks}
-            />
+renderEditor(h.id, false)
           ) : (
             <HabitRow
               key={h.id}
