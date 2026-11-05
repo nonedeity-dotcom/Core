@@ -903,22 +903,40 @@ function HabitRow({
             </View>
           );
         }
-        const isDone = logs.find(l => l.habitId === sub.id)?.done ?? false;
+const isDone = logs.find(l => l.habitId === sub.id)?.done ?? false;
+        const canTick = tickable && markable && !isDone;
         return (
           <View key={sub.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-            <Pressable onPress={() => onBumpSubtask(sub)} style={{ marginRight: 12 }}>
-              <Feather name={isDone ? "check-circle" : "circle"} size={18} color={isDone ? colors.accentGreen : colors.textMuted} />
+            <Pressable
+              onPress={() => canTick && onBumpSubtask(sub)}
+              disabled={!canTick}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: isDone, disabled: !canTick }}
+              accessibilityLabel={sub.label}
+              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', paddingVertical: 4 }}
+            >
+              <Feather
+                name={isDone ? "check-circle" : "circle"}
+                size={18}
+                color={isDone ? colors.accentGreen : colors.textMuted}
+                style={{ marginRight: 12 }}
+              />
+              <Text style={{ flex: 1, fontSize: 15, color: isDone ? colors.textMuted : colors.text, textDecorationLine: isDone ? 'line-through' : 'none' }}>
+                {sub.label}
+              </Text>
             </Pressable>
 
-            <Text style={{ flex: 1, fontSize: 15, color: isDone ? colors.textMuted : colors.text, textDecorationLine: isDone ? 'line-through' : 'none' }}>
-              {sub.label}
-            </Text>
-
-            {/* Карандаш только в режиме «Изменить» */}
             {editing && (
-              <Pressable onPress={() => onEditSubtask(sub)} style={{ padding: 4 }}>
-                <Feather name="edit-2" size={16} color={colors.textMuted} />
-              </Pressable>
+              <>
+                {isDone && (
+                  <Pressable onPress={() => onResetSubtask(sub)} style={styles.iconBtn} accessibilityLabel={`Сбросить за сегодня: ${sub.label}`}>
+                    <Feather name="rotate-ccw" size={14} color={colors.textMuted} />
+                  </Pressable>
+                )}
+                <Pressable onPress={() => onEditSubtask(sub)} style={styles.iconBtn} accessibilityLabel={`Изменить: ${sub.label}`}>
+                  <Feather name="edit-2" size={14} color={colors.textMuted} />
+                </Pressable>
+              </>
             )}
           </View>
         );
