@@ -1241,7 +1241,7 @@ function HabitEditor({
     hasSubtasks && styles.checkboxChecked,
     { marginTop: 0 }
   ]}>
-    {hasSubtasks && <Feather name="check" size={12} color={colors.bg} />}
+
   </View>
   
   <View style={{ flex: 1, marginLeft: 8 }}>
