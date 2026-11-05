@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Core Test",
+    "name": "Core",
     "slug": "no-burnout",
     "scheme": "no-burnout",
     "version": "1.0.0",
@@ -14,10 +14,10 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.yourcompany.noburnout.test"
+      "bundleIdentifier": "com.yourcompany.noburnout"
     },
     "android": {
-      "package": "com.yourcompany.noburnout.test",
+      "package": "com.yourcompany.noburnout",
       "versionCode": 1,
       "permissions": [
         "NOTIFICATIONS",
