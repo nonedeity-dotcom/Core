@@ -887,50 +887,57 @@ function HabitRow({
         </Pressable>
       )}
 {expanded && habit.hasSubtasks && (
-  <View style={{ paddingLeft: 40, paddingRight: 16, paddingBottom: 12, marginTop: -2 }}>
-    
-    {/* Вертикальная линия (скрывается при редактировании) */}
-    {!editing && subtasks.length > 1 && (
-  <View style={{ 
-    position: 'absolute', 
-    left: 26, 
-    top: 8, 
-    bottom: 40, 
-    width: 1.5, 
-    backgroundColor: colors.cardBorder, 
-    borderRadius: 1 
-  }} />
-)}
+  <View>
+    {/* Лёгкая линия между привычкой и подзадачами */}
+    <View style={{ height: 1, backgroundColor: colors.cardBorder, marginHorizontal: 12, opacity: 0.6 }} />
 
-    {subtasks.map(sub => {
-      const isDone = logs.find(l => l.habitId === sub.id)?.done ?? false;
-      return (
-        <View key={sub.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-          <Pressable onPress={() => onBumpSubtask(sub)} style={{ marginRight: 12, backgroundColor: colors.card, zIndex: 1 }}>
-            <Feather name={isDone ? "check-circle" : "circle"} size={18} color={isDone ? colors.accentGreen : colors.textMuted} />
-          </Pressable>
-          
-          <Text style={{ flex: 1, fontSize: 15, color: isDone ? colors.textMuted : colors.text, textDecorationLine: isDone ? 'line-through' : 'none' }}>
-            {sub.label}
-          </Text>
-          
-          {/* Карандаш редактирования подзадачи */}
-          {editing && (
-            <Pressable onPress={() => onEditSubtask(sub)} style={{ padding: 4 }}>
-              <Feather name="edit-2" size={16} color={colors.textMuted} />
+    <View style={{ paddingLeft: 24, paddingRight: 16, paddingTop: 14, paddingBottom: 12 }}>
+      {subtasks.map(sub => {
+        // Подзадача правится в полном редакторе, на месте своей строки
+        if (editingId === sub.id) {
+          return (
+            <View key={sub.id} style={{ marginBottom: 12 }}>
+              {renderEditor(sub.id)}
+            </View>
+          );
+        }
+        const isDone = logs.find(l => l.habitId === sub.id)?.done ?? false;
+        return (
+          <View key={sub.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+            <Pressable onPress={() => onBumpSubtask(sub)} style={{ marginRight: 12 }}>
+              <Feather name={isDone ? "check-circle" : "circle"} size={18} color={isDone ? colors.accentGreen : colors.textMuted} />
             </Pressable>
-          )}
-        </View>
-      );
-    })}
-    
-<Pressable onPress={onAddSubtask} style={{ flexDirection: "row", alignItems: "center", marginTop: 4, minHeight: 24 }}>
-  <View style={{ position: "absolute", left: -36, backgroundColor: closed ? "rgba(143, 184, 154, 0.12)" : colors.card, zIndex: 1 }}>
-    <Feather name="plus" size={16} color={colors.textMuted} />
-  </View>
-  <Text style={{ fontSize: 14, color: colors.textMuted, fontWeight: "500" }}>Добавить подзадачу</Text>
-</Pressable>
+
+            <Text style={{ flex: 1, fontSize: 15, color: isDone ? colors.textMuted : colors.text, textDecorationLine: isDone ? 'line-through' : 'none' }}>
+              {sub.label}
+            </Text>
+
+            {/* Карандаш только в режиме «Изменить» */}
+            {editing && (
+              <Pressable onPress={() => onEditSubtask(sub)} style={{ padding: 4 }}>
+                <Feather name="edit-2" size={16} color={colors.textMuted} />
+              </Pressable>
+            )}
+          </View>
+        );
+      })}
+
+      {/* Подзадач нет и режим «Изменить» выключен: подсказка */}
+      {!hasSub && !editing && (
+        <Text style={{ fontSize: 14, color: colors.textMuted }}>
+          Нажми «Изменить», чтобы добавить подзадачу
+        </Text>
+      )}
+
+      {/* Кнопка добавления только в режиме «Изменить» */}
+      {editing && (
+        <Pressable onPress={onAddSubtask} style={{ flexDirection: 'row', alignItems: 'center', minHeight: 24 }}>
+          <Feather name="plus" size={18} color={colors.textMuted} style={{ marginRight: 12 }} />
+          <Text style={{ fontSize: 14, color: colors.textMuted, fontWeight: '500' }}>Добавить подзадачу</Text>
+        </Pressable>
+      )}
     </View>
+  </View>
 )}
     </View>
     </View>
