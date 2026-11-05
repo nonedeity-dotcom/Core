@@ -482,7 +482,7 @@ export default function TodayScreen() {
     onSuccess: (res, v) => {
       setMovingId(null);
 if (!res.ok) {
-  Alert.alert("Не получилось", MAKE_SUBTASK_ERRORS[res.reason as string] ?? "Не удалось сделать подзадачей.");
+  Alert.alert("Не получилось", MAKE_SUBTASK_ERRORS[res.reason] ?? "Не удалось сделать подзадачей.");
   return;
 }
 
