@@ -583,14 +583,14 @@ renderEditor(h.id, false)
               onBumpSubtask={(sub) => handleBump(sub)}
               onEditSubtask={(sub) => startEdit(sub)}
               subtasks={mySubtasks}
-              logs={allLogs}
+              logs={logs}
               onAddSubtask={() => {
               setNewSubtaskParentId(h.id);
               setAdding(true);
               }}
               onEdit={() => startEdit(h)}
               onArchive={() => confirmArchive(h)}
-              onReset={() => resetDay.mutate(h.id)}
+              onReset={() => handleResetHabit(h)}
               renderEditor={(id) => renderEditor(id, true)}
             />
           );
