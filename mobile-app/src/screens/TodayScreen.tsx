@@ -481,10 +481,11 @@ export default function TodayScreen() {
     mutationFn: (v: { id: string; parentId: string }) => api.makeSubtask(v.id, v.parentId),
     onSuccess: (res, v) => {
       setMovingId(null);
-      if (!res.ok) {
-        Alert.alert("Не получилось", MAKE_SUBTASK_ERRORS[res.reason] ?? "Не удалось сделать подзадачей.");
-        return;
-      }
+if (!res.ok) {
+  Alert.alert("Не получилось", MAKE_SUBTASK_ERRORS[res.reason as string] ?? "Не удалось сделать подзадачей.");
+  return;
+}
+
       // Показать, куда она уехала: раскрыть кучку родителя и самого родителя, иначе привычка
       // просто исчезла бы из списка, а искать её пришлось бы в свёрнутом.
       const parent = habits.find((h) => h.id === v.parentId);
