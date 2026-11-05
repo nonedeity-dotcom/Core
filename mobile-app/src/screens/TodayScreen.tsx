@@ -258,50 +258,50 @@ export default function TodayScreen() {
     onSettled: () => qc.invalidateQueries({ queryKey: ["habitLog"] }),
   });
 
-const handleBump = (habit: Habit, minimal: boolean = false) => {
-if (habit.parentId) {
-    const parent = habits.find(h => h.id === habit.parentId);
-    const isDone = (id: string) => !!allLogs.find(l => l.habitId === id)?.done;
+// Отметка берётся только за сегодня: в allLogs лежат 4 месяца, и find вернул бы самую старую запись.
+  const isDoneToday = (id: string) => !!logs.find((l) => l.habitId === id)?.done;
 
-    // Подзадача уже отмечена: снимаем отметку с неё и с родителя
-    if (isDone(habit.id)) {
-      resetDay.mutate(habit.id);
-      if (parent && isDone(parent.id)) resetDay.mutate(parent.id);
+  const handleBump = (habit: Habit, minimal: boolean = false) => {
+    // Подзадача
+    if (habit.parentId) {
+      // Уже отмечена — в обычном режиме не снимается
+      if (isDoneToday(habit.id)) return;
+
+      bump.mutate({ habit, minimal: false });
+
+      // Остальные подзадачи тоже готовы — родитель закрывается сам
+      const parent = habits.find((h) => h.id === habit.parentId);
+      const siblings = habits.filter((h) => h.parentId === habit.parentId);
+      const othersDone = siblings.every((s) => s.id === habit.id || isDoneToday(s.id));
+      if (othersDone && parent && !isDoneToday(parent.id)) {
+        bump.mutate({ habit: parent, minimal: false });
+      }
       return;
     }
 
-    // Не отмечена: отмечаем, и если остальные тоже готовы, отмечаем родителя
+    // Родитель с подзадачами: пока не готовы все подзадачи, отметить нельзя
+    const subs = habits.filter((h) => h.parentId === habit.id);
+    if (subs.length > 0 && !subs.every((s) => isDoneToday(s.id))) return;
+
     bump.mutate({ habit, minimal });
-    const siblings = habits.filter(h => h.parentId === habit.parentId);
-    const othersDone = siblings.every(s => s.id === habit.id || isDone(s.id));
-    if (othersDone && !minimal && parent && !isDone(parent.id)) {
-      bump.mutate({ habit: parent, minimal: false });
-    }
-}
+  };
 
-  // 2. Если это родитель с подзадачами
-  else {
-    const subs = habits.filter(h => h.parentId === habit.id);
-    if (subs.length > 0) {
-      const allDone = subs.every(s => allLogs.find(l => l.habitId === s.id)?.done);
-      if (allDone) {
-        subs.forEach(s => resetDay.mutate(s.id));
-        resetDay.mutate(habit.id);
-      } else {
-        subs.forEach(s => {
-          if (!allLogs.find(l => l.habitId === s.id)?.done) {
-            bump.mutate({ habit: s, minimal: false });
-          }
-        });
-        bump.mutate({ habit, minimal: false });
-      }
-    } else {
-      // 3. Обычная привычка
-      bump.mutate({ habit, minimal });
+  // Сброс подзадачи в режиме «Изменить»; закрытый родитель тоже сбрасывается
+  const handleResetSubtask = (sub: Habit) => {
+    resetDay.mutate(sub.id);
+    const parent = habits.find((h) => h.id === sub.parentId);
+    if (parent && logCount(logs.find((l) => l.habitId === parent.id)) > 0) {
+      resetDay.mutate(parent.id);
     }
-  }
-};
+  };
 
+  // Сброс привычки за сегодня; у родителя сбрасываются и подзадачи
+  const handleResetHabit = (h: Habit) => {
+    habits
+      .filter((s) => s.parentId === h.id && logCount(logs.find((l) => l.habitId === s.id)) > 0)
+      .forEach((s) => resetDay.mutate(s.id));
+    resetDay.mutate(h.id);
+  };
   const addHabit = useMutation({
   // Теперь принимаем объект, чтобы можно было передать parentId
   mutationFn: (data: { label: string; parentId?: string }) =>
