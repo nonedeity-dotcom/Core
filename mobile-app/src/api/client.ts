@@ -470,6 +470,50 @@ export const api = {
     });
   },
   /**
+   * Делает обычную привычку подзадачей другой — одной записью, а не двумя вызовами updateHabit.
+   *
+   * Отметки лежат в habitLog под id самой привычки, а id здесь не меняется — поэтому вся
+   * история остаётся ровно на месте: ничего не копируется и не переписывается. Меняются
+   * только два поля у самой привычки (`parentId`, `hasSubtasks`) и один флаг у родителя.
+   *
+   * Всё под одним замком и одной записью: подзадача, у которой родитель ещё не знает про
+   * подзадачи, на экране не видна нигде — из верхнего списка она уже ушла, а панели
+   * подзадач у родителя нет. Два отдельных вызова при сбое на втором оставили бы привычку
+   * невидимой.
+   *
+   * Отказывает там, где экран не умеет рисовать результат: глубже двух уровней вложенности
+   * нет (подзадача подзадачи не показывается), а у привычки, у которой есть свои подзадачи,
+   * они бы потерялись вместе с ней.
+   */
+  async makeSubtask(
+    id: string,
+    parentId: string,
+  ): Promise<
+    | { ok: true }
+    | { ok: false; reason: "not_found" | "same" | "already_subtask" | "has_subtasks" | "parent_is_subtask" }
+  > {
+    return withKeyLock(KEYS.habits, async () => {
+      const habits = await read<Habit[]>(KEYS.habits, []);
+      const child = habits.find((h) => h.id === id);
+      const parent = habits.find((h) => h.id === parentId);
+      if (!child || !parent || child.archivedAt || parent.archivedAt) return { ok: false as const, reason: "not_found" as const };
+      if (id === parentId) return { ok: false as const, reason: "same" as const };
+      if (child.parentId) return { ok: false as const, reason: "already_subtask" as const };
+      if (parent.parentId) return { ok: false as const, reason: "parent_is_subtask" as const };
+      if (habits.some((h) => h.parentId === id)) return { ok: false as const, reason: "has_subtasks" as const };
+
+      await write(
+        KEYS.habits,
+        habits.map((h) => {
+          if (h.id === id) return { ...h, parentId, hasSubtasks: false };
+          if (h.id === parentId) return { ...h, hasSubtasks: true };
+          return h;
+        }),
+      );
+      return { ok: true as const };
+    });
+  },
+  /**
    * Puts a habit aside without losing anything.
    *
    * The marks stay exactly where they are, so restoring brings the whole history back and
