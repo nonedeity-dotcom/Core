@@ -9,13 +9,21 @@ import { dayProgress, habitGroup } from "./habits";
  * обе стороны — чистые функции, без телефона.
  */
 
+export interface WidgetSub {
+  id: string;
+  label: string;
+  done: boolean;
+}
+
 export interface WidgetHabit {
   id: string;
   label: string;
   count: number;
   target: number;
-  /** Отмечается сама — виджет её показывает, но нажать не даёт. */
+  /** Отмечается сама (экранное время). */
   auto: boolean;
+  /** Подзадачи: только у родителя, у обычной привычки пусто. */
+  subs: WidgetSub[];
 }
 
 export interface WidgetSnapshot {
@@ -36,14 +44,27 @@ export interface WidgetTap {
  * перестаёт быть тем, на что смотришь мимоходом, а «потом» и в приложении не отмечается.
  */
 export function widgetSnapshot(habits: Habit[], logs: HabitLog[], today: string): WidgetSnapshot {
+  const live = habits.filter((h) => !h.archivedAt);
+  const subsOf = (parentId: string): WidgetSub[] =>
+    live
+      .filter((s) => s.parentId === parentId)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((s) => ({ id: s.id, label: s.label, done: logs.find((l) => l.habitId === s.id)?.done ?? false }));
+
   return {
     date: today,
-    habits: habits
-      .filter((h) => !h.archivedAt && habitGroup(h) === "now")
+    habits: live
+      .filter((h) => !h.parentId && habitGroup(h) === "now")
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((h) => {
+        const subs = h.hasSubtasks ? subsOf(h.id) : [];
+        if (subs.length > 0) {
+          // У родителя с подзадачами «сколько сделано» — это подзадачи, как в приложении.
+          const done = subs.filter((s) => s.done).length;
+          return { id: h.id, label: h.label, count: done, target: subs.length, auto: false, subs };
+        }
         const { count, target } = dayProgress(h, logs, today);
-        return { id: h.id, label: h.label, count: Math.min(count, target), target, auto: h.auto === "screentime" };
+        return { id: h.id, label: h.label, count: Math.min(count, target), target, auto: h.auto === "screentime", subs: [] };
       }),
   };
 }
