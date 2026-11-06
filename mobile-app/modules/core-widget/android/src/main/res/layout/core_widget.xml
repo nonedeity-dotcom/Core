@@ -4,39 +4,80 @@
   android:layout_width="match_parent"
   android:layout_height="match_parent"
   android:orientation="vertical"
-  android:padding="12dp"
+  android:padding="14dp"
   android:background="@drawable/core_widget_bg">
 
-  <TextView
-    android:id="@+id/core_widget_title"
+  <LinearLayout
+    android:id="@+id/core_widget_header"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingBottom="8dp">
+
+    <TextClock
+      android:id="@+id/core_widget_time"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:format12Hour="h:mm"
+      android:format24Hour="HH:mm"
+      android:includeFontPadding="false"
+      android:textColor="#E8E6E0"
+      android:textSize="44sp"
+      android:textStyle="bold" />
+
+    <LinearLayout
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:gravity="end"
+      android:orientation="vertical">
+
+      <TextClock
+        android:id="@+id/core_widget_date"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:format12Hour="d MMMM"
+        android:format24Hour="d MMMM"
+        android:textColor="#8FB89A"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+      <TextView
+        android:id="@+id/core_widget_progress"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="#8B8F98"
+        android:textSize="12sp" />
+    </LinearLayout>
+  </LinearLayout>
+
+  <TextView
+    android:id="@+id/core_widget_back"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingTop="4dp"
     android:paddingBottom="6dp"
-    android:text="Core"
-    android:textColor="#E8E6E0"
+    android:textColor="#8FB89A"
     android:textSize="14sp"
-    android:textStyle="bold" />
+    android:textStyle="bold"
+    android:visibility="gone" />
+
+  <ListView
+    android:id="@+id/core_widget_list"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:divider="@null"
+    android:dividerHeight="0dp"
+    android:scrollbars="none" />
 
   <TextView
     android:id="@+id/core_widget_empty"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:paddingTop="8dp"
     android:textColor="#8B8F98"
-    android:textSize="12sp"
-    android:visibility="gone" />
-
-  <LinearLayout
-    android:id="@+id/core_widget_rows"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:orientation="vertical" />
-
-  <TextView
-    android:id="@+id/core_widget_more"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:paddingTop="4dp"
-    android:textColor="#8B8F98"
-    android:textSize="11sp"
+    android:textSize="13sp"
     android:visibility="gone" />
 </LinearLayout>
