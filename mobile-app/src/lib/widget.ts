@@ -22,8 +22,8 @@ export interface WidgetHabit {
   target: number;
   /** Отмечается сама (экранное время). */
   auto: boolean;
-  /** Подзадачи: только у родителя, у обычной привычки пусто. */
-  subs: WidgetSub[];
+  /** Подзадачи: есть только у родителя; у обычной привычки поля нет вовсе. */
+  subs?: WidgetSub[];
 }
 
 export interface WidgetSnapshot {
@@ -64,7 +64,7 @@ export function widgetSnapshot(habits: Habit[], logs: HabitLog[], today: string)
           return { id: h.id, label: h.label, count: done, target: subs.length, auto: false, subs };
         }
         const { count, target } = dayProgress(h, logs, today);
-        return { id: h.id, label: h.label, count: Math.min(count, target), target, auto: h.auto === "screentime", subs: [] };
+        return { id: h.id, label: h.label, count: Math.min(count, target), target, auto: h.auto === "screentime" };
       }),
   };
 }
