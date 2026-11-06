@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Фон виджета с мягким краем: 8 вложенных прямоугольников, каждый чуть меньше предыдущего.
-  Полупрозрачные слои складываются, поэтому у края фон почти прозрачный, а к середине
-  плавно густеет до ~92%. Размытие в самих drawable недоступно, это его ступенчатая замена.
+  Фон виджета: тёмное стекло, плотное и с чётким краем, чтобы читалось на любых обоях.
+  8 вложенных прямоугольников, каждый на 1dp меньше предыдущего, у каждого ~33% непрозрачности.
+  Слои складываются: у края фон ~33%, к середине густеет до ~96%. Мягкий край теперь 8dp
+  (было 16dp). Тонкая светлая рамка у внешнего слоя не даёт панели потеряться на тёмных обоях.
 
-  Подстройка: ширина мягкого края = слоёв × шаг (сейчас 8 × 2dp), цвет — 15161D в каждом слое,
-  общая плотность — по альфе первого и последнего слоя.
+  Подстройка: плотность в центре — альфа в #55 (55 = 33%; больше — плотнее, меньше — прозрачнее),
+  ширина мягкого края — число слоёв × шаг, цвет — 15161D.
 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
   <item
@@ -14,8 +15,19 @@
     android:right="0dp"
     android:bottom="0dp">
     <shape android:shape="rectangle">
-      <solid android:color="#0A15161D" />
+      <solid android:color="#5515161D" />
+      <stroke android:width="1dp" android:color="#1FFFFFFF" />
       <corners android:radius="28dp" />
+    </shape>
+  </item>
+  <item
+    android:left="1dp"
+    android:top="1dp"
+    android:right="1dp"
+    android:bottom="1dp">
+    <shape android:shape="rectangle">
+      <solid android:color="#5515161D" />
+      <corners android:radius="27dp" />
     </shape>
   </item>
   <item
@@ -24,8 +36,18 @@
     android:right="2dp"
     android:bottom="2dp">
     <shape android:shape="rectangle">
-      <solid android:color="#1C15161D" />
+      <solid android:color="#5515161D" />
       <corners android:radius="26dp" />
+    </shape>
+  </item>
+  <item
+    android:left="3dp"
+    android:top="3dp"
+    android:right="3dp"
+    android:bottom="3dp">
+    <shape android:shape="rectangle">
+      <solid android:color="#5515161D" />
+      <corners android:radius="25dp" />
     </shape>
   </item>
   <item
@@ -34,8 +56,18 @@
     android:right="4dp"
     android:bottom="4dp">
     <shape android:shape="rectangle">
-      <solid android:color="#2C15161D" />
+      <solid android:color="#5515161D" />
       <corners android:radius="24dp" />
+    </shape>
+  </item>
+  <item
+    android:left="5dp"
+    android:top="5dp"
+    android:right="5dp"
+    android:bottom="5dp">
+    <shape android:shape="rectangle">
+      <solid android:color="#5515161D" />
+      <corners android:radius="23dp" />
     </shape>
   </item>
   <item
@@ -44,48 +76,18 @@
     android:right="6dp"
     android:bottom="6dp">
     <shape android:shape="rectangle">
-      <solid android:color="#3D15161D" />
+      <solid android:color="#5515161D" />
       <corners android:radius="22dp" />
     </shape>
   </item>
   <item
-    android:left="8dp"
-    android:top="8dp"
-    android:right="8dp"
-    android:bottom="8dp">
+    android:left="7dp"
+    android:top="7dp"
+    android:right="7dp"
+    android:bottom="7dp">
     <shape android:shape="rectangle">
-      <solid android:color="#5015161D" />
-      <corners android:radius="20dp" />
-    </shape>
-  </item>
-  <item
-    android:left="10dp"
-    android:top="10dp"
-    android:right="10dp"
-    android:bottom="10dp">
-    <shape android:shape="rectangle">
-      <solid android:color="#6515161D" />
-      <corners android:radius="18dp" />
-    </shape>
-  </item>
-  <item
-    android:left="12dp"
-    android:top="12dp"
-    android:right="12dp"
-    android:bottom="12dp">
-    <shape android:shape="rectangle">
-      <solid android:color="#7715161D" />
-      <corners android:radius="16dp" />
-    </shape>
-  </item>
-  <item
-    android:left="14dp"
-    android:top="14dp"
-    android:right="14dp"
-    android:bottom="14dp">
-    <shape android:shape="rectangle">
-      <solid android:color="#5415161D" />
-      <corners android:radius="14dp" />
+      <solid android:color="#5515161D" />
+      <corners android:radius="21dp" />
     </shape>
   </item>
 </layer-list>
