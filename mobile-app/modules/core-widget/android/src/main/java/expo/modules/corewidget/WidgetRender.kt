@@ -42,6 +42,9 @@ internal data class WidgetItem(
   val trailing: String,
   /** Если задан — нажатие раскрывает эту привычку; иначе открывает приложение. */
   val expandId: String?,
+  /** Полоса под названием: сколько подзадач сделано из скольких. barMax = 0 — полосы нет. */
+  val barMax: Int = 0,
+  val barNow: Int = 0,
 )
 
 internal object WidgetRender {
@@ -137,6 +140,8 @@ internal object WidgetRender {
           else -> ""
         },
         expandId = if (r.hasSubs) r.id else null,
+        barMax = if (r.hasSubs) r.target else 0,
+        barNow = if (r.hasSubs) r.count else 0,
       )
     }
   }
@@ -162,9 +167,14 @@ internal object WidgetRender {
     views.setTextViewText(R.id.core_widget_empty, emptyText)
     if (rows.isNullOrEmpty()) {
       views.setTextViewText(R.id.core_widget_progress, "")
+      // Считать нечего — полоса не нужна.
+      views.setViewVisibility(R.id.core_widget_bar, View.GONE)
     } else {
       val (done, total) = progress(rows)
       views.setTextViewText(R.id.core_widget_progress, "Сегодня · $done из $total")
+      // Общая полоса в шапке: те же done и total, что в тексте выше.
+      views.setViewVisibility(R.id.core_widget_bar, View.VISIBLE)
+      views.setProgressBar(R.id.core_widget_bar, maxOf(total, 1), done, false)
     }
 
     val expanded = if (rows == null) null else expanded(context, rows)
