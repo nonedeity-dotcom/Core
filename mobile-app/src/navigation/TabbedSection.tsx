@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { View } from "react-native";
 import TabChips from "./TabChips";
 
@@ -14,8 +14,18 @@ import TabChips from "./TabChips";
  * возвращаются мгновенно, а держать в памяти пять экранов ради сохранённой прокрутки —
  * плата не по товару.
  */
-export default function TabbedSection({ tabs }: { tabs: { title: string; render: () => React.ReactElement }[] }) {
-  const [index, setIndex] = useState(0);
+export default function TabbedSection({
+  tabs,
+  jump,
+}: {
+  tabs: { title: string; render: () => React.ReactElement }[];
+  /** Прыжок на вкладку извне (виджет): index — куда, nonce — чтобы повтор сработал снова. */
+  jump?: { index: number; nonce: number };
+}) {
+  const [index, setIndex] = useState(jump?.index ?? 0);
+  useEffect(() => {
+    if (jump) setIndex(jump.index);
+  }, [jump?.nonce]);
   const current = tabs[Math.min(index, tabs.length - 1)];
   return (
     <View style={{ flex: 1 }}>
