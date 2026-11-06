@@ -19,6 +19,7 @@ internal object WidgetStore {
   private const val PREFS = "core_widget"
   private const val SNAPSHOT = "snapshot"
   private const val PENDING = "pending"
+  private const val EXPANDED = "expanded"
   private val lock = Any()
 
   /** Сегодняшняя дата по часам телефона — так же, как её считает приложение. */
@@ -58,6 +59,18 @@ internal object WidgetStore {
       val list = readPending(context)
       list.put(JSONObject().put("id", habitId).put("date", date))
       prefs(context).edit().putString(PENDING, list.toString()).commit()
+    }
+  }
+
+  /** Какая привычка раскрыта в виджете (показаны её подзадачи); null — виден общий список. */
+  fun expanded(context: Context): String? =
+    synchronized(lock) { prefs(context).getString(EXPANDED, null) }
+
+  fun setExpanded(context: Context, habitId: String?) {
+    synchronized(lock) {
+      val edit = prefs(context).edit()
+      if (habitId == null) edit.remove(EXPANDED) else edit.putString(EXPANDED, habitId)
+      edit.commit()
     }
   }
 

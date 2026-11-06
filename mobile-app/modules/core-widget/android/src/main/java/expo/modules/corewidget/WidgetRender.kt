@@ -5,47 +5,62 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.view.View
 import android.widget.RemoteViews
 
-/** Строка виджета: одна привычка «Ввожу сейчас» на сегодня. */
+/** Подзадача раскрытой привычки. */
+internal data class WidgetSub(
+  val id: String,
+  val label: String,
+  val done: Boolean,
+)
+
+/** Привычка «Ввожу сейчас» на сегодня. */
 internal data class WidgetRow(
   val id: String,
   val label: String,
   val count: Int,
   val target: Int,
-  /** Отмечается сама (экранное время) — нажимать на неё нечего. */
+  /** Отмечается сама (экранное время). */
   val auto: Boolean,
+  val subs: List<WidgetSub>,
 ) {
   val done: Boolean
     get() = count >= target
+
+  val hasSubs: Boolean
+    get() = subs.isNotEmpty()
 }
 
+/** Одна строка списка в виджете: привычка или подзадача раскрытой привычки. */
+internal data class WidgetItem(
+  val label: String,
+  val done: Boolean,
+  val auto: Boolean,
+  /** Справа от названия: «2/5», «2/5  ›» или пусто. */
+  val trailing: String,
+  /** Если задан — нажатие раскрывает эту привычку; иначе открывает приложение. */
+  val expandId: String?,
+)
+
 internal object WidgetRender {
-  private const val MAX_ROWS = 8
-  private val TEXT = Color.parseColor("#E8E6E0")
-  private val MUTED = Color.parseColor("#8B8F98")
-  private val GREEN = Color.parseColor("#8FB89A")
+  /** Ссылка, по которой приложение открывает «Чек-лист» (см. RootTabs). */
+  const val CHECKLIST_URL = "no-burnout://checklist"
+
+  val TEXT = Color.parseColor("#E8E6E0")
+  val MUTED = Color.parseColor("#8B8F98")
+  val GREEN = Color.parseColor("#8FB89A")
 
   /**
-   * Строки с учётом нажатий, которых приложение ещё не видело.
+   * Привычки из слепка.
    *
    * Слепок мог остаться со вчера — тогда вчерашние отметки не в счёт, день начинается с нуля.
    * null — слепка нет вовсе: приложение ни разу не открывали после установки виджета.
    */
   fun rows(context: Context): List<WidgetRow>? {
     val snapshot = WidgetStore.snapshot(context) ?: return null
-    val today = WidgetStore.today()
-    val fresh = snapshot.optString("date") == today
-
-    val taps = HashMap<String, Int>()
-    val pending = WidgetStore.pending(context)
-    for (i in 0 until pending.length()) {
-      val tap = pending.optJSONObject(i) ?: continue
-      if (tap.optString("date") != today) continue
-      val id = tap.optString("id")
-      taps[id] = (taps[id] ?: 0) + 1
-    }
+    val fresh = snapshot.optString("date") == WidgetStore.today()
 
     val habits = snapshot.optJSONArray("habits") ?: return emptyList()
     val out = ArrayList<WidgetRow>()
@@ -53,90 +68,123 @@ internal object WidgetRender {
       val h = habits.optJSONObject(i) ?: continue
       val id = h.optString("id")
       if (id.isEmpty()) continue
-      val target = maxOf(1, h.optInt("target", 1))
-      val base = if (fresh) maxOf(0, h.optInt("count", 0)) else 0
-      out.add(
-        WidgetRow(
-          id = id,
-          label = h.optString("label"),
-          count = minOf(target, base + (taps[id] ?: 0)),
-          target = target,
-          auto = h.optBoolean("auto", false),
-        ),
-      )
+
+      val subs = ArrayList<WidgetSub>()
+      val subsJson = h.optJSONArray("subs")
+      if (subsJson != null) {
+        for (j in 0 until subsJson.length()) {
+          val s = subsJson.optJSONObject(j) ?: continue
+          val subId = s.optString("id")
+          if (subId.isEmpty()) continue
+          subs.add(WidgetSub(subId, s.optString("label"), fresh && s.optBoolean("done", false)))
+        }
+      }
+
+      // У родителя с подзадачами «сделано» — это подзадачи, как в приложении.
+      val target = if (subs.isNotEmpty()) subs.size else maxOf(1, h.optInt("target", 1))
+      val count = when {
+        !fresh -> 0
+        subs.isNotEmpty() -> subs.count { it.done }
+        else -> minOf(target, maxOf(0, h.optInt("count", 0)))
+      }
+      out.add(WidgetRow(id, h.optString("label"), count, target, h.optBoolean("auto", false), subs))
     }
     return out
   }
 
+  /** Раскрытая привычка — только если она ещё есть и подзадачи у неё остались. */
+  fun expanded(context: Context, rows: List<WidgetRow>): WidgetRow? {
+    val id = WidgetStore.expanded(context) ?: return null
+    return rows.firstOrNull { it.id == id && it.hasSubs }
+  }
+
+  /** Что показывает список: подзадачи раскрытой привычки или все привычки. */
+  fun items(context: Context): List<WidgetItem> {
+    val rows = rows(context) ?: return emptyList()
+    val open = expanded(context, rows)
+    if (open != null) {
+      return open.subs.map { WidgetItem(it.label, it.done, false, "", null) }
+    }
+    return rows.map { r ->
+      WidgetItem(
+        label = r.label,
+        done = r.done,
+        auto = r.auto,
+        trailing = when {
+          r.hasSubs -> "${r.count}/${r.target}  ›"
+          r.target > 1 -> "${r.count}/${r.target}"
+          else -> ""
+        },
+        expandId = if (r.hasSubs) r.id else null,
+      )
+    }
+  }
+
   fun build(context: Context): RemoteViews {
     val views = RemoteViews(context.packageName, R.layout.core_widget)
-    views.removeAllViews(R.id.core_widget_rows)
-    openApp(context)?.let { views.setOnClickPendingIntent(R.id.core_widget_title, it) }
+
+    // Нажатие на сам виджет — в приложение, на «Чек-лист».
+    val open = action(context, requestCode = 0, collapse = false, mutable = false)
+    views.setOnClickPendingIntent(R.id.core_widget_root, open)
+    views.setOnClickPendingIntent(R.id.core_widget_header, open)
+    views.setOnClickPendingIntent(R.id.core_widget_empty, open)
 
     val rows = rows(context)
-    if (rows == null || rows.isEmpty()) {
-      views.setTextViewText(R.id.core_widget_title, "Core")
+    views.setTextViewText(
+      R.id.core_widget_empty,
+      if (rows == null) "Открой Core — и здесь появятся привычки на сегодня." else "В «Ввожу сейчас» пока пусто.",
+    )
+    views.setTextViewText(
+      R.id.core_widget_progress,
+      if (rows.isNullOrEmpty()) "" else "Сегодня · ${rows.count { it.done }} из ${rows.size}",
+    )
+
+    val expanded = if (rows == null) null else expanded(context, rows)
+    if (expanded != null) {
       views.setTextViewText(
-        R.id.core_widget_empty,
-        if (rows == null) "Открой Core — и здесь появятся привычки на сегодня." else "В «Ввожу сейчас» пока пусто.",
+        R.id.core_widget_back,
+        "▾ ${expanded.label} · ${expanded.count}/${expanded.target} — свернуть",
       )
-      views.setViewVisibility(R.id.core_widget_empty, View.VISIBLE)
-      views.setViewVisibility(R.id.core_widget_more, View.GONE)
-      openApp(context)?.let { views.setOnClickPendingIntent(R.id.core_widget_empty, it) }
-      return views
-    }
-
-    views.setViewVisibility(R.id.core_widget_empty, View.GONE)
-    val done = rows.count { it.done }
-    views.setTextViewText(R.id.core_widget_title, "Сегодня · $done из ${rows.size}")
-
-    for (row in rows.take(MAX_ROWS)) {
-      val line = RemoteViews(context.packageName, R.layout.core_widget_row)
-      line.setTextViewText(R.id.core_widget_mark, if (row.done) "✓" else if (row.auto) "◷" else "○")
-      line.setTextColor(R.id.core_widget_mark, if (row.done) GREEN else MUTED)
-      line.setTextViewText(R.id.core_widget_label, row.label)
-      line.setTextColor(R.id.core_widget_label, if (row.done) MUTED else TEXT)
-      line.setTextViewText(R.id.core_widget_count, if (row.target > 1) "${row.count}/${row.target}" else "")
-      // Нажатие — шаг вверх, как в чек-листе. Отмеченное и то, что считается само, не
-      // нажимается: снять отметку можно только в приложении, в режиме правки.
-      if (!row.auto && !row.done) line.setOnClickPendingIntent(R.id.core_widget_row, tap(context, row.id))
-      views.addView(R.id.core_widget_rows, line)
-    }
-
-    val hidden = rows.size - MAX_ROWS
-    if (hidden > 0) {
-      views.setTextViewText(R.id.core_widget_more, "и ещё $hidden — в приложении")
-      views.setViewVisibility(R.id.core_widget_more, View.VISIBLE)
-      openApp(context)?.let { views.setOnClickPendingIntent(R.id.core_widget_more, it) }
+      views.setViewVisibility(R.id.core_widget_back, View.VISIBLE)
+      views.setOnClickPendingIntent(R.id.core_widget_back, action(context, requestCode = 2, collapse = true, mutable = false))
     } else {
-      views.setViewVisibility(R.id.core_widget_more, View.GONE)
+      views.setViewVisibility(R.id.core_widget_back, View.GONE)
     }
+
+    views.setRemoteAdapter(R.id.core_widget_list, Intent(context, WidgetListService::class.java))
+    views.setEmptyView(R.id.core_widget_list, R.id.core_widget_empty)
+    // Шаблон нажатия на строку: каждая строка дописывает в него своё (раскрыть такую-то).
+    views.setPendingIntentTemplate(
+      R.id.core_widget_list,
+      action(context, requestCode = 1, collapse = false, mutable = true),
+    )
     return views
   }
 
-  private fun tap(context: Context, habitId: String): PendingIntent {
-    val intent = Intent(context, HabitsWidgetProvider::class.java).apply {
-      action = HabitsWidgetProvider.ACTION_TAP
-      // Своя ссылка на каждую строку: иначе система сочтёт все намерения одинаковыми и
-      // оставит одно — и каждая строка отмечала бы одну и ту же привычку.
-      data = Uri.parse("core-widget://tap/" + Uri.encode(habitId))
-      putExtra(HabitsWidgetProvider.EXTRA_HABIT, habitId)
+  /** Намерение, которым приложение открывается на «Чек-листе». */
+  fun checklistIntent(context: Context): Intent =
+    Intent(Intent.ACTION_VIEW, Uri.parse(CHECKLIST_URL)).apply {
+      setPackage(context.packageName)
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
-    return PendingIntent.getBroadcast(
-      context,
-      habitId.hashCode(),
-      intent,
-      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
-  }
 
-  private fun openApp(context: Context): PendingIntent? {
-    val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return null
-    return PendingIntent.getActivity(
-      context,
-      0,
-      launch,
-      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
+  /**
+   * Нажатие через невидимую активность: она раскроет привычку, свернёт или откроет приложение.
+   *
+   * Свой requestCode у каждого вида: система различает PendingIntent по коду и действию, а
+   * дополнения (extras) в сравнение не входят — без этого все три слились бы в один.
+   * Шаблон строки списка обязан быть изменяемым, иначе строки не смогут дописать в него своё.
+   */
+  private fun action(context: Context, requestCode: Int, collapse: Boolean, mutable: Boolean): PendingIntent {
+    val intent = Intent(context, WidgetActionActivity::class.java).apply {
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      if (collapse) putExtra(WidgetActionActivity.EXTRA_COLLAPSE, true)
+    }
+    val mutability = when {
+      !mutable -> PendingIntent.FLAG_IMMUTABLE
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> PendingIntent.FLAG_MUTABLE
+      else -> 0
+    }
+    return PendingIntent.getActivity(context, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or mutability)
   }
 }
