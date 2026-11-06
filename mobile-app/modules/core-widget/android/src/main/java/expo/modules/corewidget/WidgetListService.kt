@@ -2,6 +2,7 @@ package expo.modules.corewidget
 
 import android.content.Context
 import android.content.Intent
+import android.view.View
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
 
@@ -43,6 +44,14 @@ class WidgetListService : RemoteViewsService() {
       line.setTextViewText(R.id.core_widget_label, item.label)
       line.setTextColor(R.id.core_widget_label, if (item.done) WidgetRender.MUTED else WidgetRender.TEXT)
       line.setTextViewText(R.id.core_widget_count, item.trailing)
+
+      // Полоса прогресса подзадач — только у родителя с подзадачами.
+      if (item.barMax > 0) {
+        line.setViewVisibility(R.id.core_widget_row_bar, View.VISIBLE)
+        line.setProgressBar(R.id.core_widget_row_bar, item.barMax, item.barNow, false)
+      } else {
+        line.setViewVisibility(R.id.core_widget_row_bar, View.GONE)
+      }
 
       // Дописывается в шаблон из WidgetRender.build: привычка с подзадачами — «раскрой меня»,
       // всё остальное — пусто, и нажатие просто открывает приложение.
