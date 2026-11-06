@@ -50,7 +50,16 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
 
   // --- Sterzhen ---
   const { streak, habits, logs } = useStreak(today);
-  const deciding = habitsThatDecideTheDay(habits, today);
+  // Родитель с подзадачами в счёт не идёт: вместо него считаются его подзадачи.
+  // Какие привычки решают день, определяем по родителям: у подзадач своего расписания нет.
+  const decidingTop = habitsThatDecideTheDay(
+    habits.filter((h) => !h.parentId),
+    today,
+  );
+  const deciding = decidingTop.flatMap((h) => {
+    const subs = habits.filter((s) => s.parentId === h.id);
+    return subs.length > 0 ? subs : [h];
+  });
   const done = deciding.filter((h) => {
     const p = dayProgress(h, logs, today);
     return p.count >= p.target;
