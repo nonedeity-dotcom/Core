@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { NavigationContainer, DarkTheme, createNavigationContainerRef } from "@react-navigation/native";
+import { NavigationContainer, DarkTheme, StackActions, createNavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { BackHandler, View } from "react-native";
+import { BackHandler, Linking, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
 
@@ -104,6 +104,31 @@ export default function RootTabs() {
     return () => sub.remove();
   }, [history.length]);
 
+  /**
+   * Нажатие на виджет открывает приложение ссылкой no-burnout://checklist.
+   * nonce меняется при каждом нажатии: иначе повторное нажатие на уже выбранной вкладке
+   * ничего бы не сделало.
+   */
+  const [checklistJump, setChecklistJump] = useState<{ index: number; nonce: number } | undefined>();
+
+  useEffect(() => {
+    const open = (url: string | null) => {
+      if (!url || !url.startsWith("no-burnout://checklist")) return;
+      if (navRef.isReady() && navRef.canGoBack()) navRef.dispatch(StackActions.popToTop());
+      openSection("sterzhen");
+      // 1 — место «Чек-листа» среди вкладок раздела.
+      setChecklistJump((j) => ({ index: 1, nonce: (j?.nonce ?? 0) + 1 }));
+    };
+    void Linking.getInitialURL().then(open);
+    const sub = Linking.addEventListener("url", ({ url }) => open(url));
+    return () => sub.remove();
+  }, []);
+
+  // Ушли из раздела: прыжок забыт, иначе вход в раздел снова открывал бы «Чек-лист».
+  useEffect(() => {
+    if (section !== "sterzhen") setChecklistJump(undefined);
+  }, [section]);
+
   return (
     <NavigationContainer theme={navTheme} ref={navRef}>
       <Stack.Navigator
@@ -135,6 +160,7 @@ export default function RootTabs() {
                   <HomeScreen onOpen={openSection} />
                 ) : section === "sterzhen" ? (
                   <TabbedSection
+                    jump={checklistJump}
                     tabs={[
                       { title: "Отчёт", render: () => <ReportScreen navigation={navigation} /> },
                       { title: "Чек-лист", render: () => <TodayScreen /> },
