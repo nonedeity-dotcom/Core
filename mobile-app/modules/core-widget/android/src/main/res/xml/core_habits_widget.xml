@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Раз в полчаса — чаще система не разрешает. Этого хватает на главное: после полуночи
-  виджет сам сбрасывает вчерашние галочки, даже если приложение не открывали.
+  Раз в полчаса — чаще система не разрешает. Часы и дату рисует сама система (TextClock),
+  а список после полуночи сбрасывает вчерашние галочки при очередном обновлении.
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-  android:minWidth="180dp"
-  android:minHeight="110dp"
+  android:minWidth="250dp"
+  android:minHeight="180dp"
+  android:minResizeWidth="180dp"
+  android:minResizeHeight="110dp"
   android:updatePeriodMillis="1800000"
   android:initialLayout="@layout/core_widget"
   android:resizeMode="horizontal|vertical"
