@@ -2,9 +2,9 @@
   package="expo.modules.corewidget">
 
   <!--
-    Виджет «Сегодня» на рабочем столе. Приёмник не экспортирован: обновления виджета ему
-    шлёт система от имени самого приложения, а нажатия на строки приходят через
-    PendingIntent этого же приложения — чужим сюда стучаться незачем.
+    Виджет «Сегодня» на рабочем столе. Всё не экспортировано: обновления виджета ему шлёт
+    система от имени самого приложения, а нажатия приходят через PendingIntent этого же
+    приложения — чужим сюда стучаться незачем.
   -->
   <application>
     <receiver
@@ -18,6 +18,25 @@
         android:name="android.appwidget.provider"
         android:resource="@xml/core_habits_widget" />
     </receiver>
+
+    <!-- Поставщик строк для прокручиваемого списка в виджете. -->
+    <service
+      android:name="expo.modules.corewidget.WidgetListService"
+      android:exported="false"
+      android:permission="android.permission.BIND_REMOTEVIEWS" />
+
+    <!--
+      Невидимая развилка для нажатий: раскрыть привычку, свернуть её или открыть приложение.
+      Своя задача (taskAffinity пустой), чтобы раскрытие подзадач не вытаскивало приложение
+      на экран.
+    -->
+    <activity
+      android:name="expo.modules.corewidget.WidgetActionActivity"
+      android:exported="false"
+      android:excludeFromRecents="true"
+      android:noHistory="true"
+      android:taskAffinity=""
+      android:theme="@android:style/Theme.NoDisplay" />
   </application>
 
 </manifest>
