@@ -95,7 +95,28 @@ internal object WidgetRender {
   /** Раскрытая привычка — только если она ещё есть и подзадачи у неё остались. */
   fun expanded(context: Context, rows: List<WidgetRow>): WidgetRow? {
     val id = WidgetStore.expanded(context) ?: return null
-    return rows.firstOrNull { it.id == id && it.hasSubs }
+    return rows.firstOrNull { it.id == id && it.hasSubs && !it.done }
+  }
+
+  /**
+   * Сколько задач на сегодня и сколько сделано.
+   *
+   * Подзадачи считаются вместо родителя, а не вместе с ним: родитель — не отдельная задача,
+   * он закрывается, когда сделаны все его подзадачи.
+   */
+  fun progress(rows: List<WidgetRow>): Pair<Int, Int> {
+    var done = 0
+    var total = 0
+    for (r in rows) {
+      if (r.hasSubs) {
+        total += r.subs.size
+        done += r.subs.count { it.done }
+      } else {
+        total += 1
+        if (r.done) done += 1
+      }
+    }
+    return done to total
   }
 
   /** Что показывает список: подзадачи раскрытой привычки или все привычки. */
@@ -103,9 +124,9 @@ internal object WidgetRender {
     val rows = rows(context) ?: return emptyList()
     val open = expanded(context, rows)
     if (open != null) {
-      return open.subs.map { WidgetItem(it.label, it.done, false, "", null) }
+      return open.subs.filter { !it.done }.map { WidgetItem(it.label, false, false, "", null) }
     }
-    return rows.map { r ->
+    return rows.filter { !it.done }.map { r ->
       WidgetItem(
         label = r.label,
         done = r.done,
@@ -130,14 +151,21 @@ internal object WidgetRender {
     views.setOnClickPendingIntent(R.id.core_widget_empty, open)
 
     val rows = rows(context)
-    views.setTextViewText(
-      R.id.core_widget_empty,
-      if (rows == null) "Открой Core — и здесь появятся привычки на сегодня." else "В «Ввожу сейчас» пока пусто.",
-    )
-    views.setTextViewText(
-      R.id.core_widget_progress,
-      if (rows.isNullOrEmpty()) "" else "Сегодня · ${rows.count { it.done }} из ${rows.size}",
-    )
+    // Список пуст в трёх случаях, и говорить в каждом надо своё.
+    val emptyText = if (rows == null) {
+      "Открой Core — и здесь появятся привычки на сегодня."
+    } else if (rows.isEmpty()) {
+      "В «Ввожу сейчас» пока пусто."
+    } else {
+      "Всё сделано на сегодня ✓"
+    }
+    views.setTextViewText(R.id.core_widget_empty, emptyText)
+    if (rows.isNullOrEmpty()) {
+      views.setTextViewText(R.id.core_widget_progress, "")
+    } else {
+      val (done, total) = progress(rows)
+      views.setTextViewText(R.id.core_widget_progress, "Сегодня · $done из $total")
+    }
 
     val expanded = if (rows == null) null else expanded(context, rows)
     if (expanded != null) {
