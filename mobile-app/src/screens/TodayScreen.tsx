@@ -30,9 +30,11 @@ import { habitStanding, standingRank, type HabitStanding } from "../lib/habitSta
 import {
   MINUTES_IN_DAY,
   canMarkNow,
+  effectiveLateRule,
   formatSchedule,
   formatWindow,
   normalizeSchedule,
+  windowState,
 } from "../lib/habitSchedule";
 import { useStreak, frozenDaysFor } from "../lib/useStreak";
 import { DEFAULT_DAY_RULE, requiredForDay, type DayRule } from "../lib/dayRule";
@@ -180,6 +182,11 @@ export default function TodayScreen() {
     setOpenGroups((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   // One per group, and closed again the moment you leave the tab.
   const folds = useFoldSet();
+  // Свёрнутость «Провалено» по группам. Отдельное состояние, чтобы не зависеть от того, какие
+  // ключи принимает набор свёрнутых групп.
+  const [failedOpenIds, setFailedOpenIds] = useState<string[]>([]);
+  const toggleFailed = (id: string) =>
+    setFailedOpenIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   /*
    * Какие привычки раскрыты (показывают подзадачи) — хранится здесь, а не в самой строке.
    *
@@ -382,12 +389,23 @@ export default function TodayScreen() {
 
 // Отметка берётся только за сегодня: в allLogs лежат 4 месяца, и find вернул бы самую старую запись.
   const isDoneToday = (id: string) => !!logs.find((l) => l.habitId === id)?.done;
+  // Недельная цель закрыта на всю неделю: «1 раз в неделю», отмеченное во вторник, не
+  // сбрасывается в среду. Дневная отметка тут ни при чём — считаются дни недели.
+  const weekMet = (h: Habit) => {
+    if (habitTarget(h).kind !== "weekly") return false;
+    // Только дни до сегодняшнего: сегодняшнюю отметку несёт `logs`. Недельный запрос после
+    // сброса какое-то время отстаёт и держал бы привычку закрытой, хотя отметку уже сняли.
+    const w = weeklyProgress(h, weekLogs.filter((l) => l.date !== today), weekDates);
+    return w.count >= w.target;
+  };
+  // Закрыта сегодня или, если она недельная, уже закрыта на этой неделе.
+  const isSettled = (h: Habit) => isDoneToday(h.id) || weekMet(h);
 
   const handleBump = (habit: Habit, minimal: boolean = false) => {
     // Подзадача
     if (habit.parentId) {
       // Уже отмечена — в обычном режиме не снимается
-      if (isDoneToday(habit.id)) return;
+      if (isSettled(habit)) return;
 
       const steps: BumpStep[] = [{ habit, minimal: false }];
 
@@ -396,7 +414,7 @@ export default function TodayScreen() {
       const parent = habits.find((h) => h.id === habit.parentId);
       const siblings = habits.filter((h) => h.parentId === habit.parentId);
       const closesThis = logCount(logs.find((l) => l.habitId === habit.id)) + 1 >= perDayTarget(habit);
-      const othersDone = siblings.every((s) => s.id === habit.id || isDoneToday(s.id));
+      const othersDone = siblings.every((s) => s.id === habit.id || isSettled(s));
       if (closesThis && othersDone && parent && !isDoneToday(parent.id)) {
         // Родитель добирается до своей цели целиком, а не на один шаг.
         const left = perDayTarget(parent) - logCount(logs.find((l) => l.habitId === parent.id));
@@ -408,7 +426,7 @@ export default function TodayScreen() {
 
     // Родитель с подзадачами: пока не готовы все подзадачи, отметить нельзя
     const subs = habits.filter((h) => h.parentId === habit.id);
-    if (subs.length > 0 && !subs.every((s) => isDoneToday(s.id))) return;
+    if (subs.length > 0 && !subs.every((s) => isSettled(s))) return;
 
     bump.mutate([{ habit, minimal }]);
   };
@@ -594,9 +612,13 @@ export default function TodayScreen() {
   // (он закрывается автоматически, когда готовы все подзадачи), иначе он считался бы дважды.
   const units = deciding.flatMap((p) => {
     const subs = habits.filter((s) => s.parentId === p.id);
-    return subs.length > 0 ? subs : [p];
+    // Подзадачи решают день по тому же правилу, что и привычки: недельная, которую сегодня
+    // можно пропустить, не требуется каждый день.
+    return subs.length > 0 ? habitsThatDecideTheDay(subs) : [p];
   });
-  const closed = units.filter((h) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h)).length;
+  const closed = units.filter(
+    (h) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h) || weekMet(h),
+  ).length;
   const required = requiredForDay(dayRule, units.length);
 
   // Норма по уровням — вторая половина того же приговора дня. Считается здесь, потому что
@@ -773,9 +795,23 @@ export default function TodayScreen() {
         // decides the day — stays visibly separate from the two that do not.
         const standings = new Map(inGroup.map((h) => [h.id, standingOf(h)] as const));
         const rank = (h: Habit) => standingRank(standings.get(h.id)!.bucket);
-        const open = inGroup.filter((h) => standings.get(h.id)!.bucket !== "done").sort((a, b) => rank(a) - rank(b));
+        // Провалено: у привычки стоит время, оно вышло, а правило говорит, что пропуск стоит дня.
+        // Условие то же, по которому список пишет «время вышло — день провален». Привычки без
+        // времени сюда не попадают: в конце дня они и так станут проваленными и список обновится.
+        // Недельная тоже не провалена из-за одного дня, а выходной — не провал.
+        const isFailed = (h: Habit) => {
+          if (group.id === "later" || !h.schedule || habitTarget(h).kind === "weekly") return false;
+          if (isDayOff(today, daysOff)) return false;
+          if (standings.get(h.id)!.bucket === "done") return false;
+          return windowState(h.schedule, minutes) === "late" && effectiveLateRule(h, lateRule) === "fail";
+        };
+        const failed = inGroup.filter(isFailed);
+        const open = inGroup
+          .filter((h) => standings.get(h.id)!.bucket !== "done" && !isFailed(h))
+          .sort((a, b) => rank(a) - rank(b));
         const done = inGroup.filter((h) => standings.get(h.id)!.bucket === "done");
         const doneOpen = folds.isOpen(group.id);
+        const failedOpen = failedOpenIds.includes(group.id);
 
         const row = (h: Habit) => {
          const mySubtasks = habits.filter(sub => sub.parentId === h.id);
@@ -869,7 +905,7 @@ renderEditor(h.id, false)
             <Text style={styles.groupBlurb}>{group.blurb}</Text>
             {inGroup.length === 0 && <Text style={styles.groupEmpty}>пусто</Text>}
 
-            {done.length > 0 && open.length > 0 && (
+            {(done.length > 0 || failed.length > 0) && open.length > 0 && (
               // Only worth a caption once something has moved out of it, and only while
               // something is left: with the pile empty, «Выполнено · N» right below says it.
               <Text style={styles.subHeading}>{`Осталось · ${open.length}`}</Text>
@@ -893,6 +929,26 @@ renderEditor(h.id, false)
                   <Text style={styles.doneToggleText}>{`Выполнено · ${done.length}`}</Text>
                 </Pressable>
                 {doneOpen && done.map(row)}
+              </>
+            )}
+
+            {failed.length > 0 && (
+              <>
+                <Pressable
+                  onPress={() => toggleFailed(group.id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: failedOpen }}
+                  accessibilityLabel={`Провалено: ${failed.length}`}
+                  style={({ pressed }) => [styles.doneToggle, pressed && styles.dimmed]}
+                >
+                  <Feather
+                    name={failedOpen ? "chevron-down" : "chevron-right"}
+                    size={13}
+                    color={colors.accent}
+                  />
+                  <Text style={styles.failedToggleText}>{`Провалено · ${failed.length}`}</Text>
+                </Pressable>
+                {failedOpen && failed.map(row)}
               </>
             )}
               </>
@@ -989,6 +1045,8 @@ function HabitRow({
   canMakeSubtask: boolean;
   onMakeSubtask: () => void;
 }) {
+  // Пояснение к значку предупреждения: по умолчанию скрыто, раскрывается нажатием на значок.
+  const [noteOpen, setNoteOpen] = useState(false);
   const target = habitTarget(habit);
   const hasSub = subtasks.length > 0;
   const doneCount = subtasks.filter(s => logs.find(l => l.habitId === s.id)?.done).length;
@@ -1115,10 +1173,22 @@ function HabitRow({
                 already inside «Выполнено». A finished weekly one still reports its count. */}
             {tickable && standing.note && !(standing.bucket === "done" && !weekly) && (
               <View style={styles.noteRow}>
-                {urgent && <Feather name="alert-triangle" size={10} color={colors.accent} />}
-                <Text style={[styles.progress, urgent && styles.progressUrgent]}>
-                  {`${standing.note}${weekly && doneToday ? " · сегодня отмечено" : ""}`}
-                </Text>
+                {/* У любого пояснения — только значок; текст показывается по нажатию на него.
+                    Срочное горит акцентным цветом, остальные приглушены. */}
+                <Pressable
+                  onPress={() => setNoteOpen((v) => !v)}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel={standing.note}
+                  accessibilityState={{ expanded: noteOpen }}
+                >
+                  <Feather name="alert-triangle" size={14} color={urgent ? colors.accent : colors.textMuted} />
+                </Pressable>
+                {noteOpen && (
+                  <Text style={[styles.progress, urgent && styles.progressUrgent]}>
+                    {`${standing.note}${weekly && doneToday ? " · сегодня отмечено" : ""}`}
+                  </Text>
+                )}
               </View>
             )}
             {!tickable && <Text style={styles.progress}>{describeTarget(target)}</Text>}
@@ -1177,8 +1247,7 @@ function HabitRow({
             </View>
           );
         }
-        const isDone = logs.find(l => l.habitId === sub.id)?.done ?? false;
-        const canTick = tickable && markable && !isDone;
+        const doneToday = logs.find(l => l.habitId === sub.id)?.done ?? false;
         // То же, что у привычки: уровень и «сколько раз». Своя цель у подзадачи есть — её
         // задают в том же редакторе, — но в строке она нигде не показывалась.
         const subLevel = levelChoiceOf(sub);
@@ -1186,6 +1255,17 @@ function HabitRow({
         const subPerDay = perDayTarget(sub);
         const subCount = logCount(logs.find(l => l.habitId === sub.id));
         const subWeek = subTarget.kind === "weekly" ? weeklyProgress(sub, weekLogs, weekDates) : null;
+        // Недельная подзадача, у которой неделя уже закрыта, остаётся закрытой до конца недели:
+        // без этого на следующий день отметка сбрасывалась и её можно было поставить снова (2/1).
+        // Неделя закрыта в прошлые дни — тогда подзадача закрыта. Сегодняшний день берётся из
+        // `doneToday`, а не из недельного запроса, который после сброса отстаёт.
+        const todayKey = weekDates[weekDates.length - 1];
+        const subEarlier =
+          subTarget.kind === "weekly"
+            ? weeklyProgress(sub, weekLogs.filter(l => l.date !== todayKey), weekDates)
+            : null;
+        const isDone = doneToday || (!!subEarlier && subEarlier.count >= subEarlier.target);
+        const canTick = tickable && markable && !isDone;
         const subFreq = subWeek
           ? `${subWeek.count}/${subWeek.target} в неделю`
           : subPerDay > 1
@@ -1225,7 +1305,7 @@ function HabitRow({
 
             {editing && (
               <>
-                {isDone && (
+                {doneToday && (
                   <Pressable onPress={() => onResetSubtask(sub)} style={styles.iconBtn} accessibilityLabel={`Сбросить за сегодня: ${sub.label}`}>
                     <Feather name="rotate-ccw" size={14} color={colors.textMuted} />
                   </Pressable>
@@ -2035,6 +2115,7 @@ const styles = StyleSheet.create({
   subHeading: { color: colors.textMuted, fontSize: 11, marginBottom: 6 },
   doneToggle: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 8 },
   doneToggleText: { color: colors.accentGreen, fontSize: 12, fontWeight: "600" },
+  failedToggleText: { color: colors.accent, fontSize: 12, fontWeight: "600" },
   groupEmpty: { color: colors.textMuted, fontSize: 12, fontStyle: "italic", marginBottom: 10 },
 
   habitBlock: { marginBottom: 10 },
