@@ -4,9 +4,11 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 
 /**
- * Виджет «Сегодня»: время и дата, под ними привычки из «Ввожу сейчас».
+ * Виджет «Сегодня»: время и дата, под ними привычки из «Ввожу сейчас». Кнопка в углу
+ * переключает его в режим «часы»: на весь виджет только время, число и день недели.
  *
  * Отмечать привычки отсюда нельзя: виджет только показывает. Нажатие на привычку с
  * подзадачами раскрывает её, нажатие на всё остальное открывает «Чек-лист» в приложении
@@ -18,6 +20,15 @@ class HabitsWidgetProvider : AppWidgetProvider() {
     for (id in appWidgetIds) appWidgetManager.updateAppWidget(id, views)
     // Список — отдельный поставщик данных: сам он про перемену не узнает.
     appWidgetManager.notifyAppWidgetViewDataChanged(appWidgetIds, R.id.core_widget_list)
+  }
+
+  override fun onReceive(context: Context, intent: Intent) {
+    // Кнопка «часы» в углу: переключить режим и перерисовать. Остальное — как у системы.
+    if (intent.action == WidgetRender.ACTION_TOGGLE_CLOCK) {
+      WidgetRender.toggleClock(context)
+      return
+    }
+    super.onReceive(context, intent)
   }
 
   companion object {
