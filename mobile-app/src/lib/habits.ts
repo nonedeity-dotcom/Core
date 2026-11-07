@@ -119,7 +119,7 @@ export function habitsThatDecideTheDay(
  * на весь остаток недели, как только набрана его неделя. false — как было раньше: недельные
  * из зачёта дня выпадают, потому что в день без тренировки их не закрыть.
  */
-export const WEEKLY_COUNTS_FOR_DAY = false;
+export const WEEKLY_COUNTS_FOR_DAY = true;
 
 /**
  * Пункты, по которым судится день, — одним списком для всего приложения: шапка чек-листа,
