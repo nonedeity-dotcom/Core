@@ -795,14 +795,22 @@ export default function TodayScreen() {
         // decides the day — stays visibly separate from the two that do not.
         const standings = new Map(inGroup.map((h) => [h.id, standingOf(h)] as const));
         const rank = (h: Habit) => standingRank(standings.get(h.id)!.bucket);
-        // Провалено: у привычки стоит время, оно вышло, а правило говорит, что пропуск стоит дня.
-        // Условие то же, по которому список пишет «время вышло — день провален». Привычки без
-        // времени сюда не попадают: в конце дня они и так станут проваленными и список обновится.
-        // Недельная тоже не провалена из-за одного дня, а выходной — не провал.
+        // Провалено — то, что уже нельзя спасти сегодня:
+        //  1) у привычки стоит время, оно вышло, а правило говорит, что пропуск стоит дня (то же
+        //     условие, по которому список пишет «время вышло — день провален»);
+        //  2) экранная привычка «не больше»: лимит уже превышен, а потраченное не вернуть.
+        // Привычки без времени и лимита сюда не попадают: в конце дня они и так станут
+        // проваленными и список обновится. Недельная не проваливается из-за одного дня,
+        // а выходной — не провал.
         const isFailed = (h: Habit) => {
-          if (group.id === "later" || !h.schedule || habitTarget(h).kind === "weekly") return false;
+          if (group.id === "later" || habitTarget(h).kind === "weekly") return false;
           if (isDayOff(today, daysOff)) return false;
           if (standings.get(h.id)!.bucket === "done") return false;
+          if (h.auto === "screentime" && h.screen && ruleDirection(h.screen) === "atMost") {
+            const used = usedFor(h.screen);
+            if (used !== null && used > h.screen.limitMin) return true;
+          }
+          if (!h.schedule) return false;
           return windowState(h.schedule, minutes) === "late" && effectiveLateRule(h, lateRule) === "fail";
         };
         const failed = inGroup.filter(isFailed);
@@ -1136,9 +1144,6 @@ function HabitRow({
       </View>
     </>
   )}
-    <Pressable onPress={() => setExpanded(!expanded)} style={{ padding: 2 }}>
-      <Feather name={expanded ? "chevron-up" : "chevron-down"} size={20} color={colors.textMuted} />
-    </Pressable>
   </View>
 )}
               {/* Метка уровня стоит у названия, а не в конце строки: уровень — свойство самой
@@ -1173,19 +1178,27 @@ function HabitRow({
                 already inside «Выполнено». A finished weekly one still reports its count. */}
             {tickable && standing.note && !(standing.bucket === "done" && !weekly) && (
               <View style={styles.noteRow}>
-                {/* У любого пояснения — только значок; текст показывается по нажатию на него.
-                    Срочное горит акцентным цветом, остальные приглушены. */}
-                <Pressable
-                  onPress={() => setNoteOpen((v) => !v)}
-                  hitSlop={10}
-                  accessibilityRole="button"
-                  accessibilityLabel={standing.note}
-                  accessibilityState={{ expanded: noteOpen }}
-                >
-                  <Feather name="alert-triangle" size={14} color={urgent ? colors.accent : colors.textMuted} />
-                </Pressable>
-                {noteOpen && (
-                  <Text style={[styles.progress, urgent && styles.progressUrgent]}>
+                {urgent ? (
+                  // Срочное — только значок; текст показывается по нажатию на него.
+                  <>
+                    <Pressable
+                      onPress={() => setNoteOpen((v) => !v)}
+                      hitSlop={10}
+                      accessibilityRole="button"
+                      accessibilityLabel={standing.note}
+                      accessibilityState={{ expanded: noteOpen }}
+                    >
+                      <Feather name="alert-triangle" size={14} color={colors.accent} />
+                    </Pressable>
+                    {noteOpen && (
+                      <Text style={[styles.progress, styles.progressUrgent]}>
+                        {`${standing.note}${weekly && doneToday ? " · сегодня отмечено" : ""}`}
+                      </Text>
+                    )}
+                  </>
+                ) : (
+                  // Остальные пояснения остаются обычной строкой текста.
+                  <Text style={styles.progress}>
                     {`${standing.note}${weekly && doneToday ? " · сегодня отмечено" : ""}`}
                   </Text>
                 )}
@@ -1218,6 +1231,22 @@ function HabitRow({
               <Feather name="archive" size={14} color={colors.textMuted} />
             </Pressable>
           </>
+        )}
+
+        {/* Стрелка раскрытия подзадач стоит отдельной кнопкой справа, а не внутри области
+            отметки: раньше она была 24 пикселя и лежала в ней, поэтому промах мимо неё
+            отмечал привычку выполненной. Теперь у неё своя зона, высотой с карточку. */}
+        {habit.hasSubtasks && (
+          <Pressable
+            onPress={() => setExpanded(!expanded)}
+            hitSlop={{ top: 14, bottom: 14, left: 6, right: 12 }}
+            accessibilityRole="button"
+            accessibilityState={{ expanded }}
+            accessibilityLabel={expanded ? `Скрыть подзадачи: ${habit.label}` : `Показать подзадачи: ${habit.label}`}
+            style={{ padding: 10, marginLeft: 2, marginRight: -6 }}
+          >
+            <Feather name={expanded ? "chevron-up" : "chevron-down"} size={22} color={colors.textMuted} />
+          </Pressable>
         )}
       </View>
 
