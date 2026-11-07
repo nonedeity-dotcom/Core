@@ -1,5 +1,7 @@
 import { useEffect, useState, type ComponentType } from "react";
 import { AppState, View } from "react-native";
+import * as Font from "expo-font";
+import { Feather } from "@expo/vector-icons";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./src/api/queryClient";
 import { api } from "./src/api/client";
@@ -34,17 +36,20 @@ export default function App() {
   const [Root, setRoot] = useState<ComponentType | null>(null);
 
   useEffect(() => {
-    void api
+    // Шрифт иконок грузится вместе с кошельком, пока показан пустой фон. Раньше он догружался
+    // уже после появления экрана, и стрелки с иконками «доезжали» с задержкой.
+    const fonts = Font.loadAsync(Feather.font).catch(() => {});
+    const purse = api
       .getPurse()
       .then((purse) => {
         colors.accent = accentColor(purse.equipped.accent);
       })
       // Акцент — украшение. Не прочитался кошелёк — остаётся родной цвет, а приложение
       // всё равно открывается: падать из-за цвета нечестно.
-      .catch(() => {})
-      // Обёртка обязательна: useState принимает функцию за «посчитай новое значение», а
-      // компонент — это функция, и без неё React вызвал бы его вместо того, чтобы сохранить.
-      .finally(() => setRoot(() => loadRoot()));
+      .catch(() => {});
+    // Обёртка обязательна: useState принимает функцию за «посчитай новое значение», а
+    // компонент — это функция, и без неё React вызвал бы его вместо того, чтобы сохранить.
+    void Promise.all([purse, fonts]).then(() => setRoot(() => loadRoot()));
   }, []);
 
   useEffect(() => {
@@ -63,11 +68,16 @@ export default function App() {
     const check = () => {
       void checkAndNotify().then((r) => void setBackgroundCheck(r.reason !== "off"));
     };
-    check();
+    // Первая проверка — чуть позже старта: в первые секунды экран и так грузит данные, и
+    // проверка уведомлений соревновалась бы с ним за один и тот же поток.
+    const first = setTimeout(check, 2500);
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active") check();
     });
-    return () => sub.remove();
+    return () => {
+      clearTimeout(first);
+      sub.remove();
+    };
   }, []);
 
   return (
