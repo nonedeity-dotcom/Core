@@ -13,11 +13,17 @@ import type {
 } from "../types";
 import { todayKey, tomorrowKey } from "../lib/date";
 import { habitGroup, itemGroup } from "../lib/habits";
-import { DEFAULT_DAY_RULE, normalizeDayRule, type DayRule } from "../lib/dayRule";
+import { DEFAULT_DAY_RULE, changeDayRule, normalizeDayRule, withPastRule, type DayRule } from "../lib/dayRule";
 import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skipRule";
 import { DEFAULT_DAY_OFF, normalizeDayOff, pruneDates, type DayOffRule } from "../lib/dayOff";
 import { normalizeGoals, type PeriodGoal } from "../lib/goals";
 import { DEFAULT_LEVEL_RULE, normalizeLevelRule, type HabitLevel, type LevelRule } from "../lib/level";
+import {
+  changeLevelHistory,
+  normalizeLevelEras,
+  withPastLevelRule,
+  type LevelRuleWithHistory,
+} from "../lib/levelHistory";
 import { DEFAULT_GAME_STATS, mergeGameStats, normalizeGameStats, type GameStats } from "../lib/games/stats";
 import { mergeVillage, normalizeVillage, type VillageState } from "../lib/village/game";
 import { normalizeSettings, type VillageSettings } from "../lib/village/settings";
@@ -65,6 +71,7 @@ const KEYS = {
   dayRule: "day-rule-v1",
   skipRule: "skip-rule-v1",
   levelRule: "level-rule-v1",
+  levelHistory: "level-rule-history-v1",
   gameStats: "game-stats-v1",
   village: "village-v1",
   villageUi: "village-ui-v1",
@@ -489,6 +496,50 @@ export const api = {
     });
   },
   /**
+   * Делает обычную привычку подзадачей другой — одной записью, а не двумя вызовами updateHabit.
+   *
+   * Отметки лежат в habitLog под id самой привычки, а id здесь не меняется — поэтому вся
+   * история остаётся ровно на месте: ничего не копируется и не переписывается. Меняются
+   * только два поля у самой привычки (`parentId`, `hasSubtasks`) и один флаг у родителя.
+   *
+   * Всё под одним замком и одной записью: подзадача, у которой родитель ещё не знает про
+   * подзадачи, на экране не видна нигде — из верхнего списка она уже ушла, а панели
+   * подзадач у родителя нет. Два отдельных вызова при сбое на втором оставили бы привычку
+   * невидимой.
+   *
+   * Отказывает там, где экран не умеет рисовать результат: глубже двух уровней вложенности
+   * нет (подзадача подзадачи не показывается), а у привычки, у которой есть свои подзадачи,
+   * они бы потерялись вместе с ней.
+   */
+  async makeSubtask(
+    id: string,
+    parentId: string,
+  ): Promise<
+    | { ok: true; reason?: undefined }
+    | { ok: false; reason: "not_found" | "same" | "already_subtask" | "has_subtasks" | "parent_is_subtask" }
+  > {
+    return withKeyLock(KEYS.habits, async () => {
+      const habits = await read<Habit[]>(KEYS.habits, []);
+      const child = habits.find((h) => h.id === id);
+      const parent = habits.find((h) => h.id === parentId);
+      if (!child || !parent || child.archivedAt || parent.archivedAt) return { ok: false as const, reason: "not_found" as const };
+      if (id === parentId) return { ok: false as const, reason: "same" as const };
+      if (child.parentId) return { ok: false as const, reason: "already_subtask" as const };
+      if (parent.parentId) return { ok: false as const, reason: "parent_is_subtask" as const };
+      if (habits.some((h) => h.parentId === id)) return { ok: false as const, reason: "has_subtasks" as const };
+
+      await write(
+        KEYS.habits,
+        habits.map((h) => {
+          if (h.id === id) return { ...h, parentId, hasSubtasks: false };
+          if (h.id === parentId) return { ...h, hasSubtasks: true };
+          return h;
+        }),
+      );
+      return { ok: true as const };
+    });
+  },
+  /**
    * Puts a habit aside without losing anything.
    *
    * The marks stay exactly where they are, so restoring brings the whole history back and
@@ -640,8 +691,24 @@ export const api = {
   async getDayRule(): Promise<DayRule> {
     return normalizeDayRule(await read<unknown>(KEYS.dayRule, DEFAULT_DAY_RULE));
   },
+  /**
+   * Меняет правило с сегодняшнего дня. Прошлые дни остаются под тем правилом, которое
+   * стояло в них, — историю хранит само правило, см. changeDayRule. Читает и пишет под одним
+   * замком: два быстрых нажатия «−» иначе прочли бы одно и то же и потеряли бы друг друга.
+   */
   async setDayRule(rule: DayRule): Promise<{ ok: true }> {
-    await write(KEYS.dayRule, normalizeDayRule(rule));
+    await withKeyLock(KEYS.dayRule, async () => {
+      const current = normalizeDayRule(await read<unknown>(KEYS.dayRule, DEFAULT_DAY_RULE));
+      await write(KEYS.dayRule, changeDayRule(current, rule, todayKey()));
+    });
+    return { ok: true as const };
+  },
+  /** «До такого-то дня действовало вот это правило» — для смен, сделанных до появления истории. */
+  async setPastDayRule(until: string, old: DayRule): Promise<{ ok: true }> {
+    await withKeyLock(KEYS.dayRule, async () => {
+      const current = normalizeDayRule(await read<unknown>(KEYS.dayRule, DEFAULT_DAY_RULE));
+      await write(KEYS.dayRule, withPastRule(current, until, old, todayKey()));
+    });
     return { ok: true as const };
   },
 
@@ -727,13 +794,45 @@ export const api = {
    * нельзя. По умолчанию везде нули — то есть пока сам не поставишь числа, уровни только
    * показываются и ничего не требуют.
    */
-  async getLevelRule(): Promise<LevelRule> {
-    return normalizeLevelRule(await read<unknown>(KEYS.levelRule, DEFAULT_LEVEL_RULE));
+  async getLevelRule(): Promise<LevelRuleWithHistory> {
+    const rule = normalizeLevelRule(await read<unknown>(KEYS.levelRule, DEFAULT_LEVEL_RULE));
+    // История лежит под своим ключом и приклеивается здесь: так и сама норма, и всё, что её
+    // читает, остаётся как было, а день судится по норме, которая стояла в нём.
+    const history = normalizeLevelEras(await read<unknown>(KEYS.levelHistory, []));
+    return history.length > 0 ? { ...rule, history } : rule;
   },
+  /**
+   * Меняет норму с сегодняшнего дня: прошлые дни остаются под той, что стояла в них.
+   * История пишется раньше нормы — оборвись запись между ними, лучше лишняя строка истории,
+   * чем новая норма, которая уже судит всё прошлое.
+   */
   async setLevelRule(rule: LevelRule): Promise<LevelRule> {
-    const clean = normalizeLevelRule(rule);
-    await write(KEYS.levelRule, clean);
-    return clean;
+    return withKeyLock(KEYS.levelRule, async () => {
+      const before = normalizeLevelRule(await read<unknown>(KEYS.levelRule, DEFAULT_LEVEL_RULE));
+      const clean = normalizeLevelRule(rule);
+      const history = changeLevelHistory(
+        normalizeLevelEras(await read<unknown>(KEYS.levelHistory, [])),
+        before,
+        clean,
+        todayKey(),
+      );
+      await write(KEYS.levelHistory, history);
+      await write(KEYS.levelRule, clean);
+      return clean;
+    });
+  },
+  /** «До такого-то дня норма была вот такой» — для смен, сделанных до появления истории. */
+  async setPastLevelRule(until: string, old: LevelRule): Promise<{ ok: true }> {
+    await withKeyLock(KEYS.levelRule, async () => {
+      const history = withPastLevelRule(
+        normalizeLevelEras(await read<unknown>(KEYS.levelHistory, [])),
+        until,
+        normalizeLevelRule(old),
+        todayKey(),
+      );
+      await write(KEYS.levelHistory, history);
+    });
+    return { ok: true as const };
   },
 
   /**
@@ -1688,6 +1787,8 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.dayRule, normalizeDayRule(data.dayRule)),
       write(KEYS.skipRule, normalizeSkipRule(data.skipRule)),
       write(KEYS.levelRule, normalizeLevelRule(data.levelRule)),
+      // Копия делалась через getLevelRule, и история лежит внутри самой нормы.
+      write(KEYS.levelHistory, normalizeLevelEras((data.levelRule as { history?: unknown } | undefined)?.history)),
       write(KEYS.daysOff, normalizeDayOff(data.daysOff)),
       write(KEYS.habitFreezes, data.habitFreezes),
       write(KEYS.tipPrefs, normalizeTipPrefs(data.tipPrefs)),
