@@ -8,12 +8,18 @@ import android.net.Uri
 import android.os.Build
 import android.view.View
 import android.widget.RemoteViews
+import java.util.Calendar
 
 /** Подзадача раскрытой привычки. */
 internal data class WidgetSub(
   val id: String,
   val label: String,
   val done: Boolean,
+  /**
+   * Время вышло, а правило — «день провален»: отметить уже нельзя. В списке не показывается,
+   * в счёте остаётся невыполненной. Считается по часам телефона при каждой сборке списка.
+   */
+  val failed: Boolean = false,
 )
 
 /** Привычка «Ввожу сейчас» на сегодня. */
@@ -25,9 +31,15 @@ internal data class WidgetRow(
   /** Отмечается сама (экранное время). */
   val auto: Boolean,
   val subs: List<WidgetSub>,
+  /** Провалена на сегодня (у родителя с подзадачами — когда провалены все его подзадачи). */
+  val failed: Boolean = false,
 ) {
   val done: Boolean
     get() = count >= target
+
+  /** Отмечать и раскрывать больше нечего: всё сделано или провалено. В список такая не попадает. */
+  val settled: Boolean
+    get() = if (subs.isNotEmpty()) subs.all { it.done || it.failed } else done || failed
 
   val hasSubs: Boolean
     get() = subs.isNotEmpty()
@@ -51,6 +63,9 @@ internal object WidgetRender {
   /** Ссылка, по которой приложение открывает «Чек-лист» (см. RootTabs). */
   const val CHECKLIST_URL = "no-burnout://checklist"
 
+  /** Нажатие на кнопку «часы»: его ловит провайдер и зовёт toggleClock. */
+  const val ACTION_TOGGLE_CLOCK = "expo.modules.corewidget.TOGGLE_CLOCK"
+
   val TEXT = Color.parseColor("#E8E6E0")
   val MUTED = Color.parseColor("#8B8F98")
   val GREEN = Color.parseColor("#8FB89A")
@@ -66,6 +81,7 @@ internal object WidgetRender {
     val fresh = snapshot.optString("date") == WidgetStore.today()
 
     val habits = snapshot.optJSONArray("habits") ?: return emptyList()
+    val now = nowMinutes()
     val out = ArrayList<WidgetRow>()
     for (i in 0 until habits.length()) {
       val h = habits.optJSONObject(i) ?: continue
@@ -79,7 +95,8 @@ internal object WidgetRender {
           val s = subsJson.optJSONObject(j) ?: continue
           val subId = s.optString("id")
           if (subId.isEmpty()) continue
-          subs.add(WidgetSub(subId, s.optString("label"), fresh && s.optBoolean("done", false)))
+          val subDone = fresh && s.optBoolean("done", false)
+          subs.add(WidgetSub(subId, s.optString("label"), subDone, failedAt(s.optLateAt(), subDone, now)))
         }
       }
 
@@ -90,15 +107,30 @@ internal object WidgetRender {
         subs.isNotEmpty() -> subs.count { it.done }
         else -> minOf(target, maxOf(0, h.optInt("count", 0)))
       }
-      out.add(WidgetRow(id, h.optString("label"), count, target, h.optBoolean("auto", false), subs))
+      // Родитель с подзадачами провален, только если провалены все его подзадачи.
+      val failed = if (subs.isNotEmpty()) subs.all { it.failed } else failedAt(h.optLateAt(), count >= target, now)
+      out.add(WidgetRow(id, h.optString("label"), count, target, h.optBoolean("auto", false), subs, failed))
     }
     return out
   }
 
+  /** Минут с начала суток по часам телефона — той же шкалой, что и время привычки в приложении. */
+  private fun nowMinutes(): Int {
+    val c = Calendar.getInstance()
+    return c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE)
+  }
+
+  /** Минута, после которой привычку уже нельзя отметить; null — по времени она не проваливается. */
+  private fun org.json.JSONObject.optLateAt(): Int? =
+    if (has("lateAt") && !isNull("lateAt")) optInt("lateAt") else null
+
+  /** «Поздно» — строго после конца окна, как windowState в приложении. Сделанное не проваливается. */
+  private fun failedAt(lateAt: Int?, done: Boolean, now: Int): Boolean = !done && lateAt != null && now > lateAt
+
   /** Раскрытая привычка — только если она ещё есть и подзадачи у неё остались. */
   fun expanded(context: Context, rows: List<WidgetRow>): WidgetRow? {
     val id = WidgetStore.expanded(context) ?: return null
-    return rows.firstOrNull { it.id == id && it.hasSubs && !it.done }
+    return rows.firstOrNull { it.id == id && it.hasSubs && !it.settled }
   }
 
   /**
@@ -127,9 +159,9 @@ internal object WidgetRender {
     val rows = rows(context) ?: return emptyList()
     val open = expanded(context, rows)
     if (open != null) {
-      return open.subs.filter { !it.done }.map { WidgetItem(it.label, false, false, "", null) }
+      return open.subs.filter { !it.done && !it.failed }.map { WidgetItem(it.label, false, false, "", null) }
     }
-    return rows.filter { !it.done }.map { r ->
+    return rows.filter { !it.settled }.map { r ->
       WidgetItem(
         label = r.label,
         done = r.done,
@@ -155,14 +187,29 @@ internal object WidgetRender {
     views.setOnClickPendingIntent(R.id.core_widget_header, open)
     views.setOnClickPendingIntent(R.id.core_widget_empty, open)
 
+    // Режим «часы»: на весь виджет только время, число и день недели. Сами часы идут без
+    // нас (TextClock), поэтому перерисовывать виджет раз в минуту не нужно.
+    val clockMode = WidgetStore.clock(context)
+    views.setViewVisibility(R.id.core_widget_normal, if (clockMode) View.GONE else View.VISIBLE)
+    views.setViewVisibility(R.id.core_widget_clock, if (clockMode) View.VISIBLE else View.GONE)
+    views.setImageViewResource(
+      R.id.core_widget_clock_btn,
+      if (clockMode) R.drawable.core_widget_ic_list else R.drawable.core_widget_ic_clock,
+    )
+    views.setContentDescription(R.id.core_widget_clock_btn, if (clockMode) "Список" else "Часы")
+    views.setOnClickPendingIntent(R.id.core_widget_clock_btn, toggleClockIntent(context))
+    views.setOnClickPendingIntent(R.id.core_widget_clock, open)
+
     val rows = rows(context)
     // Список пуст в трёх случаях, и говорить в каждом надо своё.
     val emptyText = if (rows == null) {
       "Открой Core — и здесь появятся привычки на сегодня."
     } else if (rows.isEmpty()) {
       "В «Ввожу сейчас» пока пусто."
-    } else {
+    } else if (rows.all { it.done }) {
       "Всё сделано на сегодня ✓"
+    } else {
+      "Больше задач на сегодня нет"
     }
     views.setTextViewText(R.id.core_widget_empty, emptyText)
     if (rows.isNullOrEmpty()) {
@@ -197,6 +244,18 @@ internal object WidgetRender {
       action(context, requestCode = 1, collapse = false, mutable = true),
     )
     return views
+  }
+
+  /** Кнопка «часы» шлёт широковещательное сообщение провайдеру: активность для этого не нужна. */
+  private fun toggleClockIntent(context: Context): PendingIntent {
+    val intent = Intent(context, HabitsWidgetProvider::class.java).setAction(ACTION_TOGGLE_CLOCK)
+    return PendingIntent.getBroadcast(context, 3, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+  }
+
+  /** Переключить режим «часы» и сразу перерисовать все такие виджеты на экране. */
+  fun toggleClock(context: Context) {
+    WidgetStore.setClock(context, !WidgetStore.clock(context))
+    HabitsWidgetProvider.refreshAll(context)
   }
 
   /** Намерение, которым приложение открывается на «Чек-листе». */
