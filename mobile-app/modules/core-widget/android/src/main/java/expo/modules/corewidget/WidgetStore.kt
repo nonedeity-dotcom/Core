@@ -20,6 +20,7 @@ internal object WidgetStore {
   private const val SNAPSHOT = "snapshot"
   private const val PENDING = "pending"
   private const val EXPANDED = "expanded"
+  private const val CLOCK = "clock"
   private val lock = Any()
 
   /** Сегодняшняя дата по часам телефона — так же, как её считает приложение. */
@@ -72,6 +73,13 @@ internal object WidgetStore {
       if (habitId == null) edit.remove(EXPANDED) else edit.putString(EXPANDED, habitId)
       edit.commit()
     }
+  }
+
+  /** Включён ли режим «часы»: на весь виджет только время, число и день недели. */
+  fun clock(context: Context): Boolean = synchronized(lock) { prefs(context).getBoolean(CLOCK, false) }
+
+  fun setClock(context: Context, on: Boolean) {
+    synchronized(lock) { prefs(context).edit().putBoolean(CLOCK, on).commit() }
   }
 
   /** Отдать накопленные нажатия и забыть их — одним шагом, чтобы ни одно не ушло дважды. */
