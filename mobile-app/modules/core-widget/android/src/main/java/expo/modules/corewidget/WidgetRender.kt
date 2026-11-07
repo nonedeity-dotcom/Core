@@ -3,8 +3,10 @@ package expo.modules.corewidget
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.view.View
 import android.widget.RemoteViews
@@ -199,6 +201,10 @@ internal object WidgetRender {
     views.setContentDescription(R.id.core_widget_clock_btn, if (clockMode) "Список" else "Часы")
     views.setOnClickPendingIntent(R.id.core_widget_clock_btn, toggleClockIntent(context))
     views.setOnClickPendingIntent(R.id.core_widget_clock, open)
+    if (clockMode) {
+      bindWeather(context, views)
+      bindBattery(context, views)
+    }
 
     val rows = rows(context)
     // Список пуст в трёх случаях, и говорить в каждом надо своё.
@@ -244,6 +250,47 @@ internal object WidgetRender {
       action(context, requestCode = 1, collapse = false, mutable = true),
     )
     return views
+  }
+
+  /** Погода слева сверху. Нет свежих данных — блок скрыт, часы остаются по центру. */
+  private fun bindWeather(context: Context, views: RemoteViews) {
+    val w = WidgetWeather.cached(context)
+    if (w == null) {
+      views.setViewVisibility(R.id.core_widget_weather, View.GONE)
+      return
+    }
+    views.setViewVisibility(R.id.core_widget_weather, View.VISIBLE)
+    views.setTextViewText(R.id.core_widget_weather_icon, WidgetWeather.icon(w.code, w.isDay))
+    views.setTextViewText(R.id.core_widget_weather_temp, WidgetWeather.degrees(w.temp))
+    views.setTextViewText(R.id.core_widget_weather_feels, "Ощущается ${WidgetWeather.degrees(w.feels)}")
+  }
+
+  /** Заряд батареи внизу: до 20% красная, 21–35% оранжевая, выше — зелёная. */
+  private fun bindBattery(context: Context, views: RemoteViews) {
+    val pct = batteryPercent(context)
+    if (pct < 0) {
+      views.setViewVisibility(R.id.core_widget_battery, View.GONE)
+      return
+    }
+    views.setViewVisibility(R.id.core_widget_battery, View.VISIBLE)
+    val bars = intArrayOf(R.id.core_widget_battery_red, R.id.core_widget_battery_orange, R.id.core_widget_battery_green)
+    val active = when {
+      pct <= 20 -> 0
+      pct <= 35 -> 1
+      else -> 2
+    }
+    for (i in bars.indices) views.setViewVisibility(bars[i], if (i == active) View.VISIBLE else View.GONE)
+    views.setProgressBar(bars[active], 100, pct, false)
+    views.setTextViewText(R.id.core_widget_battery_text, "$pct%")
+  }
+
+  /** Процент заряда или -1, если система его не сообщила. */
+  private fun batteryPercent(context: Context): Int {
+    val status = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return -1
+    val level = status.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+    val scale = status.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+    if (level < 0 || scale <= 0) return -1
+    return level * 100 / scale
   }
 
   /** Кнопка «часы» шлёт широковещательное сообщение провайдеру: активность для этого не нужна. */
