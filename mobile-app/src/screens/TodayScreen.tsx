@@ -818,6 +818,9 @@ export default function TodayScreen() {
 
         const row = (h: Habit) => {
          const mySubtasks = habits.filter(sub => sub.parentId === h.id);
+         // Предупреждения подзадач считаются тем же правилом, что и у привычек.
+         const subStandings: Record<string, HabitStanding> = {};
+         for (const s of mySubtasks) subStandings[s.id] = standingOf(s);
          // Кандидаты в родители — любые другие верхние привычки: подзадача у подзадачи не
          // рисуется, поэтому вложенность ровно в один уровень.
          const parentCandidates = habits.filter((p) => !p.parentId && p.id !== h.id);
@@ -858,6 +861,7 @@ renderEditor(h.id, false)
               onEditSubtask={(sub) => startEdit(sub)}
               onResetSubtask={handleResetSubtask}
               subtasks={mySubtasks}
+              subStandings={subStandings}
               logs={logs}
               expanded={expandedIds.includes(h.id)}
               setExpanded={(open) => setExpandedFor(h.id, open)}
@@ -965,6 +969,9 @@ renderEditor(h.id, false)
 }
 
 /** One habit as it looks on an ordinary day. */
+/** У самой привычки срочное с текстом — то, что рисуется значком-предупреждением. */
+const urgentSelf = (st: HabitStanding) => st.bucket === "urgent" && !!st.note;
+
 function HabitRow({
   habit,
   used,
@@ -998,6 +1005,7 @@ function HabitRow({
   addForm,
   canMakeSubtask,
   onMakeSubtask,
+  subStandings,
 }: {
   habit: Habit;
   /** Сколько минут уже потрачено сегодня на то, за чем следит привычка. */
@@ -1047,9 +1055,15 @@ function HabitRow({
   /** Можно ли превратить эту привычку в подзадачу другой. */
   canMakeSubtask: boolean;
   onMakeSubtask: () => void;
+  /** Где стоит каждая подзадача — из этого берётся предупреждение у неё и у родителя. */
+  subStandings: Record<string, HabitStanding>;
 }) {
   // Пояснение к значку предупреждения: по умолчанию скрыто, раскрывается нажатием на значок.
   const [noteOpen, setNoteOpen] = useState(false);
+  // Какие подзадачи сейчас показывают текст предупреждения.
+  const [openSubNotes, setOpenSubNotes] = useState<string[]>([]);
+  const toggleSubNote = (id: string) =>
+    setOpenSubNotes((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   const target = habitTarget(habit);
   const hasSub = subtasks.length > 0;
   // Подзадача закрыта, если отмечена сегодня или (недельная) уже закрыта раньше на этой неделе.
@@ -1063,6 +1077,15 @@ function HabitRow({
     return w.count >= w.target;
   };
   const doneCount = subtasks.filter(subSettled).length;
+  // Предупреждения: своё срочное и срочное у каждой незакрытой подзадачи. Если горит хотя бы
+  // одна — значок есть и у родителя, а в тексте названа подзадача.
+  const warnLines: string[] = [
+    ...(urgentSelf(standing) ? [standing.note as string] : []),
+    ...subtasks.flatMap((s) => {
+      const st = subStandings[s.id];
+      return st && st.bucket === "urgent" && st.note && !subSettled(s) ? [`«${s.label}»: ${st.note}`] : [];
+    }),
+  ];
   const blockedBySubs = hasSub && doneCount < subtasks.length;
   const level = levelChoiceOf(habit);
   const perDay = perDayTarget(habit);
@@ -1181,32 +1204,33 @@ function HabitRow({
                 that tonight is the last chance to keep its run. */}
             {/* A finished daily habit says nothing: the green box says it, and the row is
                 already inside «Выполнено». A finished weekly one still reports its count. */}
-            {tickable && standing.note && !(standing.bucket === "done" && !weekly) && (
+            {/* Предупреждение родителя — это и его собственное, и предупреждения его подзадач:
+                если горит подзадача, значок есть и у родителя, а в тексте названа она. */}
+            {tickable && warnLines.length > 0 && !(standing.bucket === "done" && !weekly) && (
               <View style={styles.noteRow}>
-                {urgent ? (
-                  // Срочное — только значок; текст показывается по нажатию на него.
-                  <>
-                    <Pressable
-                      onPress={() => setNoteOpen((v) => !v)}
-                      hitSlop={10}
-                      accessibilityRole="button"
-                      accessibilityLabel={standing.note}
-                      accessibilityState={{ expanded: noteOpen }}
-                    >
-                      <Feather name="alert-triangle" size={14} color={colors.accent} />
-                    </Pressable>
-                    {noteOpen && (
-                      <Text style={[styles.progress, styles.progressUrgent]}>
-                        {`${standing.note}${weekly && doneToday ? " · сегодня отмечено" : ""}`}
-                      </Text>
-                    )}
-                  </>
-                ) : (
-                  // Остальные пояснения остаются обычной строкой текста.
-                  <Text style={styles.progress}>
-                    {`${standing.note}${weekly && doneToday ? " · сегодня отмечено" : ""}`}
+                {/* Срочное — только значок; текст показывается по нажатию на него. */}
+                <Pressable
+                  onPress={() => setNoteOpen((v) => !v)}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel={warnLines.join(". ")}
+                  accessibilityState={{ expanded: noteOpen }}
+                >
+                  <Feather name="alert-triangle" size={14} color={colors.accent} />
+                </Pressable>
+                {noteOpen && (
+                  <Text style={[styles.progress, styles.progressUrgent, { flexShrink: 1 }]}>
+                    {warnLines.join("\n")}
                   </Text>
                 )}
+              </View>
+            )}
+            {tickable && warnLines.length === 0 && standing.note && !(standing.bucket === "done" && !weekly) && (
+              <View style={styles.noteRow}>
+                {/* Остальные пояснения остаются обычной строкой текста. */}
+                <Text style={styles.progress}>
+                  {`${standing.note}${weekly && doneToday ? " · сегодня отмечено" : ""}`}
+                </Text>
               </View>
             )}
             {!tickable && <Text style={styles.progress}>{describeTarget(target)}</Text>}
@@ -1300,10 +1324,14 @@ function HabitRow({
           : subPerDay > 1
             ? `${subCount}/${subPerDay} в день`
             : "1 раз в день";
+        // Срочное у подзадачи — тот же значок, что у привычки; текст по нажатию на него.
+        const subNote = !isDone && subStandings[sub.id]?.bucket === "urgent" ? subStandings[sub.id].note : null;
+        const subNoteOpen = openSubNotes.includes(sub.id);
         return (
-          // Закрытая подзадача зеленеет целиком — как закрытая привычка: и подложка с рамкой,
-          // и залитый кружок, и текст, а не один значок среди серого.
-          <View key={sub.id} style={[styles.subtaskRow, isDone && styles.subtaskRowDone]}>
+          <View key={sub.id}>
+          {/* Закрытая подзадача зеленеет целиком — как закрытая привычка: и подложка с рамкой,
+              и залитый кружок, и текст, а не один значок среди серого. */}
+          <View style={[styles.subtaskRow, isDone && styles.subtaskRowDone]}>
             <Pressable
               onPress={() => canTick && onBumpSubtask(sub)}
               disabled={!canTick}
@@ -1332,6 +1360,21 @@ function HabitRow({
               </View>
             </Pressable>
 
+            {/* Значок — отдельной кнопкой, а не внутри области отметки: промах по нему не
+                должен отмечать подзадачу. */}
+            {!!subNote && (
+              <Pressable
+                onPress={() => toggleSubNote(sub.id)}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel={subNote}
+                accessibilityState={{ expanded: subNoteOpen }}
+                style={styles.iconBtn}
+              >
+                <Feather name="alert-triangle" size={14} color={colors.accent} />
+              </Pressable>
+            )}
+
             {editing && (
               <>
                 {doneToday && (
@@ -1344,6 +1387,10 @@ function HabitRow({
                 </Pressable>
               </>
             )}
+          </View>
+          {!!subNote && subNoteOpen && (
+            <Text style={[styles.progress, styles.progressUrgent, { paddingHorizontal: 10 }]}>{subNote}</Text>
+          )}
           </View>
         );
       })}
