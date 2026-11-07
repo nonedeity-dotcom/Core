@@ -13,17 +13,11 @@ import type {
 } from "../types";
 import { todayKey, tomorrowKey } from "../lib/date";
 import { habitGroup, itemGroup } from "../lib/habits";
-import { DEFAULT_DAY_RULE, changeDayRule, normalizeDayRule, withPastRule, type DayRule } from "../lib/dayRule";
+import { DEFAULT_DAY_RULE, normalizeDayRule, type DayRule } from "../lib/dayRule";
 import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skipRule";
 import { DEFAULT_DAY_OFF, normalizeDayOff, pruneDates, type DayOffRule } from "../lib/dayOff";
 import { normalizeGoals, type PeriodGoal } from "../lib/goals";
 import { DEFAULT_LEVEL_RULE, normalizeLevelRule, type HabitLevel, type LevelRule } from "../lib/level";
-import {
-  changeLevelHistory,
-  normalizeLevelEras,
-  withPastLevelRule,
-  type LevelRuleWithHistory,
-} from "../lib/levelHistory";
 import { DEFAULT_GAME_STATS, mergeGameStats, normalizeGameStats, type GameStats } from "../lib/games/stats";
 import { mergeVillage, normalizeVillage, type VillageState } from "../lib/village/game";
 import { normalizeSettings, type VillageSettings } from "../lib/village/settings";
@@ -36,7 +30,14 @@ import { normalizeDish, normalizeEntry, normalizeProduct, type Dish, type FoodEn
 import { normalizeWeightEntry, type WeightEntry } from "../lib/balance/weight";
 import { CATALOG_DISHES, CATALOG_PRODUCTS } from "../lib/balance/catalog";
 import { normalizeAppDay, normalizeScreenDay, type AppDay, type ScreenDay } from "../lib/screen/usage";
-import { isEmptyHourlyDay, normalizeHourlyDay, type HourlyDay } from "../lib/screen/hours";
+import {
+  isEmptyHourAppsDay,
+  isEmptyHourlyDay,
+  normalizeHourAppsDay,
+  normalizeHourlyDay,
+  type HourAppsDay,
+  type HourlyDay,
+} from "../lib/screen/hours";
 import { TOTAL_APP, type ScreenRule } from "../lib/screenTime";
 import { MAX_DAY_ML, normalizeWaterDay, type WaterDay } from "../lib/balance/water";
 
@@ -64,7 +65,6 @@ const KEYS = {
   dayRule: "day-rule-v1",
   skipRule: "skip-rule-v1",
   levelRule: "level-rule-v1",
-  levelHistory: "level-rule-history-v1",
   gameStats: "game-stats-v1",
   village: "village-v1",
   villageUi: "village-ui-v1",
@@ -85,7 +85,19 @@ const KEYS = {
   screenLastSync: "screen-last-sync-v1",
   screenAppInfo: "screen-app-info-v1",
   screenHours: "screen-hours-v1",
+  screenHourApps: "screen-hour-apps-v1",
 };
+
+/**
+ * Сколько дней разбивки по приложениям хранить.
+ *
+ * Почасовая картина по всем приложениям вместе стоит полкилобайта на день и живёт вечно.
+ * Разбивка по приложениям — несколько килобайт на день, а всё хранилище приложения лежит в
+ * одной базе с потолком в несколько мегабайт, поэтому её хватает на последние полгода, а
+ * дальше старые дни уступают место новым. Итоги по дням и общая картина по часам при этом
+ * не трогаются.
+ */
+const HOUR_APPS_KEEP_DAYS = 180;
 
 export interface CalendarPrefs {
   /**
@@ -477,50 +489,6 @@ export const api = {
     });
   },
   /**
-   * Делает обычную привычку подзадачей другой — одной записью, а не двумя вызовами updateHabit.
-   *
-   * Отметки лежат в habitLog под id самой привычки, а id здесь не меняется — поэтому вся
-   * история остаётся ровно на месте: ничего не копируется и не переписывается. Меняются
-   * только два поля у самой привычки (`parentId`, `hasSubtasks`) и один флаг у родителя.
-   *
-   * Всё под одним замком и одной записью: подзадача, у которой родитель ещё не знает про
-   * подзадачи, на экране не видна нигде — из верхнего списка она уже ушла, а панели
-   * подзадач у родителя нет. Два отдельных вызова при сбое на втором оставили бы привычку
-   * невидимой.
-   *
-   * Отказывает там, где экран не умеет рисовать результат: глубже двух уровней вложенности
-   * нет (подзадача подзадачи не показывается), а у привычки, у которой есть свои подзадачи,
-   * они бы потерялись вместе с ней.
-   */
-  async makeSubtask(
-    id: string,
-    parentId: string,
-  ): Promise<
-    | { ok: true; reason?: undefined }
-    | { ok: false; reason: "not_found" | "same" | "already_subtask" | "has_subtasks" | "parent_is_subtask" }
-  > {
-    return withKeyLock(KEYS.habits, async () => {
-      const habits = await read<Habit[]>(KEYS.habits, []);
-      const child = habits.find((h) => h.id === id);
-      const parent = habits.find((h) => h.id === parentId);
-      if (!child || !parent || child.archivedAt || parent.archivedAt) return { ok: false as const, reason: "not_found" as const };
-      if (id === parentId) return { ok: false as const, reason: "same" as const };
-      if (child.parentId) return { ok: false as const, reason: "already_subtask" as const };
-      if (parent.parentId) return { ok: false as const, reason: "parent_is_subtask" as const };
-      if (habits.some((h) => h.parentId === id)) return { ok: false as const, reason: "has_subtasks" as const };
-
-      await write(
-        KEYS.habits,
-        habits.map((h) => {
-          if (h.id === id) return { ...h, parentId, hasSubtasks: false };
-          if (h.id === parentId) return { ...h, hasSubtasks: true };
-          return h;
-        }),
-      );
-      return { ok: true as const };
-    });
-  },
-  /**
    * Puts a habit aside without losing anything.
    *
    * The marks stay exactly where they are, so restoring brings the whole history back and
@@ -672,24 +640,8 @@ export const api = {
   async getDayRule(): Promise<DayRule> {
     return normalizeDayRule(await read<unknown>(KEYS.dayRule, DEFAULT_DAY_RULE));
   },
-  /**
-   * Меняет правило с сегодняшнего дня. Прошлые дни остаются под тем правилом, которое
-   * стояло в них, — историю хранит само правило, см. changeDayRule. Читает и пишет под одним
-   * замком: два быстрых нажатия «−» иначе прочли бы одно и то же и потеряли бы друг друга.
-   */
   async setDayRule(rule: DayRule): Promise<{ ok: true }> {
-    await withKeyLock(KEYS.dayRule, async () => {
-      const current = normalizeDayRule(await read<unknown>(KEYS.dayRule, DEFAULT_DAY_RULE));
-      await write(KEYS.dayRule, changeDayRule(current, rule, todayKey()));
-    });
-    return { ok: true as const };
-  },
-  /** «До такого-то дня действовало вот это правило» — для смен, сделанных до появления истории. */
-  async setPastDayRule(until: string, old: DayRule): Promise<{ ok: true }> {
-    await withKeyLock(KEYS.dayRule, async () => {
-      const current = normalizeDayRule(await read<unknown>(KEYS.dayRule, DEFAULT_DAY_RULE));
-      await write(KEYS.dayRule, withPastRule(current, until, old, todayKey()));
-    });
+    await write(KEYS.dayRule, normalizeDayRule(rule));
     return { ok: true as const };
   },
 
@@ -775,45 +727,13 @@ export const api = {
    * нельзя. По умолчанию везде нули — то есть пока сам не поставишь числа, уровни только
    * показываются и ничего не требуют.
    */
-  async getLevelRule(): Promise<LevelRuleWithHistory> {
-    const rule = normalizeLevelRule(await read<unknown>(KEYS.levelRule, DEFAULT_LEVEL_RULE));
-    // История лежит под своим ключом и приклеивается здесь: так и сама норма, и всё, что её
-    // читает, остаётся как было, а день судится по норме, которая стояла в нём.
-    const history = normalizeLevelEras(await read<unknown>(KEYS.levelHistory, []));
-    return history.length > 0 ? { ...rule, history } : rule;
+  async getLevelRule(): Promise<LevelRule> {
+    return normalizeLevelRule(await read<unknown>(KEYS.levelRule, DEFAULT_LEVEL_RULE));
   },
-  /**
-   * Меняет норму с сегодняшнего дня: прошлые дни остаются под той, что стояла в них.
-   * История пишется раньше нормы — оборвись запись между ними, лучше лишняя строка истории,
-   * чем новая норма, которая уже судит всё прошлое.
-   */
   async setLevelRule(rule: LevelRule): Promise<LevelRule> {
-    return withKeyLock(KEYS.levelRule, async () => {
-      const before = normalizeLevelRule(await read<unknown>(KEYS.levelRule, DEFAULT_LEVEL_RULE));
-      const clean = normalizeLevelRule(rule);
-      const history = changeLevelHistory(
-        normalizeLevelEras(await read<unknown>(KEYS.levelHistory, [])),
-        before,
-        clean,
-        todayKey(),
-      );
-      await write(KEYS.levelHistory, history);
-      await write(KEYS.levelRule, clean);
-      return clean;
-    });
-  },
-  /** «До такого-то дня норма была вот такой» — для смен, сделанных до появления истории. */
-  async setPastLevelRule(until: string, old: LevelRule): Promise<{ ok: true }> {
-    await withKeyLock(KEYS.levelRule, async () => {
-      const history = withPastLevelRule(
-        normalizeLevelEras(await read<unknown>(KEYS.levelHistory, [])),
-        until,
-        normalizeLevelRule(old),
-        todayKey(),
-      );
-      await write(KEYS.levelHistory, history);
-    });
-    return { ok: true as const };
+    const clean = normalizeLevelRule(rule);
+    await write(KEYS.levelRule, clean);
+    return clean;
   },
 
   /**
@@ -1239,6 +1159,44 @@ export const api = {
     });
   },
 
+  /**
+   * Разбивка часов дня по приложениям — для окна, которое открывается по нажатию на час.
+   *
+   * Лежит отдельно от `getHourlyDay`: общая картина читается на каждый показ графика, а эта
+   * таблица заметно тяжелее и нужна только тому, кто нажал. `null` — разбивки за этот день нет:
+   * день старше, чем система хранила события, или посчитан версией до неё.
+   */
+  async getHourAppsDay(date: string): Promise<HourAppsDay | null> {
+    const raw = await read<unknown[]>(KEYS.screenHourApps, []);
+    for (const item of Array.isArray(raw) ? raw : []) {
+      // Сначала дешёвая проверка даты: разбирать надо один день, а не весь полугодовой список.
+      if (typeof item !== "object" || item === null || (item as { date?: unknown }).date !== date) continue;
+      return normalizeHourAppsDay(item);
+    }
+    return null;
+  },
+  async mergeHourAppsDays(rows: HourAppsDay[]): Promise<number> {
+    if (rows.length === 0) return 0;
+    return withKeyLock(KEYS.screenHourApps, async () => {
+      const stored = await read<unknown[]>(KEYS.screenHourApps, []);
+      const byDate = new Map(
+        (Array.isArray(stored) ? stored : [])
+          .map(normalizeHourAppsDay)
+          .filter((d): d is HourAppsDay => d !== null)
+          .map((d) => [d.date, d] as const),
+      );
+      // Пришедший день заменяет целиком: приложение, которого в пересчитанном дне нет, не
+      // должно доживать в нём со старой записи.
+      for (const row of rows) {
+        if (isEmptyHourAppsDay(row)) byDate.delete(row.date);
+        else byDate.set(row.date, row);
+      }
+      const kept = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-HOUR_APPS_KEEP_DAYS);
+      await write(KEYS.screenHourApps, kept);
+      return rows.length;
+    });
+  },
+
   /** Докуда история уже перенесена. Пусто — не переносили ни разу. */
   async getScreenImportedThrough(): Promise<string | null> {
     const value = await read<string | null>(KEYS.screenImportedThrough, null);
@@ -1585,6 +1543,8 @@ export interface BackupData {
   screenApps: AppDay[];
   /** Почасовая картина дней. Отсутствует в файлах, записанных до неё. */
   screenHours: HourlyDay[];
+  /** Разбивка часов по приложениям. Отсутствует в файлах, записанных до неё. */
+  screenHourApps?: HourAppsDay[];
   /**
    * Кошелёк: искры, ядра, купленное, надетое, журнал рассчитанных дней.
    *
@@ -1640,7 +1600,7 @@ function withAllKeyLocks<T>(job: () => Promise<T>): Promise<T> {
 /** Reads the whole local database. Nothing is filtered — this is the backup. */
 export async function exportData(): Promise<BackupData> {
   await ensureSeeded();
-  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, goals, tasks, limit, focusIntervals, dayRule, skipRule, levelRule, daysOff, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight, balanceWater, screenDays, screenApps, screenHours] =
+  const [habits, habitLog, energy, sessions, milestones, freezes, rewardOptions, rewards, goals, tasks, limit, focusIntervals, dayRule, skipRule, levelRule, daysOff, habitFreezes, tipPrefs, lateRule, balanceProfile, balanceProducts, balanceFoodLog, balanceDishes, balanceWeight, balanceWater, screenDays, screenApps, screenHours, screenHourApps] =
     await Promise.all([
       read<Habit[]>(KEYS.habits, []),
       read<HabitLog[]>(KEYS.habitLog, []),
@@ -1670,6 +1630,7 @@ export async function exportData(): Promise<BackupData> {
       read<ScreenDay[]>(KEYS.screenDays, []),
       read<AppDay[]>(KEYS.screenApps, []),
       read<HourlyDay[]>(KEYS.screenHours, []),
+      read<HourAppsDay[]>(KEYS.screenHourApps, []),
     ]);
   const [purse, gameStats, village] = await Promise.all([api.getPurse(), api.getGameStats(), api.getVillage()]);
   return {
@@ -1701,6 +1662,7 @@ export async function exportData(): Promise<BackupData> {
     screenDays,
     screenApps,
     screenHours,
+    screenHourApps,
     purse,
     gameStats,
     village,
@@ -1726,8 +1688,6 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.dayRule, normalizeDayRule(data.dayRule)),
       write(KEYS.skipRule, normalizeSkipRule(data.skipRule)),
       write(KEYS.levelRule, normalizeLevelRule(data.levelRule)),
-      // Копия делалась через getLevelRule, и история лежит внутри самой нормы.
-      write(KEYS.levelHistory, normalizeLevelEras((data.levelRule as { history?: unknown } | undefined)?.history)),
       write(KEYS.daysOff, normalizeDayOff(data.daysOff)),
       write(KEYS.habitFreezes, data.habitFreezes),
       write(KEYS.tipPrefs, normalizeTipPrefs(data.tipPrefs)),
@@ -1741,6 +1701,7 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.screenDays, data.screenDays),
       write(KEYS.screenApps, data.screenApps),
       write(KEYS.screenHours, data.screenHours ?? []),
+      write(KEYS.screenHourApps, data.screenHourApps ?? []),
       // Нет в файле — значит, не про это: старая копия не должна стирать кошелёк.
       ...(data.purse ? [write(KEYS.purse, normalizePurse(data.purse))] : []),
       ...(data.gameStats ? [write(KEYS.gameStats, normalizeGameStats(data.gameStats))] : []),
@@ -2079,6 +2040,29 @@ export async function mergeData(data: BackupData): Promise<ImportStats> {
     }
     if (hoursChanged) {
       await write(KEYS.screenHours, [...hourByDate.values()].sort((a, b) => a.date.localeCompare(b.date)));
+    }
+
+    // Разбивка часов по приложениям — по тому же правилу: чужой день берётся, только если
+    // своего нет. Хранятся последние дни, поэтому после добавления лишнее отсекается.
+    const hourApps = await read<unknown[]>(KEYS.screenHourApps, []);
+    const hourAppsByDate = new Map(
+      (Array.isArray(hourApps) ? hourApps : [])
+        .map(normalizeHourAppsDay)
+        .filter((d): d is HourAppsDay => d !== null)
+        .map((d) => [d.date, d] as const),
+    );
+    let hourAppsChanged = false;
+    for (const raw of data.screenHourApps ?? []) {
+      const day = normalizeHourAppsDay(raw);
+      if (!day || isEmptyHourAppsDay(day) || hourAppsByDate.has(day.date)) continue;
+      hourAppsByDate.set(day.date, day);
+      hourAppsChanged = true;
+    }
+    if (hourAppsChanged) {
+      await write(
+        KEYS.screenHourApps,
+        [...hourAppsByDate.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-HOUR_APPS_KEEP_DAYS),
+      );
     }
 
     // Кошелёк и игры — по своим правилам слияния: деньги не складываются, купленное не
