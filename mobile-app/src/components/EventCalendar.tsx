@@ -115,7 +115,15 @@ export default function EventCalendar() {
     return map;
   }, [grid, events]);
   const dayEvents = useMemo(() => (selected ? eventsOnDay(events, selected) : []), [events, selected]);
-  const soon = useMemo(() => upcoming(events, today, 3), [events, today]);
+  /*
+   * Ближайшие: по одной строке на событие — его ближайшее повторение. Иначе еженедельное
+   * событие заняло бы весь список своими повторами и вытеснило остальные даты. Лимита «в три
+   * штуки» нет: это была ошибка, из-за неё четвёртая и дальше даты не были видны нигде.
+   */
+  const soon = useMemo(() => {
+    const seen = new Set<string>();
+    return upcoming(events, today, 500).filter((u) => (seen.has(u.event.id) ? false : (seen.add(u.event.id), true)));
+  }, [events, today]);
 
   const isCurrentMonth = view.y === now.y && view.m === now.m;
 
