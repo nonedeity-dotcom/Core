@@ -19,6 +19,7 @@ import { formatCompact } from "../lib/screen/duration";
 import { hasUsageAccess } from "../../modules/creker-usage";
 import { syncUsage } from "../integrations/usageSync";
 import RotatingTip from "../components/RotatingTip";
+import EventCalendar from "../components/EventCalendar";
 import type { Section } from "../navigation/sections";
 import type { GameStats } from "../lib/games/stats";
 import type { Purse } from "../lib/rewards/currency";
@@ -50,16 +51,7 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
 
   // --- Sterzhen ---
   const { streak, habits, logs } = useStreak(today);
-  // Родитель с подзадачами в счёт не идёт: вместо него считаются его подзадачи.
-  // Какие привычки решают день, определяем по родителям: у подзадач своего расписания нет.
-  const decidingTop = habitsThatDecideTheDay(
-    habits.filter((h) => !h.parentId),
-    today,
-  );
-  const deciding = decidingTop.flatMap((h) => {
-    const subs = habits.filter((s) => s.parentId === h.id);
-    return subs.length > 0 ? subs : [h];
-  });
+  const deciding = habitsThatDecideTheDay(habits, today);
   const done = deciding.filter((h) => {
     const p = dayProgress(h, logs, today);
     return p.count >= p.target;
@@ -207,6 +199,10 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
               ])}${limit > 0 ? ` · лимит ${formatCompact(limit * 60_000)}` : ""}`
         }
       />
+
+      {/* Календарь дат стоит под тремя разделами: они отвечают на «как идёт день», а он —
+          на «что скоро». Тот же принцип, что и у всей Главной: смотреть, а не вести учёт. */}
+      <EventCalendar />
 
       {/* Игры, награды и путь ушли в «Ещё».
           Здесь они были тремя одинаковыми серыми строками, и каждая новая вещь делала
