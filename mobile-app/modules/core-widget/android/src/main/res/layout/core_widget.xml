@@ -99,40 +99,79 @@
       android:visibility="gone" />
   </LinearLayout>
 
-  <!-- Режим «часы»: только время, число и день недели, по центру всего виджета. -->
+  <!-- Режим «часы»: погода слева сверху, время по центру, дата, внизу заряд батареи. -->
   <LinearLayout
     android:id="@+id/core_widget_clock"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:gravity="center"
     android:orientation="vertical"
     android:padding="20dp"
     android:visibility="gone">
+
+    <!-- Погода. Справа оставлено место под кнопку в углу. Нет данных — блок скрыт. -->
+    <LinearLayout
+      android:id="@+id/core_widget_weather"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginEnd="40dp"
+      android:gravity="center_vertical"
+      android:orientation="horizontal">
+
+      <TextView
+        android:id="@+id/core_widget_weather_icon"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:includeFontPadding="false"
+        android:textSize="34sp" />
+
+      <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:orientation="vertical">
+
+        <TextView
+          android:id="@+id/core_widget_weather_temp"
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:includeFontPadding="false"
+          android:textColor="#F5F5F3"
+          android:textSize="24sp"
+          android:textStyle="bold" />
+
+        <TextView
+          android:id="@+id/core_widget_weather_feels"
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:includeFontPadding="false"
+          android:textColor="#8B8F98"
+          android:textSize="13sp" />
+      </LinearLayout>
+    </LinearLayout>
 
     <TextClock
       android:id="@+id/core_widget_clock_time"
       android:layout_width="match_parent"
       android:layout_height="0dp"
-      android:layout_weight="2"
-      android:autoSizeMaxTextSize="80sp"
-      android:autoSizeMinTextSize="28sp"
+      android:layout_weight="1"
+      android:autoSizeMaxTextSize="56sp"
+      android:autoSizeMinTextSize="24sp"
       android:autoSizeStepGranularity="2sp"
       android:autoSizeTextType="uniform"
       android:format12Hour="h:mm"
       android:format24Hour="HH:mm"
-      android:gravity="center|bottom"
+      android:gravity="center"
       android:includeFontPadding="false"
       android:maxLines="1"
-      android:textColor="#E8E6E0"
-      android:textSize="64sp"
+      android:textColor="#F5F5F3"
+      android:textSize="48sp"
       android:textStyle="bold" />
 
+    <!-- 7 ноября · суббота. Число белое, как и время. -->
     <LinearLayout
       android:layout_width="match_parent"
-      android:layout_height="0dp"
-      android:layout_marginTop="6dp"
-      android:layout_weight="1"
-      android:gravity="center_horizontal|top"
+      android:layout_height="wrap_content"
+      android:gravity="center_horizontal"
       android:orientation="horizontal">
 
       <TextClock
@@ -142,20 +181,97 @@
         android:format12Hour="d"
         android:format24Hour="d"
         android:includeFontPadding="false"
-        android:textColor="#8FB89A"
+        android:textColor="#F5F5F3"
         android:textSize="26sp"
         android:textStyle="bold" />
+
+      <TextClock
+        android:id="@+id/core_widget_clock_month"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:format12Hour="MMMM"
+        android:format24Hour="MMMM"
+        android:includeFontPadding="false"
+        android:textColor="#E8E6E0"
+        android:textSize="20sp" />
+
+      <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        android:includeFontPadding="false"
+        android:text="·"
+        android:textColor="#8B8F98"
+        android:textSize="20sp" />
 
       <TextClock
         android:id="@+id/core_widget_clock_weekday"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
         android:format12Hour="EEEE"
         android:format24Hour="EEEE"
         android:includeFontPadding="false"
         android:textColor="#E8E6E0"
-        android:textSize="22sp" />
+        android:textSize="20sp" />
+    </LinearLayout>
+
+    <!-- Заряд батареи: видна одна из трёх полос, цвет по уровню. -->
+    <LinearLayout
+      android:id="@+id/core_widget_battery"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="14dp"
+      android:gravity="center_vertical"
+      android:orientation="horizontal">
+
+      <FrameLayout
+        android:layout_width="0dp"
+        android:layout_height="8dp"
+        android:layout_weight="1">
+
+        <ProgressBar
+          android:id="@+id/core_widget_battery_red"
+          style="?android:attr/progressBarStyleHorizontal"
+          android:layout_width="match_parent"
+          android:layout_height="8dp"
+          android:max="100"
+          android:progress="0"
+          android:progressDrawable="@drawable/core_widget_battery_red"
+          android:visibility="gone" />
+
+        <ProgressBar
+          android:id="@+id/core_widget_battery_orange"
+          style="?android:attr/progressBarStyleHorizontal"
+          android:layout_width="match_parent"
+          android:layout_height="8dp"
+          android:max="100"
+          android:progress="0"
+          android:progressDrawable="@drawable/core_widget_battery_orange"
+          android:visibility="gone" />
+
+        <ProgressBar
+          android:id="@+id/core_widget_battery_green"
+          style="?android:attr/progressBarStyleHorizontal"
+          android:layout_width="match_parent"
+          android:layout_height="8dp"
+          android:max="100"
+          android:progress="0"
+          android:progressDrawable="@drawable/core_widget_battery_green"
+          android:visibility="gone" />
+      </FrameLayout>
+
+      <TextView
+        android:id="@+id/core_widget_battery_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:includeFontPadding="false"
+        android:minWidth="34dp"
+        android:gravity="end"
+        android:textColor="#8B8F98"
+        android:textSize="13sp" />
     </LinearLayout>
   </LinearLayout>
 
