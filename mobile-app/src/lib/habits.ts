@@ -122,6 +122,25 @@ export function habitsThatDecideTheDay(
 export const WEEKLY_COUNTS_FOR_DAY = true;
 
 /**
+ * С какого дня недельные пункты начинают судить день.
+ *
+ * Недельные включили в зачёт, когда у серии уже была история — а там они дни не судили. Если
+ * применить новое правило и к прошлому, каждый день без закрытой недельной недели станет
+ * проваленным: серия обнулится, а в статистике появятся дыры в днях, которые были закрыты по
+ * правилам своего времени. Поэтому правило действует только вперёд: до этой даты (не включая
+ * её) день судится как раньше — по дневным пунктам, — а начиная с неё недельные учитываются.
+ *
+ * Объект, а не константа, чтобы тесты могли сдвинуть границу. В приложении её не трогают.
+ */
+export const weeklyRule = { countsFrom: "2026-11-07" };
+
+/** Судит ли недельный пункт день `date`. Без даты — «судит ли вообще» (шапка, настройки). */
+function weeklyJudges(date?: string): boolean {
+  if (!WEEKLY_COUNTS_FOR_DAY) return false;
+  return date === undefined || date >= weeklyRule.countsFrom;
+}
+
+/**
  * Пункты, по которым судится день, — одним списком для всего приложения: шапка чек-листа,
  * карточка в настройках, серия и статистика берут числа отсюда и поэтому не расходятся.
  *
@@ -134,7 +153,7 @@ export const WEEKLY_COUNTS_FOR_DAY = true;
  */
 export function dayItems(habits: Habit[], date?: string, startedOn?: Map<string, string>): Habit[] {
   const counts = (h: Habit) =>
-    (WEEKLY_COUNTS_FOR_DAY || habitTarget(h).kind === "daily") &&
+    (habitTarget(h).kind === "daily" || weeklyJudges(date)) &&
     (date === undefined || startOf(h, startedOn) <= date);
   return habits
     .filter((h) => !h.parentId && habitGroup(h) === "now")
