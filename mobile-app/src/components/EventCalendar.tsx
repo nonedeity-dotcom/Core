@@ -5,6 +5,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Switch,
@@ -75,6 +76,8 @@ export default function EventCalendar() {
   const [view, setView] = useState({ y: now.y, m: now.m });
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  // «Ближайшие» по умолчанию свёрнуты: календарь и так занимает много места на Главной.
+  const [soonOpen, setSoonOpen] = useState(false);
 
   const { data } = useQuery<DateEvent[]>({ queryKey: ["dateEvents"], queryFn: () => api.getDateEvents() });
   const events = useMemo(() => data ?? [], [data]);
@@ -193,8 +196,10 @@ export default function EventCalendar() {
               hitSlop={8}
               accessibilityRole="button"
               accessibilityLabel="Вернуться к текущему месяцу"
+              style={({ pressed }) => [styles.todayBtn, pressed && styles.dimmed]}
             >
-              <Text style={styles.todayLink}>Сегодня</Text>
+              <Feather name="calendar" size={12} color={colors.accentGreen} />
+              <Text style={styles.todayBtnText}>Сегодня</Text>
             </Pressable>
           )}
           <Pressable
@@ -294,20 +299,30 @@ export default function EventCalendar() {
         </View>
       ) : (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Ближайшие</Text>
-          {soon.length === 0 ? (
-            <Text style={styles.empty}>Пока ни одной даты. Нажмите на день, чтобы добавить.</Text>
-          ) : (
-            soon.map((u) => (
-              <EventRow
-                key={`${u.event.id}:${u.date}`}
-                event={u.event}
-                sub={[formatDay(u.date), u.event.time, repeatLabel(u.event.repeat)].filter(Boolean).join(" · ")}
-                right={relativeLabel(today, u.date)}
-                onPress={() => openEdit(u.event)}
-              />
-            ))
-          )}
+          <Pressable
+            onPress={() => setSoonOpen((o) => !o)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: soonOpen }}
+            accessibilityLabel={soonOpen ? "Свернуть ближайшие даты" : "Развернуть ближайшие даты"}
+            style={({ pressed }) => [styles.collapseHead, soonOpen && styles.collapseHeadOpen, pressed && styles.dimmed]}
+          >
+            <Text style={styles.sectionTitleBare}>Ближайшие</Text>
+            <Feather name={soonOpen ? "chevron-up" : "chevron-down"} size={18} color={colors.textMuted} />
+          </Pressable>
+          {soonOpen &&
+            (soon.length === 0 ? (
+              <Text style={styles.empty}>Пока ни одной даты. Нажмите на день, чтобы добавить.</Text>
+            ) : (
+              soon.map((u) => (
+                <EventRow
+                  key={`${u.event.id}:${u.date}`}
+                  event={u.event}
+                  sub={[formatDay(u.date), u.event.time, repeatLabel(u.event.repeat)].filter(Boolean).join(" · ")}
+                  right={relativeLabel(today, u.date)}
+                  onPress={() => openEdit(u.event)}
+                />
+              ))
+            ))}
         </View>
       )}
 
@@ -407,13 +422,25 @@ function EventEditor({
     });
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onCancel}>
-      <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} accessibilityLabel="Закрыть без сохранения" />
-        <View style={styles.sheet}>
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.sheetBody}>
-            <Text style={styles.sheetTitle}>{draft.id ? "Изменить дату" : "Новая дата"}</Text>
+    <Modal visible animationType="slide" onRequestClose={onCancel}>
+      <SafeAreaView style={styles.screen}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+          <View style={styles.topBar}>
+            <Pressable
+              onPress={onCancel}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Закрыть без сохранения"
+              style={({ pressed }) => [styles.topBtn, pressed && styles.dimmed]}
+            >
+              <Feather name="x" size={22} color={colors.text} />
+            </Pressable>
+            <Text style={styles.topTitle}>{draft.id ? "Изменить дату" : "Новая дата"}</Text>
+            {/* Пустое место справа держит заголовок по центру. */}
+            <View style={styles.topBtn} />
+          </View>
 
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.body}>
             <TextInput
               value={draft.title}
               onChangeText={(title) => onChange({ ...draft, title })}
@@ -530,38 +557,32 @@ function EventEditor({
             {draft.leads.length === 0 && (
               <Text style={styles.hint}>Без напоминаний — дата просто отметится в календаре.</Text>
             )}
-
-            <View style={styles.actions}>
-              {onDelete && (
-                <Pressable
-                  onPress={onDelete}
-                  accessibilityRole="button"
-                  style={({ pressed }) => [styles.deleteBtn, pressed && styles.dimmed]}
-                >
-                  <Text style={styles.deleteText}>Удалить</Text>
-                </Pressable>
-              )}
-              <View style={{ flex: 1 }} />
-              <Pressable
-                onPress={onCancel}
-                accessibilityRole="button"
-                style={({ pressed }) => [styles.cancelBtn, pressed && styles.dimmed]}
-              >
-                <Text style={styles.cancelText}>Отмена</Text>
-              </Pressable>
-              <Pressable
-                onPress={onSave}
-                disabled={!canSave}
-                accessibilityRole="button"
-                accessibilityState={{ disabled: !canSave }}
-                style={({ pressed }) => [styles.saveBtn, !canSave && styles.saveBtnOff, pressed && styles.dimmed]}
-              >
-                <Text style={styles.saveText}>Сохранить</Text>
-              </Pressable>
-            </View>
           </ScrollView>
-        </View>
-      </KeyboardAvoidingView>
+
+          {/* Внизу и вне прокрутки: кнопка под большим пальцем и над клавиатурой, а не в конце длинной формы. */}
+          <View style={styles.bottomBar}>
+            {onDelete && (
+              <Pressable
+                onPress={onDelete}
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.deleteBtn, pressed && styles.dimmed]}
+              >
+                <Feather name="trash-2" size={16} color={colors.accent} />
+                <Text style={styles.deleteText}>Удалить</Text>
+              </Pressable>
+            )}
+            <Pressable
+              onPress={onSave}
+              disabled={!canSave}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !canSave }}
+              style={({ pressed }) => [styles.saveBtn, !canSave && styles.saveBtnOff, pressed && styles.dimmed]}
+            >
+              <Text style={styles.saveText}>Сохранить</Text>
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -616,7 +637,20 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4 },
   monthTitle: { color: colors.text, fontSize: 15, fontWeight: "600" },
   headerActions: { flexDirection: "row", alignItems: "center", gap: 14 },
-  todayLink: { color: colors.textMuted, fontSize: 12 },
+  // Выглядит кнопкой, а не подписью: рамка, заливка и значок. Серый текст без всего этого
+  // сливался с заголовком месяца, и было не понять, что на него можно нажать.
+  todayBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.accentGreen,
+    backgroundColor: "rgba(143,184,154,0.12)",
+  },
+  todayBtnText: { color: colors.accentGreen, fontSize: 12, fontWeight: "600" },
   weekRow: { flexDirection: "row" },
   weekday: { flex: 1, textAlign: "center", color: colors.textMuted, fontSize: 11, marginTop: 10, marginBottom: 2 },
   cell: { flex: 1, height: 42, alignItems: "center", paddingTop: 2 },
@@ -633,6 +667,9 @@ const styles = StyleSheet.create({
   section: { paddingHorizontal: 4 },
   sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   sectionTitle: { color: colors.textMuted, fontSize: 12, marginBottom: 6 },
+  collapseHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4 },
+  collapseHeadOpen: { marginBottom: 4 },
+  sectionTitleBare: { color: colors.textMuted, fontSize: 12 },
   empty: { color: colors.textMuted, fontSize: 12, lineHeight: 17, paddingVertical: 6 },
   eventRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 7 },
   eventTitle: { color: colors.text, fontSize: 14 },
@@ -653,22 +690,28 @@ const styles = StyleSheet.create({
   addText: { color: colors.textMuted, fontSize: 13 },
   dimmed: { opacity: 0.7 },
 
-  backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.55)" },
-  sheet: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: "92%",
+  screen: { flex: 1, backgroundColor: colors.bg },
+  topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, height: 52 },
+  topBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  topTitle: { color: colors.text, fontSize: 16, fontWeight: "600" },
+  body: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 24, gap: 4 },
+  bottomBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.cardBorder,
   },
-  sheetBody: { padding: 18, paddingBottom: 26, gap: 4 },
-  sheetTitle: { color: colors.text, fontSize: 16, fontWeight: "600", marginBottom: 8 },
   titleInput: {
     color: colors.text,
-    fontSize: 15,
-    backgroundColor: colors.bg,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    fontSize: 17,
+    backgroundColor: colors.card,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
     marginBottom: 6,
   },
   label: { color: colors.textMuted, fontSize: 11, marginTop: 12, marginBottom: 6 },
@@ -681,7 +724,7 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: colors.bg,
+    backgroundColor: colors.card,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -693,24 +736,22 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    backgroundColor: colors.bg,
+    backgroundColor: colors.card,
   },
   chipOn: { backgroundColor: "rgba(143,184,154,0.12)", borderColor: colors.accentGreen },
   chipText: { color: colors.textMuted, fontSize: 12 },
   chipTextOn: { color: colors.accentGreen, fontWeight: "600" },
-  actions: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 20 },
-  deleteBtn: { paddingVertical: 10, paddingRight: 8 },
+  deleteBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 12, paddingRight: 6 },
   deleteText: { color: colors.accent, fontSize: 14 },
-  cancelBtn: { paddingVertical: 10, paddingHorizontal: 12 },
-  cancelText: { color: colors.textMuted, fontSize: 14 },
   saveBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 12,
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 13,
+    borderRadius: 14,
     backgroundColor: "rgba(143,184,154,0.16)",
     borderWidth: 1,
     borderColor: colors.accentGreen,
   },
   saveBtnOff: { opacity: 0.4 },
-  saveText: { color: colors.accentGreen, fontSize: 14, fontWeight: "600" },
+  saveText: { color: colors.accentGreen, fontSize: 15, fontWeight: "600" },
 });
