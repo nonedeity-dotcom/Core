@@ -13,6 +13,7 @@ import {
   syncUsage,
   resolveAppInfo,
   hourlyFor,
+  hourDetailFor,
   METRIC_LABELS,
   SCOPE_LABELS,
   type Metric,
@@ -39,6 +40,7 @@ import {
 import UsageRing, { sliceColor } from "../../components/screen/UsageRing";
 import ValueChart, { type ChartKind } from "../../components/screen/ValueChart";
 import PeriodBar from "../../components/screen/PeriodBar";
+import HourSheet from "../../components/screen/HourSheet";
 
 const SCOPES: Scope[] = ["all", "apps", "phone"];
 const SORTS: Metric[] = ["time", "launches"];
@@ -79,6 +81,8 @@ export default function UsageScreen({
   const [scope, setScope] = useState<Scope>("all");
   const [sort, setSort] = useState<Metric>("time");
   const [chart, setChart] = useState<ChartKind>("bars");
+  /** Час, открытый на весь экран. `null` — окно закрыто. */
+  const [openHour, setOpenHour] = useState<number | null>(null);
 
   const [access, setAccess] = useState<boolean>(() => hasUsageAccess());
   const refresh = useCallback(() => {
@@ -146,12 +150,20 @@ export default function UsageScreen({
     queryFn: () => hourlyFor(range.from, scope, homeList),
     enabled: single,
   });
+  // Окно часа: общие числа часа и разбивка по приложениям. Список домашних пакетов в ключе
+  // нужен, чтобы ответ пересчитался, когда справочник догрузится.
+  const { data: hourDetail } = useQuery({
+    queryKey: ["hourDetail", range.from, openHour, homeList.length, access],
+    queryFn: () => hourDetailFor(range.from, openHour as number, homeList),
+    enabled: single && openHour !== null,
+  });
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["screenDays"] });
     qc.invalidateQueries({ queryKey: ["screenApps"] });
     qc.invalidateQueries({ queryKey: ["appInfo"] });
     qc.invalidateQueries({ queryKey: ["hourly"] });
+    qc.invalidateQueries({ queryKey: ["hourDetail"] });
   };
   const measure = useMutation({ mutationFn: () => syncUsage(), onSuccess: invalidate });
   const importCreker = useMutation({
@@ -468,8 +480,21 @@ export default function UsageScreen({
                   итогом за сутки.
                 </Text>
               </>
+            ) : single ? (
+              <>
+                {/* Нажатие на час открывает окно с приложениями этого часа. Выбранный столбик
+                    остаётся подсвеченным, пока окно открыто. */}
+                <ValueChart
+                  points={hourPoints}
+                  kind={chart}
+                  countWord={chartWord}
+                  selected={openHour === null ? null : String(openHour)}
+                  onSelect={(key) => setOpenHour(Number(key))}
+                />
+                <Text style={styles.pickHint}>Нажми на час — покажу, в каких приложениях он прошёл</Text>
+              </>
             ) : (
-              <ValueChart points={single ? hourPoints : dayPoints} kind={chart} countWord={chartWord} />
+              <ValueChart points={dayPoints} kind={chart} countWord={chartWord} />
             )}
           </View>
 
@@ -642,6 +667,16 @@ export default function UsageScreen({
           ? "Приложение считает само — creker для этого больше не нужен. Он пригодится один раз, чтобы забрать историю за дни до установки: система хранит подробные события всего несколько суток, и всё, что старше, есть только у него."
           : "Пока нет доступа, считать нечем. Историю из creker забрать всё равно можно — она уже сохранена внутри него."}
       </Text>
+
+      <HourSheet
+        hour={single ? openHour : null}
+        date={range.from}
+        detail={hourDetail}
+        icons={icons}
+        home={home}
+        onChangeHour={setOpenHour}
+        onClose={() => setOpenHour(null)}
+      />
     </ScrollView>
   );
 }
@@ -745,6 +780,7 @@ const styles = StyleSheet.create({
   rowDetail: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
   rowValue: { color: colors.text, fontSize: 13, fontWeight: "600", fontVariant: ["tabular-nums"] },
   hint: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
+  pickHint: { color: colors.textMuted, fontSize: 11, marginTop: 12, textAlign: "center" },
   warnCard: {
     backgroundColor: colors.card,
     borderRadius: 14,
