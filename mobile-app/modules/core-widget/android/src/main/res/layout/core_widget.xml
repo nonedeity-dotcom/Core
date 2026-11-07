@@ -1,93 +1,173 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
   android:id="@+id/core_widget_root"
   android:layout_width="match_parent"
   android:layout_height="match_parent"
-  android:orientation="vertical"
-  android:padding="20dp"
   android:background="@drawable/core_widget_bg">
 
+  <!-- Обычный вид: шапка, полоса, список. В режиме «часы» прячется целиком. -->
   <LinearLayout
-    android:id="@+id/core_widget_header"
+    android:id="@+id/core_widget_normal"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:gravity="center_vertical"
-    android:orientation="horizontal"
-    android:paddingBottom="8dp">
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <LinearLayout
+      android:id="@+id/core_widget_header"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:gravity="center_vertical"
+      android:orientation="horizontal"
+      android:paddingBottom="8dp">
+
+      <TextClock
+        android:id="@+id/core_widget_time"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:format12Hour="h:mm"
+        android:format24Hour="HH:mm"
+        android:includeFontPadding="false"
+        android:textColor="#E8E6E0"
+        android:textSize="44sp"
+        android:textStyle="bold" />
+
+      <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="32dp"
+        android:layout_weight="1"
+        android:gravity="end"
+        android:orientation="vertical">
+
+        <TextClock
+          android:id="@+id/core_widget_date"
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:format12Hour="EEE, d MMMM"
+          android:format24Hour="EEE, d MMMM"
+          android:textColor="#E8E6E0"
+          android:textSize="20sp"
+          android:textStyle="bold" />
+
+        <TextView
+          android:id="@+id/core_widget_progress"
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:textColor="#8B8F98"
+          android:textSize="12sp" />
+      </LinearLayout>
+    </LinearLayout>
+
+    <ProgressBar
+      android:id="@+id/core_widget_bar"
+      style="?android:attr/progressBarStyleHorizontal"
+      android:layout_width="match_parent"
+      android:layout_height="4dp"
+      android:layout_marginBottom="8dp"
+      android:max="100"
+      android:progress="0"
+      android:progressDrawable="@drawable/core_widget_bar" />
+
+    <TextView
+      android:id="@+id/core_widget_back"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:paddingTop="4dp"
+      android:paddingBottom="6dp"
+      android:textColor="#8FB89A"
+      android:textSize="14sp"
+      android:textStyle="bold"
+      android:visibility="gone" />
+
+    <ListView
+      android:id="@+id/core_widget_list"
+      android:layout_width="match_parent"
+      android:layout_height="0dp"
+      android:layout_weight="1"
+      android:divider="@null"
+      android:dividerHeight="0dp"
+      android:scrollbars="none" />
+
+    <TextView
+      android:id="@+id/core_widget_empty"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:paddingTop="8dp"
+      android:textColor="#8B8F98"
+      android:textSize="13sp"
+      android:visibility="gone" />
+  </LinearLayout>
+
+  <!-- Режим «часы»: только время, число и день недели, по центру всего виджета. -->
+  <LinearLayout
+    android:id="@+id/core_widget_clock"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="20dp"
+    android:visibility="gone">
 
     <TextClock
-      android:id="@+id/core_widget_time"
-      android:layout_width="wrap_content"
-      android:layout_height="wrap_content"
+      android:id="@+id/core_widget_clock_time"
+      android:layout_width="match_parent"
+      android:layout_height="0dp"
+      android:layout_weight="2"
+      android:autoSizeMaxTextSize="80sp"
+      android:autoSizeMinTextSize="28sp"
+      android:autoSizeStepGranularity="2sp"
+      android:autoSizeTextType="uniform"
       android:format12Hour="h:mm"
       android:format24Hour="HH:mm"
+      android:gravity="center|bottom"
       android:includeFontPadding="false"
+      android:maxLines="1"
       android:textColor="#E8E6E0"
-      android:textSize="44sp"
+      android:textSize="64sp"
       android:textStyle="bold" />
 
     <LinearLayout
-      android:layout_width="0dp"
-      android:layout_height="wrap_content"
+      android:layout_width="match_parent"
+      android:layout_height="0dp"
+      android:layout_marginTop="6dp"
       android:layout_weight="1"
-      android:gravity="end"
-      android:orientation="vertical">
+      android:gravity="center_horizontal|top"
+      android:orientation="horizontal">
 
       <TextClock
-        android:id="@+id/core_widget_date"
+        android:id="@+id/core_widget_clock_day"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:format12Hour="EEE, d MMMM"
-        android:format24Hour="EEE, d MMMM"
-        android:textColor="#E8E6E0"
-        android:textSize="20sp"
+        android:format12Hour="d"
+        android:format24Hour="d"
+        android:includeFontPadding="false"
+        android:textColor="#8FB89A"
+        android:textSize="26sp"
         android:textStyle="bold" />
 
-      <TextView
-        android:id="@+id/core_widget_progress"
+      <TextClock
+        android:id="@+id/core_widget_clock_weekday"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:textColor="#8B8F98"
-        android:textSize="12sp" />
+        android:layout_marginStart="12dp"
+        android:format12Hour="EEEE"
+        android:format24Hour="EEEE"
+        android:includeFontPadding="false"
+        android:textColor="#E8E6E0"
+        android:textSize="22sp" />
     </LinearLayout>
   </LinearLayout>
 
-  <ProgressBar
-    android:id="@+id/core_widget_bar"
-    style="?android:attr/progressBarStyleHorizontal"
-    android:layout_width="match_parent"
-    android:layout_height="4dp"
-    android:layout_marginBottom="8dp"
-    android:max="100"
-    android:progress="0"
-    android:progressDrawable="@drawable/core_widget_bar" />
-
-  <TextView
-    android:id="@+id/core_widget_back"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:paddingTop="4dp"
-    android:paddingBottom="6dp"
-    android:textColor="#8FB89A"
-    android:textSize="14sp"
-    android:textStyle="bold"
-    android:visibility="gone" />
-
-  <ListView
-    android:id="@+id/core_widget_list"
-    android:layout_width="match_parent"
-    android:layout_height="0dp"
-    android:layout_weight="1"
-    android:divider="@null"
-    android:dividerHeight="0dp"
-    android:scrollbars="none" />
-
-  <TextView
-    android:id="@+id/core_widget_empty"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:paddingTop="8dp"
-    android:textColor="#8B8F98"
-    android:textSize="13sp"
-    android:visibility="gone" />
-</LinearLayout>
+  <!-- Кнопка стоит в одном углу в обоих режимах; значок меняется из кода. -->
+  <ImageView
+    android:id="@+id/core_widget_clock_btn"
+    android:layout_width="40dp"
+    android:layout_height="40dp"
+    android:layout_gravity="top|end"
+    android:layout_marginTop="10dp"
+    android:layout_marginEnd="10dp"
+    android:contentDescription="Часы"
+    android:padding="9dp"
+    android:src="@drawable/core_widget_ic_clock" />
+</FrameLayout>
