@@ -5,6 +5,7 @@ import { DEFAULT_DAY_RULE } from "../src/lib/dayRule";
 import { DEFAULT_LEVEL_RULE, type LevelRule } from "../src/lib/level";
 import { DEFAULT_SKIP_RULE } from "../src/lib/skipRule";
 import { dayOfWeek } from "../src/lib/week";
+import { weeklyRule } from "../src/lib/habits";
 
 const R = DEFAULT_DAY_RULE;
 const L = DEFAULT_LEVEL_RULE;
@@ -29,11 +30,25 @@ test("кто день не решает", () => {
 });
 
 test("недельная входит в зачёт дня", () => {
+  weeklyRule.countsFrom = "0000-01-01"; // граница не мешает: проверяем само правило
   const weekly = habit("w", { target: { kind: "weekly", count: 1 } });
   eq("неделя не набрана — день не закрыт", dayCounts([a, weekly], [mark("a", d)], d, R, L), false);
   eq("неделя набрана в этот день — закрыт", dayCounts([a, weekly], [mark("a", d), mark("w", d)], d, R, L), true);
   const rule = { kind: "count" as const, value: 1 };
   eq("при «одной» недельную можно не делать", dayCounts([a, weekly], [mark("a", d)], d, rule, L), true);
+  weeklyRule.countsFrom = "2026-11-07";
+});
+
+test("недельная судит только дни после границы — серия и история целы", () => {
+  const weekly = habit("w", { target: { kind: "weekly", count: 1 } });
+  const saved = weeklyRule.countsFrom;
+  weeklyRule.countsFrom = ago(1); // вчера и дальше — по-новому, всё, что раньше, — по-старому
+  eq("до границы недельная не мешает", dayCounts([a, weekly], [mark("a", ago(3))], ago(3), R, L), true);
+  eq("с границы — мешает", dayCounts([a, weekly], [mark("a", ago(1))], ago(1), R, L), false);
+  weeklyRule.countsFrom = ago(0); // граница — сегодня: вчерашние дни судятся по-старому
+  const logs = allDone([a], [1, 2, 3, 4]);
+  eq("серия до границы не рвётся", computeStreak([a, weekly], logs, [], R, L), 4);
+  weeklyRule.countsFrom = saved;
 });
 
 test("подзадачи: родитель не считается, считаются они", () => {
