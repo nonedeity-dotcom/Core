@@ -42,7 +42,8 @@ import {
   MAX_TARGET_COUNT,
   habitGroup,
   habitTarget,
-  habitsThatDecideTheDay,
+  dayItems,
+  weeklyClosedOn,
   logCount,
   perDayTarget,
   weeklyProgress,
@@ -607,39 +608,22 @@ export default function TodayScreen() {
     });
 
   const nowHabits = habits.filter((h) => habitGroup(h) === "now" && !h.parentId);
-  const deciding = habitsThatDecideTheDay(habits.filter((h) => !h.parentId));
-  // Подзадачи — отдельные пункты нормы дня. Родитель с подзадачами сам в счёт не идёт
-  // (он закрывается автоматически, когда готовы все подзадачи), иначе он считался бы дважды.
-  const units = deciding.flatMap((p) => {
-    const subs = habits.filter((s) => s.parentId === p.id);
-    // Подзадачи решают день по тому же правилу, что и привычки: недельная, которую сегодня
-    // можно пропустить, не требуется каждый день.
-    return subs.length > 0 ? habitsThatDecideTheDay(subs) : [p];
-  });
-  const closed = units.filter(
-    (h) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h) || weekMet(h),
-  ).length;
-  const required = requiredForDay(dayRule, units.length);
-
-  // Что показывает шапка: ВСЕ пункты «Ввожу сейчас» — обычные привычки и подзадачи, закрытые,
-  // открытые и проваленные. Родитель с подзадачами сам не считается — вместо него его подзадачи.
-  // Это только счёт для глаз: приговор дня (`closed`, `required`, `units`) считается выше как
-  // раньше и недельные, которые сегодня можно пропустить, из него по-прежнему выпадают.
-  const shownItems = nowHabits.flatMap((p) => {
-    const subs = habits.filter((s) => s.parentId === p.id);
-    return subs.length > 0 ? subs : [p];
-  });
-  const shownTotal = shownItems.length;
-  const shownClosed = shownItems.filter(
-    (h) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h) || weekMet(h),
-  ).length;
+  // Один список для шапки, нормы по уровням, настроек и серии — dayItems из lib/habits:
+  // все пункты «Ввожу сейчас» (обычные привычки и подзадачи), родитель с подзадачами не
+  // считается. Закрытые, открытые и проваленные входят все.
+  const items = dayItems(habits);
+  const isClosedToday = (h: Habit) =>
+    logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h) || weeklyClosedOn(h, allLogs, today);
+  const shownTotal = items.length;
+  const shownClosed = items.filter(isClosedToday).length;
+  // «Нужно» — от того же числа, что стоит в шапке: 50 % от 23 — это 12.
+  const shownRequired = requiredForDay(dayRule, shownTotal);
 
   // Норма по уровням — вторая половина того же приговора дня. Считается здесь, потому что
   // здесь же стоит и первая: два числа, которые решают день, человек должен видеть рядом,
   // а не на разных экранах.
-  const isClosedToday = (h: Habit) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h);
-  const dailyQuota = capQuota(levelRule.daily, countLevels(deciding));
-  const dailyClosed = closedLevels(deciding, isClosedToday);
+  const dailyQuota = capQuota(levelRule.daily, countLevels(items));
+  const dailyClosed = closedLevels(items, isClosedToday);
   // За неделю считаются дни, а не нажатия, и в счёт идут все привычки «ввожу сейчас» —
   // недельные тоже: «спорт три раза в неделю» это ровно то, что осмысленно мерить неделей.
   const weekClosedDays = (h: Habit) => {
@@ -736,13 +720,11 @@ export default function TodayScreen() {
               weekly ones in the pile "ни одной привычки в работе" was flatly wrong — there
               are habits there, they just are not owed today. */}
           {shownTotal > 0
-            ? units.length === 0
-              ? `Сегодня закрыто ${shownClosed} из ${shownTotal} · день по ним не засчитывается`
-              : required < units.length
-                // With a partial rule "закрыто 2 из 5" is only half the sentence — it does not
-                // say whether the day is already held.
-                ? `Сегодня закрыто ${shownClosed} из ${shownTotal} · нужно ${required}`
-                : `Сегодня закрыто ${shownClosed} из ${shownTotal}`
+            ? shownRequired < shownTotal
+              // With a partial rule "закрыто 2 из 5" is only half the sentence — it does not
+              // say whether the day is already held.
+              ? `Сегодня закрыто ${shownClosed} из ${shownTotal} · нужно ${shownRequired}`
+              : `Сегодня закрыто ${shownClosed} из ${shownTotal}`
             : "Ни одной привычки в работе"}
         </Text>
         <Pressable
@@ -794,7 +776,7 @@ export default function TodayScreen() {
         dailyClosed={dailyClosed}
         weeklyQuota={levelRule.weekly}
         weeklyClosed={weeklyClosed}
-        countMet={units.length > 0 && closed >= required}
+        countMet={shownTotal > 0 && shownClosed >= shownRequired}
       />
 
       {GROUPS.map((group) => {

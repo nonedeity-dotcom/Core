@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { colors, levelInk, levelTint } from "../theme/colors";
 import { plural } from "../lib/plural";
-import { habitsThatDecideTheDay } from "../lib/habits";
+import { dayItems } from "../lib/habits";
 import {
   DEFAULT_DAY_RULE,
   MAX_RULE_COUNT,
@@ -765,7 +765,9 @@ export default function AdminScreen() {
     queryKey: ["habits"],
     queryFn: () => api.getHabits() as Promise<Habit[]>,
   });
-  const decidingCount = habitsThatDecideTheDay(habits).length;
+  // Те же пункты, что в шапке чек-листа и в зачёте дня (dayItems): иначе «50 %» здесь и
+  // «нужно N» на экране чек-листа считались бы от разных чисел.
+  const decidingCount = dayItems(habits).length;
 
   const { data: dayRule = DEFAULT_DAY_RULE } = useQuery<DayRule>({
     queryKey: ["dayRule"],
@@ -867,7 +869,7 @@ export default function AdminScreen() {
       <Text style={[styles.sectionLabel, styles.spaced]}>Уровни</Text>
       <LevelRuleCard
         rule={levelRule}
-        available={countLevels(habitsThatDecideTheDay(habits))}
+        available={countLevels(dayItems(habits))}
         today={todayKey()}
         onChange={(r) => setLevelRule.mutate(r)}
         onPast={(since, r) => setPastLevelRule.mutate({ since, rule: r })}
