@@ -36,7 +36,7 @@ import {
   type SkipPeriod,
   type SkipRule,
 } from "../lib/skipRule";
-import { dateNDaysAgo, todayKey } from "../lib/date";
+import { dateNDaysAgo, shiftDate, todayKey } from "../lib/date";
 import {
   DEFAULT_DAY_OFF,
   WEEKDAY_FULL,
@@ -76,6 +76,128 @@ import type { Habit } from "../types";
  * it is turned into "4 из 5".
  */
 function DayRuleCard({
+  rule,
+  decidingCount,
+  today,
+  onChange,
+  onPast,
+}: {
+  rule: DayRule;
+  decidingCount: number;
+  today: string;
+  onChange: (rule: DayRule) => void;
+  /** «Нынешнее правило действует с этого дня, а до него было вот такое». */
+  onPast: (since: string, before: DayRule) => void;
+}) {
+  const [pastOpen, setPastOpen] = useState(false);
+  const [since, setSince] = useState(() => shiftDate(today, -7));
+  const [before, setBefore] = useState<DayRule>(DEFAULT_DAY_RULE);
+
+  return (
+    <View style={styles.limitCard}>
+      <View>
+        <Text style={styles.rowLabel}>Сколько закрыть за день</Text>
+        <Text style={styles.rowHint}>{describeDayRule(rule, decidingCount)}</Text>
+      </View>
+
+      <DayRuleControls rule={rule} decidingCount={decidingCount} onChange={onChange} />
+
+      {/* Правило помнит, когда его меняли: новое судит дни с сегодняшнего, а прошлые остаются
+          под тем, что стояло в них. Иначе опущенная планка задним числом закрывала бы дни,
+          которые по тогдашней были провалены, и серия росла бы на пустом месте. */}
+      <Text style={styles.rowHint}>
+        Новое правило действует с сегодняшнего дня. Прошлые дни остаются под тем правилом, которое стояло в них.
+      </Text>
+
+      {/* Для смены, сделанной раньше, чем приложение стало помнить смены: тогда оно не
+          записало ни когда, ни с чего, и догадаться об этом ему нечем. */}
+      <Pressable
+        onPress={() => setPastOpen((v) => !v)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: pastOpen }}
+        style={({ pressed }) => [pressed && styles.pressed]}
+      >
+        <Text style={styles.rowHint}>{`${pastOpen ? "▾" : "▸"} Правило меняли раньше? Исправить прошлое`}</Text>
+      </Pressable>
+
+      {pastOpen && (
+        <>
+          <Text style={styles.rowHint}>
+            Скажи, с какого дня действует нынешнее правило и каким оно было до этого: дни до этой даты будут судиться
+            по старому правилу, серия и календарь пересчитаются.
+          </Text>
+
+          <Text style={styles.cardLabel}>Нынешнее правило действует с</Text>
+          <DateStepper value={since} today={today} onChange={setSince} />
+
+          <Text style={styles.cardLabel}>До этого было</Text>
+          <DayRuleControls rule={before} decidingCount={decidingCount} onChange={setBefore} />
+
+          <Pressable
+            onPress={() => {
+              onPast(since, before);
+              setPastOpen(false);
+            }}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.chip, styles.chipOn, { alignSelf: "flex-start" }, pressed && styles.pressed]}
+          >
+            <Text style={[styles.chipText, styles.chipTextOn]}>Применить к прошлым дням</Text>
+          </Pressable>
+        </>
+      )}
+    </View>
+  );
+}
+
+/**
+ * Дата, с которой действует нынешнее правило: шаги по неделе и по дню.
+ *
+ * Не раньше года назад и не позже сегодня: дальше окна, по которому считаются серия и
+ * календарь, смена всё равно ничего не изменит, а будущая судила бы и сегодняшний день.
+ * Один и тот же для правила дня и для нормы по уровням.
+ */
+function DateStepper({ value, today, onChange }: { value: string; today: string; onChange: (v: string) => void }) {
+  const earliest = shiftDate(today, -365);
+  const move = (days: number) => {
+    const next = shiftDate(value, days);
+    onChange(next > today ? today : next < earliest ? earliest : next);
+  };
+  return (
+    <View style={styles.dateStepper}>
+      {([-7, -1] as const).map((d) => (
+        <Pressable
+          key={d}
+          onPress={() => move(d)}
+          accessibilityRole="button"
+          accessibilityLabel={`Раньше на ${-d} ${plural(-d, ["день", "дня", "дней"])}`}
+          style={({ pressed }) => [styles.stepBtnSmall, pressed && styles.pressed]}
+        >
+          <Text style={[styles.stepBtnText, { fontSize: 12 }]}>{`−${-d}`}</Text>
+        </Pressable>
+      ))}
+      <Text style={[styles.limitValue, { fontSize: 15, minWidth: 90 }]}>{value.split("-").reverse().join(".")}</Text>
+      {([1, 7] as const).map((d) => (
+        <Pressable
+          key={d}
+          onPress={() => move(d)}
+          accessibilityRole="button"
+          accessibilityLabel={`Позже на ${d} ${plural(d, ["день", "дня", "дней"])}`}
+          style={({ pressed }) => [styles.stepBtnSmall, pressed && styles.pressed]}
+        >
+          <Text style={[styles.stepBtnText, { fontSize: 12 }]}>{`+${d}`}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+/**
+ * Выбор правила: «все», число или проценты — и сколько именно.
+ *
+ * Один и тот же для нынешнего правила и для того, что было раньше, поэтому вынесен из
+ * карточки: два набора кнопок, написанных отдельно, разошлись бы при первой же правке.
+ */
+function DayRuleControls({
   rule,
   decidingCount,
   onChange,
@@ -125,12 +247,7 @@ function DayRuleCard({
         : "";
 
   return (
-    <View style={styles.limitCard}>
-      <View>
-        <Text style={styles.rowLabel}>Сколько закрыть за день</Text>
-        <Text style={styles.rowHint}>{describeDayRule(rule, decidingCount)}</Text>
-      </View>
-
+    <>
       <View style={styles.chipRow}>
         {modes.map((m) => (
           <Pressable
@@ -166,13 +283,7 @@ function DayRuleCard({
           </Pressable>
         </View>
       )}
-
-      {/* Said plainly, because the number on the report moves the moment this changes: the
-          rule is applied to every day in the history, not only to the ones after it. */}
-      <Text style={styles.rowHint}>
-        Правило применяется и к прошлым дням — серия и календарь пересчитаются сразу.
-      </Text>
-    </View>
+    </>
   );
 }
 
@@ -192,14 +303,22 @@ function DayRuleCard({
 function LevelRuleCard({
   rule,
   available,
+  today,
   onChange,
+  onPast,
 }: {
   rule: LevelRule;
   /** Сколько привычек каждого уровня вообще есть в «ввожу сейчас» — чтобы не просить больше. */
   available: LevelQuota;
+  today: string;
   onChange: (rule: LevelRule) => void;
+  /** «Нынешняя норма действует с этого дня, а до него была вот такая». */
+  onPast: (since: string, before: LevelRule) => void;
 }) {
   const [period, setPeriod] = useState<"daily" | "weekly">("daily");
+  const [pastOpen, setPastOpen] = useState(false);
+  const [since, setSince] = useState(() => shiftDate(today, -7));
+  const [beforeDaily, setBeforeDaily] = useState<LevelQuota>(rule.daily);
   const quota = rule[period];
   const capped = period === "daily" ? capQuota(quota, available) : quota;
 
@@ -236,35 +355,7 @@ function LevelRuleCard({
         ))}
       </View>
 
-      {LEVELS.map((level) => (
-        <View key={level} style={styles.levelRow}>
-          <View style={[styles.levelTag, { backgroundColor: levelTint[level] }]}>
-            <Text style={[styles.levelTagText, { color: levelInk[level] }]}>{LEVEL_LABELS[level]}</Text>
-          </View>
-          <Text style={styles.levelHave}>
-            {period === "daily" ? `в списке ${available[level]}` : `${available[level]} в списке`}
-          </Text>
-          <View style={styles.levelStepper}>
-            <Pressable
-              onPress={() => step(level, -1)}
-              accessibilityRole="button"
-              accessibilityLabel={`Меньше: ${LEVEL_LABELS[level]}`}
-              style={({ pressed }) => [styles.stepBtnSmall, pressed && styles.pressed]}
-            >
-              <Text style={styles.stepBtnText}>−</Text>
-            </Pressable>
-            <Text style={styles.levelValue}>{quota[level]}</Text>
-            <Pressable
-              onPress={() => step(level, 1)}
-              accessibilityRole="button"
-              accessibilityLabel={`Больше: ${LEVEL_LABELS[level]}`}
-              style={({ pressed }) => [styles.stepBtnSmall, pressed && styles.pressed]}
-            >
-              <Text style={styles.stepBtnText}>+</Text>
-            </Pressable>
-          </View>
-        </View>
-      ))}
+      <LevelQuotaRows quota={quota} available={available} daily={period === "daily"} onStep={step} />
 
       <Text style={styles.rowHint}>
         {period === "daily"
@@ -274,7 +365,107 @@ function LevelRuleCard({
       <Text style={styles.rowHint}>
         Сложная за среднюю не идёт: каждый уровень закрывается своим.
       </Text>
+
+      {/* Норма помнит, когда её меняли: новая судит дни с сегодняшнего, а прошлые остаются под
+          той, что стояла в них. Иначе поставленная сегодня «сверхсложная в день» задним числом
+          проваливала бы всю историю, и серия обнулялась бы. */}
+      <Text style={styles.rowHint}>
+        Новая норма действует с сегодняшнего дня. Прошлые дни остаются под той нормой, которая стояла в них.
+      </Text>
+
+      <Pressable
+        onPress={() => setPastOpen((v) => !v)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: pastOpen }}
+        style={({ pressed }) => [pressed && styles.pressed]}
+      >
+        <Text style={styles.rowHint}>{`${pastOpen ? "▾" : "▸"} Норму меняли раньше? Исправить прошлое`}</Text>
+      </Pressable>
+
+      {pastOpen && (
+        <>
+          <Text style={styles.rowHint}>
+            Скажи, с какого дня действует нынешняя дневная норма и какой она была до этого: дни до этой даты будут
+            судиться по старой, серия и календарь пересчитаются. Недельная норма прошлое не судит.
+          </Text>
+
+          <Text style={styles.cardLabel}>Нынешняя норма действует с</Text>
+          <DateStepper value={since} today={today} onChange={setSince} />
+
+          <Text style={styles.cardLabel}>До этого было (в день)</Text>
+          <LevelQuotaRows
+            quota={beforeDaily}
+            available={available}
+            daily
+            onStep={(level, delta) =>
+              setBeforeDaily((q) => ({ ...q, [level]: Math.min(MAX_QUOTA, Math.max(0, q[level] + delta)) }))
+            }
+          />
+
+          <Pressable
+            onPress={() => {
+              onPast(since, { ...rule, daily: beforeDaily });
+              setPastOpen(false);
+            }}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.chip, styles.chipOn, { alignSelf: "flex-start" }, pressed && styles.pressed]}
+          >
+            <Text style={[styles.chipText, styles.chipTextOn]}>Применить к прошлым дням</Text>
+          </Pressable>
+        </>
+      )}
     </View>
+  );
+}
+
+/**
+ * Строки «уровень — сколько нужно»: по одной на уровень, со счётчиком.
+ *
+ * Одни и те же для нынешней нормы и для той, что была раньше, поэтому вынесены из карточки.
+ */
+function LevelQuotaRows({
+  quota,
+  available,
+  daily,
+  onStep,
+}: {
+  quota: LevelQuota;
+  available: LevelQuota;
+  daily: boolean;
+  onStep: (level: HabitLevel, delta: number) => void;
+}) {
+  return (
+    <>
+      {LEVELS.map((level) => (
+        <View key={level} style={styles.levelRow}>
+          <View style={[styles.levelTag, { backgroundColor: levelTint[level] }]}>
+            <Text style={[styles.levelTagText, { color: levelInk[level] }]}>{LEVEL_LABELS[level]}</Text>
+          </View>
+          <Text style={styles.levelHave}>
+            {daily ? `в списке ${available[level]}` : `${available[level]} в списке`}
+          </Text>
+          <View style={styles.levelStepper}>
+            <Pressable
+              onPress={() => onStep(level, -1)}
+              accessibilityRole="button"
+              accessibilityLabel={`Меньше: ${LEVEL_LABELS[level]}`}
+              style={({ pressed }) => [styles.stepBtnSmall, pressed && styles.pressed]}
+            >
+              <Text style={styles.stepBtnText}>−</Text>
+            </Pressable>
+            <Text style={styles.levelValue}>{quota[level]}</Text>
+            <Pressable
+              onPress={() => onStep(level, 1)}
+              accessibilityRole="button"
+              accessibilityLabel={`Больше: ${LEVEL_LABELS[level]}`}
+              style={({ pressed }) => [styles.stepBtnSmall, pressed && styles.pressed]}
+            >
+              <Text style={styles.stepBtnText}>+</Text>
+            </Pressable>
+          </View>
+        </View>
+      ))}
+    </>
   );
 }
 
@@ -611,6 +802,13 @@ export default function AdminScreen() {
       invalidate();
     },
   });
+  const setPastDayRule = useMutation({
+    mutationFn: (v: { since: string; rule: DayRule }) => api.setPastDayRule(v.since, v.rule),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dayRule"] });
+      invalidate();
+    },
+  });
   const setDaysOff = useMutation({
     mutationFn: (rule: DayOffRule) => api.setDaysOff(rule),
     onSuccess: () => {
@@ -622,6 +820,13 @@ export default function AdminScreen() {
 
   const setLevelRule = useMutation({
     mutationFn: (rule: LevelRule) => api.setLevelRule(rule),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["levelRule"] });
+      invalidate();
+    },
+  });
+  const setPastLevelRule = useMutation({
+    mutationFn: (v: { since: string; rule: LevelRule }) => api.setPastLevelRule(v.since, v.rule),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["levelRule"] });
       invalidate();
@@ -645,18 +850,27 @@ export default function AdminScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
       <Text style={styles.intro}>
-        Здесь меняются правила, по которым считаются дни и серии. Все они пересчитывают и
-        прошлое: числа в отчёте сдвинутся сразу, а не с завтрашнего дня.
+        Здесь меняются правила, по которым считаются дни и серии. «Зачёт дня» и «Уровни»
+        действуют с того дня, когда их сменили, а прошлые дни остаются под прежним. Остальные
+        правила пересчитывают и прошлое: числа в отчёте сдвинутся сразу, а не с завтрашнего дня.
       </Text>
 
       <Text style={styles.sectionLabel}>Зачёт дня</Text>
-      <DayRuleCard rule={dayRule} decidingCount={decidingCount} onChange={(r) => setDayRule.mutate(r)} />
+      <DayRuleCard
+        rule={dayRule}
+        decidingCount={decidingCount}
+        today={todayKey()}
+        onChange={(r) => setDayRule.mutate(r)}
+        onPast={(since, rule) => setPastDayRule.mutate({ since, rule })}
+      />
 
       <Text style={[styles.sectionLabel, styles.spaced]}>Уровни</Text>
       <LevelRuleCard
         rule={levelRule}
         available={countLevels(habitsThatDecideTheDay(habits))}
+        today={todayKey()}
         onChange={(r) => setLevelRule.mutate(r)}
+        onPast={(since, r) => setPastLevelRule.mutate({ since, rule: r })}
       />
 
       <Text style={[styles.sectionLabel, styles.spaced]}>Пропуски</Text>
@@ -714,6 +928,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   stepper: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 16 },
+  dateStepper: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   stepBtn: {
     width: 40,
     height: 40,
