@@ -20,13 +20,30 @@ test("день закрыт, когда закрыты все привычки �
 test("кто день не решает", () => {
   const extra = habit("x", { group: "extra" });
   const later = habit("l", { group: "later" });
-  const weekly = habit("w", { target: { kind: "weekly", count: 3 } });
-  eq("«дополнительно», «потом» и недельная не мешают", dayCounts([a, extra, later, weekly], [mark("a", d)], d, R, L), true);
+  eq("«дополнительно» и «потом» не мешают", dayCounts([a, extra, later], [mark("a", d)], d, R, L), true);
   const fresh = habit("f", { createdAt: ago(1) });
   eq("привычка, заведённая позже, прошлое не судит", dayCounts([a, fresh], [mark("a", d)], d, R, L), true);
   const back = habit("r", { createdAt: ago(100), nowSince: ago(1) });
   eq("вернувшаяся в список — тоже", dayCounts([a, back], [mark("a", d)], d, R, L), true);
   eq("пустой список — дня нет", dayCounts([habit("x", { group: "extra" })], [mark("x", d)], d, R, L), false);
+});
+
+test("недельная входит в зачёт дня", () => {
+  const weekly = habit("w", { target: { kind: "weekly", count: 1 } });
+  eq("неделя не набрана — день не закрыт", dayCounts([a, weekly], [mark("a", d)], d, R, L), false);
+  eq("неделя набрана в этот день — закрыт", dayCounts([a, weekly], [mark("a", d), mark("w", d)], d, R, L), true);
+  const rule = { kind: "count" as const, value: 1 };
+  eq("при «одной» недельную можно не делать", dayCounts([a, weekly], [mark("a", d)], d, rule, L), true);
+});
+
+test("подзадачи: родитель не считается, считаются они", () => {
+  const parent = habit("p", { hasSubtasks: true });
+  const s1 = habit("s1", { parentId: "p" });
+  const s2 = habit("s2", { parentId: "p" });
+  const all = [parent, s1, s2];
+  eq("одна подзадача из двух — день не закрыт", dayCounts(all, [mark("s1", d)], d, R, L), false);
+  eq("обе подзадачи — закрыт, родитель отмечать не нужно", dayCounts(all, [mark("s1", d), mark("s2", d)], d, R, L), true);
+  eq("родитель сам без подзадач ничего не закрывает", dayCounts(all, [mark("p", d)], d, R, L), false);
 });
 
 test("счётчик: «3 раза в день» — это три отметки", () => {
