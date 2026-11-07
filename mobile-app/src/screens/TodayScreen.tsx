@@ -621,6 +621,19 @@ export default function TodayScreen() {
   ).length;
   const required = requiredForDay(dayRule, units.length);
 
+  // Что показывает шапка: ВСЕ пункты «Ввожу сейчас» — обычные привычки и подзадачи, закрытые,
+  // открытые и проваленные. Родитель с подзадачами сам не считается — вместо него его подзадачи.
+  // Это только счёт для глаз: приговор дня (`closed`, `required`, `units`) считается выше как
+  // раньше и недельные, которые сегодня можно пропустить, из него по-прежнему выпадают.
+  const shownItems = nowHabits.flatMap((p) => {
+    const subs = habits.filter((s) => s.parentId === p.id);
+    return subs.length > 0 ? subs : [p];
+  });
+  const shownTotal = shownItems.length;
+  const shownClosed = shownItems.filter(
+    (h) => logCount(logs.find((l) => l.habitId === h.id)) >= perDayTarget(h) || weekMet(h),
+  ).length;
+
   // Норма по уровням — вторая половина того же приговора дня. Считается здесь, потому что
   // здесь же стоит и первая: два числа, которые решают день, человек должен видеть рядом,
   // а не на разных экранах.
@@ -722,15 +735,15 @@ export default function TodayScreen() {
           {/* Only daily habits decide a day, so the count is over those. With nothing but
               weekly ones in the pile "ни одной привычки в работе" was flatly wrong — there
               are habits there, they just are not owed today. */}
-          {units.length > 0
-            ? required < units.length
-              // With a partial rule "закрыто 2 из 5" is only half the sentence — it does not
-              // say whether the day is already held.
-              ? `Сегодня закрыто ${closed} из ${units.length} · нужно ${required}`
-              : `Сегодня закрыто ${closed} из ${units.length}`
-            : nowHabits.length > 0
-              ? "В работе только недельные — день по ним не засчитывается"
-              : "Ни одной привычки в работе"}
+          {shownTotal > 0
+            ? units.length === 0
+              ? `Сегодня закрыто ${shownClosed} из ${shownTotal} · день по ним не засчитывается`
+              : required < units.length
+                // With a partial rule "закрыто 2 из 5" is only half the sentence — it does not
+                // say whether the day is already held.
+                ? `Сегодня закрыто ${shownClosed} из ${shownTotal} · нужно ${required}`
+                : `Сегодня закрыто ${shownClosed} из ${shownTotal}`
+            : "Ни одной привычки в работе"}
         </Text>
         <Pressable
           onPress={() => {
@@ -1057,7 +1070,17 @@ function HabitRow({
   const [noteOpen, setNoteOpen] = useState(false);
   const target = habitTarget(habit);
   const hasSub = subtasks.length > 0;
-  const doneCount = subtasks.filter(s => logs.find(l => l.habitId === s.id)?.done).length;
+  // Подзадача закрыта, если отмечена сегодня или (недельная) уже закрыта раньше на этой неделе.
+  // Одна проверка и для линии у родителя, и для строки подзадачи — раньше линия смотрела
+  // только на сегодняшнюю отметку и не видела недельные подзадачи, закрытые в прошлые дни.
+  const todayKey = weekDates[weekDates.length - 1];
+  const subSettled = (s: Habit) => {
+    if (logs.find((l) => l.habitId === s.id)?.done) return true;
+    if (habitTarget(s).kind !== "weekly") return false;
+    const w = weeklyProgress(s, weekLogs.filter((l) => l.date !== todayKey), weekDates);
+    return w.count >= w.target;
+  };
+  const doneCount = subtasks.filter(subSettled).length;
   const blockedBySubs = hasSub && doneCount < subtasks.length;
   const level = levelChoiceOf(habit);
   const perDay = perDayTarget(habit);
@@ -1288,12 +1311,7 @@ function HabitRow({
         // без этого на следующий день отметка сбрасывалась и её можно было поставить снова (2/1).
         // Неделя закрыта в прошлые дни — тогда подзадача закрыта. Сегодняшний день берётся из
         // `doneToday`, а не из недельного запроса, который после сброса отстаёт.
-        const todayKey = weekDates[weekDates.length - 1];
-        const subEarlier =
-          subTarget.kind === "weekly"
-            ? weeklyProgress(sub, weekLogs.filter(l => l.date !== todayKey), weekDates)
-            : null;
-        const isDone = doneToday || (!!subEarlier && subEarlier.count >= subEarlier.target);
+        const isDone = subSettled(sub);
         const canTick = tickable && markable && !isDone;
         const subFreq = subWeek
           ? `${subWeek.count}/${subWeek.target} в неделю`
