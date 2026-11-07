@@ -1,9 +1,10 @@
 import { dateNDaysAgo } from "./date";
-import { DEFAULT_DAY_RULE, requiredForDay, type DayRule } from "./dayRule";
+import { DEFAULT_DAY_RULE, requiredForDay, ruleForDate, type DayRule } from "./dayRule";
 import { DEFAULT_SKIP_RULE, periodBucket, type SkipRule } from "./skipRule";
 import { DEFAULT_DAY_OFF, isDayOff, type DayOffRule } from "./dayOff";
 import { habitsThatDecideTheDay, logCount, perDayTarget } from "./habits";
 import { capQuota, closedLevels, countLevels, meetsQuota, type LevelRule } from "./level";
+import { levelRuleForDate } from "./levelHistory";
 import type { Habit, HabitLog } from "../types";
 
 /** How far back a streak is counted — comfortably past the 66-day mark. */
@@ -68,11 +69,16 @@ function dayCountsWith(
   if (deciding.length === 0) return false;
   const counts = new Map<string, number>();
   for (const l of logs) if (l.date === date) counts.set(l.habitId, logCount(l));
-  return meetsDay(deciding, counts, rule, levels);
+  return meetsDay(deciding, counts, date, rule, levels);
 }
 
 /**
  * The rule itself, so the single-day and whole-history callers cannot drift apart.
+ *
+ * Сколько закрыть, берётся по правилу, которое стояло *в этот день*: правило дня помнит,
+ * когда его меняли (см. ruleForDate), и опущенная сегодня планка не делает закрытыми дни,
+ * которые по тогдашней были провалены. Норма по уровням устроена так же: день судится по
+ * той, что стояла в нём (см. levelRuleForDate).
  *
  * Два условия, и оба должны сойтись. Сколько всего закрыть — [requiredForDay], и *какие
  * именно* там намеренно не спрашивается: правило «три из пяти», которое ещё и называет
@@ -86,13 +92,15 @@ function dayCountsWith(
 function meetsDay(
   deciding: Habit[],
   counts: Map<string, number>,
+  date: string,
   rule: DayRule,
   levels: LevelRule,
 ): boolean {
   const isClosed = (h: Habit) => (counts.get(h.id) ?? 0) >= perDayTarget(h);
   const closed = deciding.filter(isClosed);
-  if (closed.length < requiredForDay(rule, deciding.length)) return false;
-  return meetsQuota(closedLevels(deciding, isClosed), capQuota(levels.daily, countLevels(deciding)));
+  if (closed.length < requiredForDay(ruleForDate(rule, date), deciding.length)) return false;
+  const quota = levelRuleForDate(levels, date).daily;
+  return meetsQuota(closedLevels(deciding, isClosed), capQuota(quota, countLevels(deciding)));
 }
 
 /**
@@ -125,7 +133,7 @@ export function countedDates(
   // in the week before it.
   for (const [date, counts] of byDate) {
     const deciding = habitsThatDecideTheDay(habits, date, starts);
-    if (deciding.length > 0 && meetsDay(deciding, counts, rule, levels)) counted.add(date);
+    if (deciding.length > 0 && meetsDay(deciding, counts, date, rule, levels)) counted.add(date);
   }
   return counted;
 }
