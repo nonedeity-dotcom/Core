@@ -2,7 +2,7 @@ import { dateNDaysAgo } from "./date";
 import { DEFAULT_DAY_RULE, requiredForDay, ruleForDate, type DayRule } from "./dayRule";
 import { DEFAULT_SKIP_RULE, periodBucket, type SkipRule } from "./skipRule";
 import { DEFAULT_DAY_OFF, isDayOff, type DayOffRule } from "./dayOff";
-import { habitsThatDecideTheDay, logCount, perDayTarget } from "./habits";
+import { dayItems, logCount, perDayTarget, weeklyClosedOn } from "./habits";
 import { capQuota, closedLevels, countLevels, meetsQuota, type LevelRule } from "./level";
 import { levelRuleForDate } from "./levelHistory";
 import type { Habit, HabitLog } from "../types";
@@ -65,11 +65,11 @@ function dayCountsWith(
   rule: DayRule,
   levels: LevelRule,
 ): boolean {
-  const deciding = habitsThatDecideTheDay(habits, date, starts);
+  const deciding = dayItems(habits, date, starts);
   if (deciding.length === 0) return false;
   const counts = new Map<string, number>();
   for (const l of logs) if (l.date === date) counts.set(l.habitId, logCount(l));
-  return meetsDay(deciding, counts, date, rule, levels);
+  return meetsDay(deciding, counts, logs, date, rule, levels);
 }
 
 /**
@@ -92,11 +92,13 @@ function dayCountsWith(
 function meetsDay(
   deciding: Habit[],
   counts: Map<string, number>,
+  logs: HabitLog[],
   date: string,
   rule: DayRule,
   levels: LevelRule,
 ): boolean {
-  const isClosed = (h: Habit) => (counts.get(h.id) ?? 0) >= perDayTarget(h);
+  // Недельный пункт закрыт, когда набрана его неделя, — как и в шапке чек-листа.
+  const isClosed = (h: Habit) => (counts.get(h.id) ?? 0) >= perDayTarget(h) || weeklyClosedOn(h, logs, date);
   const closed = deciding.filter(isClosed);
   if (closed.length < requiredForDay(ruleForDate(rule, date), deciding.length)) return false;
   const quota = levelRuleForDate(levels, date).daily;
@@ -116,7 +118,7 @@ export function countedDates(
   levels: LevelRule,
 ): Set<string> {
   const counted = new Set<string>();
-  if (habitsThatDecideTheDay(habits).length === 0) return counted;
+  if (dayItems(habits).length === 0) return counted;
 
   const starts = startsByHabit(habits, logs);
   const byDate = new Map<string, Map<string, number>>();
@@ -132,8 +134,8 @@ export function countedDates(
   // The deciding set is per date, not per call: a habit added last week does not get a say
   // in the week before it.
   for (const [date, counts] of byDate) {
-    const deciding = habitsThatDecideTheDay(habits, date, starts);
-    if (deciding.length > 0 && meetsDay(deciding, counts, date, rule, levels)) counted.add(date);
+    const deciding = dayItems(habits, date, starts);
+    if (deciding.length > 0 && meetsDay(deciding, counts, logs, date, rule, levels)) counted.add(date);
   }
   return counted;
 }
@@ -154,7 +156,7 @@ export function computeStreak(
   daysOff: DayOffRule = DEFAULT_DAY_OFF,
 ): number {
   // With nothing in the "now" pile there is nothing to be consistent about.
-  if (habitsThatDecideTheDay(habits).length === 0) return 0;
+  if (dayItems(habits).length === 0) return 0;
 
   const frozenDays = new Set(frozen);
   // Built once: dayCounts would otherwise re-derive it for each of 120 days.
@@ -211,7 +213,7 @@ export function streakSpan(
   daysOff: DayOffRule = DEFAULT_DAY_OFF,
 ): StreakSpan {
   const empty: StreakSpan = { days: 0, done: 0, frozen: 0, off: 0 };
-  if (habitsThatDecideTheDay(habits).length === 0) return empty;
+  if (dayItems(habits).length === 0) return empty;
 
   const frozenDays = new Set(frozen);
   const starts = startsByHabit(habits, logs);

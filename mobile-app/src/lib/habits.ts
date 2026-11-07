@@ -1,4 +1,5 @@
 import type { Habit, HabitLog, HabitTarget, ItemGroup } from "../types";
+import { weekDatesThrough } from "./week";
 
 /** What a habit meant before targets existed, and what a new one starts as. */
 export const DEFAULT_TARGET: HabitTarget = { kind: "daily", count: 1 };
@@ -109,4 +110,46 @@ export function habitsThatDecideTheDay(
       habitTarget(h).kind === "daily" &&
       (date === undefined || startOf(h, startedOn) <= date),
   );
+}
+
+/**
+ * Входят ли недельные пункты в зачёт дня.
+ *
+ * true — считаются все пункты «Ввожу сейчас», в том числе недельные: недельный пункт закрыт
+ * на весь остаток недели, как только набрана его неделя. false — как было раньше: недельные
+ * из зачёта дня выпадают, потому что в день без тренировки их не закрыть.
+ */
+export const WEEKLY_COUNTS_FOR_DAY = true;
+
+/**
+ * Пункты, по которым судится день, — одним списком для всего приложения: шапка чек-листа,
+ * карточка в настройках, серия и статистика берут числа отсюда и поэтому не расходятся.
+ *
+ * Это листья группы «Ввожу сейчас»: обычная привычка — сама, привычка с подзадачами — её
+ * подзадачи, а сам родитель не считается (он закрывается автоматически, когда готовы все
+ * подзадачи, и в счёте стоял бы дважды). Подзадача живёт в группе своего родителя.
+ *
+ * `date` и `startedOn` — как у habitsThatDecideTheDay: пункт отвечает только за дни, когда он
+ * уже был в списке.
+ */
+export function dayItems(habits: Habit[], date?: string, startedOn?: Map<string, string>): Habit[] {
+  const counts = (h: Habit) =>
+    (WEEKLY_COUNTS_FOR_DAY || habitTarget(h).kind === "daily") &&
+    (date === undefined || startOf(h, startedOn) <= date);
+  return habits
+    .filter((h) => !h.parentId && habitGroup(h) === "now")
+    .flatMap((p) => {
+      const subs = habits.filter((s) => s.parentId === p.id);
+      return (subs.length > 0 ? subs : [p]).filter(counts);
+    });
+}
+
+/**
+ * Недельный пункт набрал свою неделю к концу дня `date` (понедельник по этот день включительно).
+ * Для дневного всегда false: он закрывается только отметками самого дня.
+ */
+export function weeklyClosedOn(habit: Habit, logs: HabitLog[], date: string): boolean {
+  const t = habitTarget(habit);
+  if (t.kind !== "weekly") return false;
+  return weeklyProgress(habit, logs, weekDatesThrough(date)).count >= t.count;
 }
