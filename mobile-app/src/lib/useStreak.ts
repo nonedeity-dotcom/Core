@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { dateNDaysAgo } from "./date";
@@ -120,7 +120,13 @@ export function useStreak(today: string): {
     }
   }, [ready, habits, logs, freezes, habitFreezes, skipRule, daysOff, qc]);
 
-  const streak = computeStreak(habits, logs, freezes, rule, levelRule, daysOff);
+  // Серия считается обходом 120 дней по всем отметкам. Раньше это шло на каждую перерисовку
+  // любого экрана, где стоит useStreak, — в том числе на каждое раскрытие подзадач. Теперь
+  // пересчёт только когда изменились сами данные.
+  const streak = useMemo(
+    () => computeStreak(habits, logs, freezes, rule, levelRule, daysOff),
+    [habits, logs, freezes, rule, levelRule, daysOff],
+  );
 
   // Announcing the stretch is also a write (it records what has been said), so it belongs
   // here beside the freeze rather than in a screen that might mount twice.

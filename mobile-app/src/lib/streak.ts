@@ -2,7 +2,8 @@ import { dateNDaysAgo } from "./date";
 import { DEFAULT_DAY_RULE, requiredForDay, ruleForDate, type DayRule } from "./dayRule";
 import { DEFAULT_SKIP_RULE, periodBucket, type SkipRule } from "./skipRule";
 import { DEFAULT_DAY_OFF, isDayOff, type DayOffRule } from "./dayOff";
-import { dayItems, logCount, perDayTarget, weeklyClosedOn } from "./habits";
+import { dayItems, habitTarget, logCount, perDayTarget, weeklyClosedOn } from "./habits";
+import { weekDatesThrough } from "./week";
 import { capQuota, closedLevels, countLevels, meetsQuota, type LevelRule } from "./level";
 import { levelRuleForDate } from "./levelHistory";
 import type { Habit, HabitLog } from "../types";
@@ -31,7 +32,30 @@ export function dayCounts(
   rule: DayRule,
   levels: LevelRule,
 ): boolean {
-  return dayCountsWith(habits, logs, date, startsByHabit(habits, logs), rule, levels);
+  return dayCountsWith(habits, indexByDate(logs), date, startsByHabit(habits, logs), rule, levels);
+}
+
+/**
+ * Отметки, разложенные по дням — один раз, а не по проходу на каждый день.
+ *
+ * Серия обходит 120 дней, и раньше каждый день перечитывал весь список отметок целиком
+ * (а недельный пункт — ещё и по разу на каждый такой пункт). Теперь день берёт только свои.
+ */
+type LogIndex = Map<string, HabitLog[]>;
+
+function indexByDate(logs: HabitLog[]): LogIndex {
+  const byDate: LogIndex = new Map();
+  for (const l of logs) {
+    const day = byDate.get(l.date);
+    if (day) day.push(l);
+    else byDate.set(l.date, [l]);
+  }
+  return byDate;
+}
+
+/** Отметки с понедельника по `date` включительно — то, что нужно недельному пункту. */
+function weekLogsThrough(byDate: LogIndex, date: string): HabitLog[] {
+  return weekDatesThrough(date).flatMap((d) => byDate.get(d) ?? []);
 }
 
 /**
@@ -59,7 +83,7 @@ export function startsByHabit(habits: Habit[], logs: HabitLog[]): Map<string, st
 
 function dayCountsWith(
   habits: Habit[],
-  logs: HabitLog[],
+  byDate: LogIndex,
   date: string,
   starts: Map<string, string>,
   rule: DayRule,
@@ -68,8 +92,8 @@ function dayCountsWith(
   const deciding = dayItems(habits, date, starts);
   if (deciding.length === 0) return false;
   const counts = new Map<string, number>();
-  for (const l of logs) if (l.date === date) counts.set(l.habitId, logCount(l));
-  return meetsDay(deciding, counts, logs, date, rule, levels);
+  for (const l of byDate.get(date) ?? []) counts.set(l.habitId, logCount(l));
+  return meetsDay(deciding, counts, () => weekLogsThrough(byDate, date), date, rule, levels);
 }
 
 /**
@@ -92,13 +116,21 @@ function dayCountsWith(
 function meetsDay(
   deciding: Habit[],
   counts: Map<string, number>,
-  logs: HabitLog[],
+  weekLogs: () => HabitLog[],
   date: string,
   rule: DayRule,
   levels: LevelRule,
 ): boolean {
+  // Отметки недели нужны только недельным пунктам, и собираются они лениво и один раз на день.
+  let week: HabitLog[] | null = null;
+  const logsOfWeek = () => {
+    if (week === null) week = weekLogs();
+    return week;
+  };
   // Недельный пункт закрыт, когда набрана его неделя, — как и в шапке чек-листа.
-  const isClosed = (h: Habit) => (counts.get(h.id) ?? 0) >= perDayTarget(h) || weeklyClosedOn(h, logs, date);
+  const isClosed = (h: Habit) =>
+    (counts.get(h.id) ?? 0) >= perDayTarget(h) ||
+    (habitTarget(h).kind === "weekly" && weeklyClosedOn(h, logsOfWeek(), date));
   const closed = deciding.filter(isClosed);
   if (closed.length < requiredForDay(ruleForDate(rule, date), deciding.length)) return false;
   const quota = levelRuleForDate(levels, date).daily;
@@ -121,6 +153,7 @@ export function countedDates(
   if (dayItems(habits).length === 0) return counted;
 
   const starts = startsByHabit(habits, logs);
+  const logIndex = indexByDate(logs);
   const byDate = new Map<string, Map<string, number>>();
   for (const l of logs) {
     let day = byDate.get(l.date);
@@ -135,7 +168,9 @@ export function countedDates(
   // in the week before it.
   for (const [date, counts] of byDate) {
     const deciding = dayItems(habits, date, starts);
-    if (deciding.length > 0 && meetsDay(deciding, counts, logs, date, rule, levels)) counted.add(date);
+    if (deciding.length > 0 && meetsDay(deciding, counts, () => weekLogsThrough(logIndex, date), date, rule, levels)) {
+      counted.add(date);
+    }
   }
   return counted;
 }
@@ -161,11 +196,12 @@ export function computeStreak(
   const frozenDays = new Set(frozen);
   // Built once: dayCounts would otherwise re-derive it for each of 120 days.
   const starts = startsByHabit(habits, logs);
+  const byDate = indexByDate(logs);
 
   let streak = 0;
   for (let i = 0; i < STREAK_WINDOW_DAYS; i++) {
     const day = dateNDaysAgo(i);
-    if (dayCountsWith(habits, logs, day, starts, rule, levels)) streak++;
+    if (dayCountsWith(habits, byDate, day, starts, rule, levels)) streak++;
     // Today still being unfinished shouldn't break yesterday's streak.
     else if (i === 0) continue;
     // A frozen day neither breaks the chain nor adds to it. Counting it as a day would be
@@ -217,6 +253,7 @@ export function streakSpan(
 
   const frozenDays = new Set(frozen);
   const starts = startsByHabit(habits, logs);
+  const byDate = indexByDate(logs);
 
   let done = 0;
   let insideFrozen = 0;
@@ -231,7 +268,7 @@ export function streakSpan(
 
   for (let i = 0; i < STREAK_WINDOW_DAYS; i++) {
     const day = dateNDaysAgo(i);
-    if (dayCountsWith(habits, logs, day, starts, rule, levels)) {
+    if (dayCountsWith(habits, byDate, day, starts, rule, levels)) {
       done++;
       oldest = i;
       if (newest === -1) {
@@ -295,6 +332,8 @@ function skipsUsed(
     return used;
   }
 
+  const starts = startsByHabit(habits, logs);
+  const byDate = indexByDate(logs);
   let used = 0;
   for (let i = from; i < STREAK_WINDOW_DAYS; i++) {
     const day = dateNDaysAgo(i);
@@ -306,7 +345,7 @@ function skipsUsed(
     if (isDayOff(day, daysOff)) continue;
     // A day that actually held keeps the run going; one that failed unfrozen ended it, and
     // everything before it belongs to a chain that is already over.
-    if (!dayCounts(habits, logs, day, dayRule, levels)) break;
+    if (!dayCountsWith(habits, byDate, day, starts, dayRule, levels)) break;
   }
   return used;
 }
