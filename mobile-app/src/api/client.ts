@@ -154,6 +154,32 @@ async function write<T>(key: string, value: T): Promise<void> {
   await AsyncStorage.setItem(key, JSON.stringify(value));
 }
 
+/**
+ * Отметки привычек для чтения — с запомненным разбором.
+ *
+ * Экран открывает три запроса к одной и той же таблице (день, неделя, четыре месяца), и
+ * каждый разбирал её JSON заново. Теперь разбирается один раз: строка из хранилища
+ * сравнивается с той, что уже разобрана, и при совпадении берётся готовый результат. Если
+ * таблицу кто-то записал в обход (восстановление из бэкапа), строка отличается и разбор
+ * делается заново, так что устареть кэш не может. Только для чтения: записи идут через
+ * обычный read под блокировкой.
+ */
+let habitLogParsed: { raw: string; rows: HabitLog[] } | null = null;
+
+async function readHabitLogRows(): Promise<HabitLog[]> {
+  const raw = await AsyncStorage.getItem(KEYS.habitLog);
+  if (!raw) return [];
+  if (habitLogParsed && habitLogParsed.raw === raw) return habitLogParsed.rows;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    const rows = Array.isArray(parsed) ? (parsed as HabitLog[]) : [];
+    habitLogParsed = { raw, rows };
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
 // Every mutation here is a read-modify-write, and several can be in flight at
 // once (the screen-time sync ticking a habit while the user taps another one,
 // two quick taps in a row). Without serialising, both read the same array and
@@ -600,7 +626,7 @@ export const api = {
     return { ok: true };
   },
   async getHabitLog(from: string, to: string): Promise<HabitLog[]> {
-    const logs = await read<HabitLog[]>(KEYS.habitLog, []);
+    const logs = await readHabitLogRows();
     return logs.filter((l) => inRange(l.date, from, to));
   },
   /**
