@@ -46,6 +46,7 @@ import {
 } from "../lib/screen/hours";
 import { TOTAL_APP, type ScreenRule } from "../lib/screenTime";
 import { MAX_DAY_ML, normalizeWaterDay, type WaterDay } from "../lib/balance/water";
+import { normalizeEvent, normalizeEvents, type DateEvent } from "../lib/dateEvents";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -93,6 +94,8 @@ const KEYS = {
   screenAppInfo: "screen-app-info-v1",
   screenHours: "screen-hours-v1",
   screenHourApps: "screen-hour-apps-v1",
+  // Не calendarPrefs: тот про календарь привычек, а это — даты и события на Главной.
+  dateEvents: "date-events-v1",
 };
 
 /**
@@ -1391,6 +1394,37 @@ export const api = {
   },
 
 
+  /**
+   * Даты и события — дни рождения, встречи, всё, о чём календарь на Главной напоминает.
+   *
+   * Список читается через normalizeEvents: запись, испорченная на диске или пришедшая из
+   * чужой копии, тихо выпадает, а не роняет Главную, на которой стоит календарь.
+   */
+  async getDateEvents(): Promise<DateEvent[]> {
+    return normalizeEvents(await read<unknown>(KEYS.dateEvents, []));
+  },
+  /** Новое событие (без id) или правка существующего (с id). Под замком, как и остальное. */
+  async saveDateEvent(event: Omit<DateEvent, "id"> & { id?: string }): Promise<DateEvent> {
+    return withKeyLock(KEYS.dateEvents, async () => {
+      const stored = normalizeEvents(await read<unknown>(KEYS.dateEvents, []));
+      const clean = normalizeEvent({ ...event, id: event.id ?? uid() });
+      if (!clean) throw new Error("Некорректное событие");
+      const exists = stored.some((e) => e.id === clean.id);
+      await write(
+        KEYS.dateEvents,
+        exists ? stored.map((e) => (e.id === clean.id ? clean : e)) : [...stored, clean],
+      );
+      return clean;
+    });
+  },
+  async removeDateEvent(id: string): Promise<{ ok: true }> {
+    return withKeyLock(KEYS.dateEvents, async () => {
+      const stored = normalizeEvents(await read<unknown>(KEYS.dateEvents, []));
+      await write(KEYS.dateEvents, stored.filter((e) => e.id !== id));
+      return { ok: true as const };
+    });
+  },
+
   async getTasks(): Promise<Task[]> {
     return read(KEYS.tasks, []);
   },
@@ -1644,6 +1678,8 @@ export interface BackupData {
   screenHours: HourlyDay[];
   /** Разбивка часов по приложениям. Отсутствует в файлах, записанных до неё. */
   screenHourApps?: HourAppsDay[];
+  /** Даты и события. Отсутствуют в файлах, записанных до календаря на Главной. */
+  dateEvents?: DateEvent[];
   /**
    * Кошелёк: искры, ядра, купленное, надетое, журнал рассчитанных дней.
    *
@@ -1731,7 +1767,12 @@ export async function exportData(): Promise<BackupData> {
       read<HourlyDay[]>(KEYS.screenHours, []),
       read<HourAppsDay[]>(KEYS.screenHourApps, []),
     ]);
-  const [purse, gameStats, village] = await Promise.all([api.getPurse(), api.getGameStats(), api.getVillage()]);
+  const [purse, gameStats, village, dateEvents] = await Promise.all([
+    api.getPurse(),
+    api.getGameStats(),
+    api.getVillage(),
+    api.getDateEvents(),
+  ]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
     habitLog,
@@ -1765,6 +1806,7 @@ export async function exportData(): Promise<BackupData> {
     purse,
     gameStats,
     village,
+    dateEvents,
   };
 }
 
@@ -1807,6 +1849,8 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       ...(data.purse ? [write(KEYS.purse, normalizePurse(data.purse))] : []),
       ...(data.gameStats ? [write(KEYS.gameStats, normalizeGameStats(data.gameStats))] : []),
       ...(data.village ? [write(KEYS.village, data.village)] : []),
+      // Нет в файле — значит, копия старше календаря: свои даты она стирать не должна.
+      ...(data.dateEvents ? [write(KEYS.dateEvents, normalizeEvents(data.dateEvents))] : []),
     ]);
     return {
       habits: data.habits.length,
@@ -2165,6 +2209,19 @@ export async function mergeData(data: BackupData): Promise<ImportStats> {
         [...hourAppsByDate.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-HOUR_APPS_KEEP_DAYS),
       );
     }
+
+    // Даты и события — по id, и свои важнее: правка здесь новее той же даты в старой копии.
+    const dateEvents = normalizeEvents(await read<unknown>(KEYS.dateEvents, []));
+    const dateEventIds = new Set(dateEvents.map((e) => e.id));
+    let dateEventsChanged = false;
+    for (const raw of data.dateEvents ?? []) {
+      const e = normalizeEvent(raw);
+      if (!e || dateEventIds.has(e.id)) continue;
+      dateEventIds.add(e.id);
+      dateEvents.push(e);
+      dateEventsChanged = true;
+    }
+    if (dateEventsChanged) await write(KEYS.dateEvents, dateEvents);
 
     // Кошелёк и игры — по своим правилам слияния: деньги не складываются, купленное не
     // теряется, рекорд берётся лучший. Нет в файле — не трогаем.
