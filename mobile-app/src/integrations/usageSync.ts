@@ -12,13 +12,24 @@ import {
   onlyPackage,
   subtractHourly,
   toDailyUsage,
+  toHourlyByPackage,
   toHourlyLaunches,
   toHourlyUnlocks,
   toHourlyUsage,
   type HourlyValue,
+  type Interval,
+  type RawEvent,
 } from "../lib/screen/sessions";
 import type { AppDay, ScreenDay } from "../lib/screen/usage";
-import { isEmptyHourlyDay, seriesFor, type HourlyDay } from "../lib/screen/hours";
+import {
+  appsInHour,
+  isEmptyHourlyDay,
+  packHourApps,
+  seriesFor,
+  type HourApp,
+  type HourAppsDay,
+  type HourlyDay,
+} from "../lib/screen/hours";
 
 /**
  * Приложение считает экранное время само.
@@ -104,6 +115,43 @@ export async function resolveAppInfo(packages: string[]): Promise<Record<string,
 /** Ряд из двадцати четырёх чисел — то, что хранится, вместо пар «час — значение». */
 const values = (row: HourlyValue[]): number[] => row.map((h) => h.value);
 
+/** Всё, из чего складывается почасовая картина дня: события и посчитанные из них интервалы. */
+interface DayInput {
+  events: RawEvent[];
+  /** Передний план, все пакеты — домашний экран отбирается здесь, по `home`. */
+  intervals: Interval[];
+  screenIntervals: Interval[];
+  /** Заходы в приложения без домашнего экрана. */
+  opened: RawEvent[];
+  home: Set<string>;
+}
+
+/**
+ * Почасовая картина одного дня: общие ряды и разбивка по приложениям.
+ *
+ * Одна функция на оба случая — сохранение при синхронизации и живой расчёт для дня, которого
+ * в хранилище ещё нет, — потому что окно часа и график над ним обязаны считать одинаково.
+ * Если приложения не набрали ни секунды, `apps` — `null`.
+ */
+function pictureOfDay(date: string, input: DayInput): { hourly: HourlyDay; apps: HourAppsDay | null } {
+  const [y, m, d] = date.split("-").map(Number);
+  const dayStart = new Date(y, m - 1, d).getTime();
+  const dayEnd = new Date(y, m - 1, d + 1).getTime();
+  const inApps = clipIntervals(
+    input.intervals.filter((i) => !input.home.has(i.packageName)),
+    dayStart,
+    dayEnd,
+  );
+  const hourly: HourlyDay = {
+    date,
+    screen: values(toHourlyUsage(clipIntervals(input.screenIntervals, dayStart, dayEnd))),
+    apps: values(toHourlyUsage(inApps)),
+    launches: values(toHourlyLaunches(input.opened, dayStart, dayEnd)),
+    unlocks: values(toHourlyUnlocks(input.events, dayStart, dayEnd)),
+  };
+  return { hourly, apps: packHourApps(date, toHourlyByPackage(inApps)) };
+}
+
 export async function syncUsage(nowMs = Date.now()): Promise<UsageSyncResult> {
   if (!hasUsageAccess()) return { days: 0, events: 0, denied: true };
 
@@ -144,22 +192,18 @@ export async function syncUsage(nowMs = Date.now()): Promise<UsageSyncResult> {
       .map(([packageName]) => packageName),
   );
   const opened = launchEvents(events).filter((e) => !home.has(e.packageName));
+  const input: DayInput = { events, intervals, screenIntervals, opened, home };
   const hours: HourlyDay[] = [];
+  // Разбивка по приложениям — для окна, которое открывается по нажатию на час. Считается из
+  // тех же интервалов и в том же проходе, что и общие ряды, и сохраняется рядом с ними.
+  const hourApps: HourAppsDay[] = [];
   for (let back = REBUILD_DAYS - 1; back >= 0; back--) {
-    const date = dateNDaysAgo(back);
-    const [dy, dm, dd] = date.split("-").map(Number);
-    const dayStart = new Date(dy, dm - 1, dd).getTime();
-    const dayEnd = new Date(dy, dm - 1, dd + 1).getTime();
-    const day: HourlyDay = {
-      date,
-      screen: values(toHourlyUsage(clipIntervals(screenIntervals, dayStart, dayEnd))),
-      apps: values(toHourlyUsage(clipIntervals(intervals.filter((i) => !home.has(i.packageName)), dayStart, dayEnd))),
-      launches: values(toHourlyLaunches(opened, dayStart, dayEnd)),
-      unlocks: values(toHourlyUnlocks(events, dayStart, dayEnd)),
-    };
-    if (!isEmptyHourlyDay(day)) hours.push(day);
+    const picture = pictureOfDay(dateNDaysAgo(back), input);
+    if (!isEmptyHourlyDay(picture.hourly)) hours.push(picture.hourly);
+    if (picture.apps) hourApps.push(picture.apps);
   }
   await api.mergeHourlyDays(hours);
+  await api.mergeHourAppsDays(hourApps);
 
   const apps: AppDay[] = appRows.map((row) => ({
     date: row.date,
@@ -266,4 +310,70 @@ export async function hourlyFor(
     time: screen,
     launches: appLaunches.map((h, i) => ({ hour: h.hour, value: h.value + (unlocks[i]?.value ?? 0) })),
   };
+}
+
+/** Что происходило в один час суток: общие числа и, если известно, разбивка по приложениям. */
+export interface HourDetail {
+  hour: number;
+  /** Сколько экран был включён, миллисекунды. */
+  screenMs: number;
+  /** Из них в приложениях (без домашнего экрана), миллисекунды. */
+  appsMs: number;
+  /** Заходы в приложения. */
+  appLaunches: number;
+  unlocks: number;
+  /**
+   * Приложения часа, от самого долгого. `null` — разбивки за этот день нет: она хранится не
+   * вечно, а день мог быть посчитан версией, которая её ещё не сохраняла.
+   */
+  apps: HourApp[] | null;
+}
+
+function detailAt(hourly: HourlyDay, apps: HourAppsDay | null, hour: number): HourDetail {
+  return {
+    hour,
+    screenMs: hourly.screen[hour] ?? 0,
+    appsMs: hourly.apps[hour] ?? 0,
+    appLaunches: hourly.launches[hour] ?? 0,
+    unlocks: hourly.unlocks[hour] ?? 0,
+    apps: apps ? appsInHour(apps, hour) : null,
+  };
+}
+
+/**
+ * Один час дня подробно: сколько экран был включён и в каких приложениях.
+ *
+ * Сначала хранилище — оно считается при каждой синхронизации, пока события живы. День, о
+ * котором у нас нет общей картины вовсе, пересчитывается из живых событий: так же поступает
+ * график над окном, и числа в них обязаны совпасть. Если же общая картина дня есть, а
+ * разбивки по приложениям нет, живые события не трогаются: от дня, который система уже
+ * наполовину забыла, они дали бы обрывок, выданный за целое.
+ */
+export async function hourDetailFor(
+  date: string,
+  hour: number,
+  homePackages: string[] = [],
+): Promise<HourDetail | null> {
+  const [stored, storedApps] = await Promise.all([api.getHourlyDay(date), api.getHourAppsDay(date)]);
+  if (stored) return detailAt(stored, storedApps, hour);
+
+  if (!hasUsageAccess()) return null;
+  const [y, m, d] = date.split("-").map(Number);
+  const startMs = new Date(y, m - 1, d).getTime();
+  const endMs = new Date(y, m - 1, d + 1).getTime();
+  const nowMs = Date.now();
+  if (startMs > nowMs) return null;
+
+  const events = await queryRawEvents(startMs - SESSION_LOOKBACK_MS, Math.min(endMs, nowMs));
+  if (events.length === 0) return null;
+  const home = new Set(homePackages);
+  const picture = pictureOfDay(date, {
+    events,
+    intervals: buildIntervals(events, startMs, endMs, nowMs),
+    screenIntervals: buildScreenOnIntervals(events, startMs, endMs, nowMs),
+    opened: launchEvents(events).filter((e) => !home.has(e.packageName)),
+    home,
+  });
+  // Живой расчёт знает всё о дне: нет приложений — значит, их и правда не было.
+  return detailAt(picture.hourly, picture.apps ?? { date, byApp: {} }, hour);
 }
