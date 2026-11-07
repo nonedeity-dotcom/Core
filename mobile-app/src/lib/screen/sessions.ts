@@ -304,17 +304,45 @@ export interface HourlyValue {
  */
 export function toHourlyUsage(intervals: Interval[]): HourlyValue[] {
   const totals = new Array<number>(24).fill(0);
-  for (const interval of intervals) {
-    let cursor = interval.startMs;
-    while (cursor < interval.endMs) {
-      const d = new Date(cursor);
-      const nextHour = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours() + 1).getTime();
-      const chunkEnd = Math.min(Math.max(nextHour, cursor + 1), interval.endMs);
-      totals[d.getHours()] += chunkEnd - cursor;
-      cursor = chunkEnd;
-    }
-  }
+  for (const interval of intervals) addToHours(totals, interval);
   return totals.map((value, hour) => ({ hour, value }));
+}
+
+/**
+ * Один интервал, разрезанный по границам часов, — в 24 ячейки суток.
+ *
+ * Общий для всех почасовых рядов: и для суммы по всем приложениям, и для каждого приложения
+ * отдельно. Правило резки должно быть одно, иначе сумма «по приложениям» разошлась бы с
+ * общим столбиком того же часа.
+ */
+function addToHours(totals: number[], interval: Interval): void {
+  let cursor = interval.startMs;
+  while (cursor < interval.endMs) {
+    const d = new Date(cursor);
+    const nextHour = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours() + 1).getTime();
+    const chunkEnd = Math.min(Math.max(nextHour, cursor + 1), interval.endMs);
+    totals[d.getHours()] += chunkEnd - cursor;
+    cursor = chunkEnd;
+  }
+}
+
+/**
+ * То же, что `toHourlyUsage`, но отдельно по каждому пакету: пакет → 24 числа.
+ *
+ * Нужно для окна часа: «в 14:00 сорок минут ютуба и десять телеграма». Один проход по
+ * интервалам, а не по проходу на приложение: приложений за день бывает под сорок.
+ */
+export function toHourlyByPackage(intervals: Interval[]): Map<string, number[]> {
+  const byPackage = new Map<string, number[]>();
+  for (const interval of intervals) {
+    let totals = byPackage.get(interval.packageName);
+    if (!totals) {
+      totals = new Array<number>(24).fill(0);
+      byPackage.set(interval.packageName, totals);
+    }
+    addToHours(totals, interval);
+  }
+  return byPackage;
 }
 
 /** Открытия по часам суток — тем же правилом, что и по дням. */
