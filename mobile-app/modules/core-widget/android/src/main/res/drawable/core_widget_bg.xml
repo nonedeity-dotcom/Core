@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Фон виджета: тёмное стекло, плотное и с чётким краем, чтобы читалось на любых обоях.
-  8 вложенных прямоугольников, каждый на 1dp меньше предыдущего, у каждого ~33% непрозрачности.
-  Слои складываются: у края фон ~33%, к середине густеет до ~96%. Мягкий край теперь 8dp
-  (было 16dp). Тонкая светлая рамка у внешнего слоя не даёт панели потеряться на тёмных обоях.
+  Фон виджета: нейтральное тёмное стекло, слегка прозрачное.
+  8 вложенных прямоугольников, каждый на 1dp меньше предыдущего, у каждого ~23% непрозрачности.
+  Слои складываются: у края фон ~23%, к середине густеет до ~88%, так что рисунок обоев
+  чуть просвечивает, а текст остаётся читаемым. Тонкая светлая рамка у внешнего слоя.
 
-  Подстройка: плотность в центре — альфа в #55 (55 = 33%; больше — плотнее, меньше — прозрачнее),
-  ширина мягкого края — число слоёв × шаг, цвет — 15161D.
+  Подстройка: прозрачность — альфа в #3B (3B = 23%; больше — плотнее, меньше — прозрачнее),
+  цвет — 141416 (нейтрально-чёрный; сделать светлее — например 1C1C1F).
 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
   <item
@@ -15,8 +15,8 @@
     android:right="0dp"
     android:bottom="0dp">
     <shape android:shape="rectangle">
-      <solid android:color="#5515161D" />
-      <stroke android:width="1dp" android:color="#1FFFFFFF" />
+      <solid android:color="#3B141416" />
+      <stroke android:width="1dp" android:color="#26FFFFFF" />
       <corners android:radius="28dp" />
     </shape>
   </item>
@@ -26,7 +26,7 @@
     android:right="1dp"
     android:bottom="1dp">
     <shape android:shape="rectangle">
-      <solid android:color="#5515161D" />
+      <solid android:color="#3B141416" />
       <corners android:radius="27dp" />
     </shape>
   </item>
@@ -36,7 +36,7 @@
     android:right="2dp"
     android:bottom="2dp">
     <shape android:shape="rectangle">
-      <solid android:color="#5515161D" />
+      <solid android:color="#3B141416" />
       <corners android:radius="26dp" />
     </shape>
   </item>
@@ -46,7 +46,7 @@
     android:right="3dp"
     android:bottom="3dp">
     <shape android:shape="rectangle">
-      <solid android:color="#5515161D" />
+      <solid android:color="#3B141416" />
       <corners android:radius="25dp" />
     </shape>
   </item>
@@ -56,7 +56,7 @@
     android:right="4dp"
     android:bottom="4dp">
     <shape android:shape="rectangle">
-      <solid android:color="#5515161D" />
+      <solid android:color="#3B141416" />
       <corners android:radius="24dp" />
     </shape>
   </item>
@@ -66,7 +66,7 @@
     android:right="5dp"
     android:bottom="5dp">
     <shape android:shape="rectangle">
-      <solid android:color="#5515161D" />
+      <solid android:color="#3B141416" />
       <corners android:radius="23dp" />
     </shape>
   </item>
@@ -76,7 +76,7 @@
     android:right="6dp"
     android:bottom="6dp">
     <shape android:shape="rectangle">
-      <solid android:color="#5515161D" />
+      <solid android:color="#3B141416" />
       <corners android:radius="22dp" />
     </shape>
   </item>
@@ -86,7 +86,7 @@
     android:right="7dp"
     android:bottom="7dp">
     <shape android:shape="rectangle">
-      <solid android:color="#5515161D" />
+      <solid android:color="#3B141416" />
       <corners android:radius="21dp" />
     </shape>
   </item>
