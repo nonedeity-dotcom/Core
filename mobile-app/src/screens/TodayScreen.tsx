@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, Alert } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -263,7 +263,7 @@ export default function TodayScreen() {
     queryKey: ["habitLog", "week", monday, today],
     queryFn: () => api.getHabitLog(monday, today) as Promise<HabitLog[]>,
   });
-  const weekDates = weekDatesThrough(today);
+  const weekDates = useMemo(() => weekDatesThrough(today), [today]);
 
   // The four months of marks each habit's own run is walked over, plus the chances it has
   // spent. Shared with the report through React Query's cache rather than fetched twice —
@@ -593,11 +593,14 @@ export default function TodayScreen() {
   // Today's rows come from the day query, which the optimistic tick writes into — the
   // four-month one would still say "not done" for a second after a tap and bounce the row
   // between piles.
-  const allLogs = [...streakLogs.filter((l) => l.date !== today), ...logs];
+  const allLogs = useMemo(
+    () => [...streakLogs.filter((l) => l.date !== today), ...logs],
+    [streakLogs, logs, today],
+  );
 
-  const standingOf = (h: Habit): HabitStanding =>
+  const computeStanding = (h: Habit): HabitStanding =>
     habitStanding(h, allLogs, {
-        daysOff,
+      daysOff,
       today,
       excused: frozenDaysFor(h.id, freezes, habitFreezes),
       own: habitFreezes[h.id] ?? [],
@@ -606,6 +609,22 @@ export default function TodayScreen() {
       nowMinutes: minutes,
       lateRule,
     });
+
+  /*
+   * Положение каждой привычки — один раз на все, а не заново на каждое нажатие.
+   *
+   * habitStanding обходит историю привычки, а раньше он вызывался на каждую привычку и ещё
+   * раз на каждую подзадачу при любой перерисовке экрана — в том числе при раскрытии
+   * подзадач, которое этих чисел не меняет. Из-за этого стрелка отзывалась с задержкой.
+   */
+  const standingsById = useMemo(() => {
+    const m = new Map<string, HabitStanding>();
+    for (const h of habits) m.set(h.id, computeStanding(h));
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [habits, allLogs, daysOff, today, freezes, habitFreezes, skipRule, weekDates, minutes, lateRule]);
+
+  const standingOf = (h: Habit): HabitStanding => standingsById.get(h.id) ?? computeStanding(h);
 
   const nowHabits = habits.filter((h) => habitGroup(h) === "now" && !h.parentId);
   // Один список для шапки, нормы по уровням, настроек и серии — dayItems из lib/habits:

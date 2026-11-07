@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { AppState, InteractionManager, View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import Svg, { Circle } from "react-native-svg";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -21,9 +21,10 @@ import { syncUsage } from "../integrations/usageSync";
 import RotatingTip from "../components/RotatingTip";
 import EventCalendar from "../components/EventCalendar";
 import type { Section } from "../navigation/sections";
-import type { GameStats } from "../lib/games/stats";
-import type { Purse } from "../lib/rewards/currency";
-import { titleName } from "../lib/rewards/catalog";
+
+/** Не пересчитывать экранное время чаще, чем раз в полминуты: Главную открывают снова и снова. */
+const MEASURE_COOLDOWN_MS = 30_000;
+let lastMeasureAt = 0;
 
 /**
  * Главная — один вопрос: как идёт сегодняшний день.
@@ -38,24 +39,22 @@ import { titleName } from "../lib/rewards/catalog";
  * закрываться за три секунды.
  */
 export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => void }) {
-  const { data: gameStats } = useQuery<GameStats>({ queryKey: ["gameStats"], queryFn: () => api.getGameStats() });
-  const solvedGames = gameStats?.wordsearch.solved ?? 0;
-  /*
-   * Кошелёк — только чтение. Начисляет его «Награды», и переносить это на Главную нельзя:
-   * пересчёт за четыреста дней при каждом открытии приложения того не стоит.
-   */
-  const { data: purse } = useQuery<Purse>({ queryKey: ["purse"], queryFn: () => api.getPurse() });
-  const worn = titleName(purse?.equipped.title ?? "");
+  // Игры и кошелёк с Главной ушли в «Ещё»: их запросы здесь ничего не показывали, а читались
+  // при каждом открытии.
   const qc = useQueryClient();
   const today = useTodayKey();
 
   // --- Sterzhen ---
   const { streak, habits, logs } = useStreak(today);
-  const deciding = habitsThatDecideTheDay(habits, today);
-  const done = deciding.filter((h) => {
-    const p = dayProgress(h, logs, today);
-    return p.count >= p.target;
-  }).length;
+  const deciding = useMemo(() => habitsThatDecideTheDay(habits, today), [habits, today]);
+  const done = useMemo(
+    () =>
+      deciding.filter((h) => {
+        const p = dayProgress(h, logs, today);
+        return p.count >= p.target;
+      }).length,
+    [deciding, logs, today],
+  );
   const phase = phaseStepFor(streak);
 
   // --- CaloriX ---
@@ -87,7 +86,22 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
   });
   const screenMs = totalScreenMillis(days);
   const unlocks = totalUnlocks(days);
-  const access = hasUsageAccess();
+  // Нативный вызов — один раз и при возвращении в приложение, а не на каждую перерисовку.
+  const [access, setAccess] = useState(() => hasUsageAccess());
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") setAccess(hasUsageAccess());
+    });
+    return () => sub.remove();
+  }, []);
+
+  // Тяжёлое — после первого кадра: календарь и подсказка ниже трёх карточек, и ждать их
+  // не нужно.
+  const [secondaryReady, setSecondaryReady] = useState(false);
+  useEffect(() => {
+    const task = InteractionManager.runAfterInteractions(() => setSecondaryReady(true));
+    return () => task.cancel();
+  }, []);
 
   /**
    * Пересчёт при открытии.
@@ -104,7 +118,15 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
     },
   });
   useEffect(() => {
-    if (access) measure.mutate();
+    if (!access) return undefined;
+    if (Date.now() - lastMeasureAt < MEASURE_COOLDOWN_MS) return undefined;
+    // После того как экран нарисован: разбор событий системы — работа для JS-потока, и
+    // запускать её в первом кадре значило бы тормозить именно открытие.
+    const task = InteractionManager.runAfterInteractions(() => {
+      lastMeasureAt = Date.now();
+      measure.mutate();
+    });
+    return () => task.cancel();
     // Один раз на открытие: mutate пересоздаётся на каждый рендер.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access, today]);
@@ -202,7 +224,7 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
 
       {/* Календарь дат стоит под тремя разделами: они отвечают на «как идёт день», а он —
           на «что скоро». Тот же принцип, что и у всей Главной: смотреть, а не вести учёт. */}
-      <EventCalendar />
+      {secondaryReady && <EventCalendar />}
 
       {/* Игры, награды и путь ушли в «Ещё».
           Здесь они были тремя одинаковыми серыми строками, и каждая новая вещь делала
@@ -211,7 +233,7 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
 
       {/* Подсказка живёт здесь, и только здесь: главную открывают каждый раз, и это
           единственное на экране, что не является числом про тебя. */}
-      <RotatingTip />
+      {secondaryReady && <RotatingTip />}
 
       {/* Внизу и мелким: главная отвечает про сегодня, а «сегодня» — это не вся правда.
           Строчка напоминает, что за ней есть история, и не притворяется числом. */}

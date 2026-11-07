@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { View, Text, ScrollView, Pressable, StyleSheet } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -51,7 +51,7 @@ export default function HabitsReportScreen({
   const { habits, logs, freezes, skipRule, habitFreezes, daysOff } = useStreak(today);
 
   // Monday through today — what a weekly habit's count is taken over.
-  const weekDates = weekDatesThrough(today);
+  const weekDates = useMemo(() => weekDatesThrough(today), [today]);
 
   // Какие родители раскрыты (вторая стрелка в строке).
   const [openIds, setOpenIds] = useState<string[]>([]);
@@ -62,7 +62,9 @@ export default function HabitsReportScreen({
   // вернёшь родителя из архива, и они вернутся с историей.
   const isTop = (h: Habit) => !h.parentId;
 
-  const rows: Row[] = habits.map((habit): Row => {
+  // Серия и положение каждой привычки — это обход всей истории, и раньше он повторялся на
+  // каждое раскрытие подзадач. Раскрытие этих чисел не меняет, поэтому считаем один раз.
+  const rows: Row[] = useMemo(() => habits.map((habit): Row => {
     const excused = frozenDaysFor(habit.id, freezes, habitFreezes);
     const own = habitFreezes[habit.id] ?? [];
     return {
@@ -79,7 +81,7 @@ export default function HabitsReportScreen({
         lateRule,
       }),
     };
-  });
+  }), [habits, logs, freezes, habitFreezes, skipRule, daysOff, today, minutes, lateRule, weekDates]);
 
   const urgent = rows.filter((r) => isTop(r.habit) && r.standing.bucket === "urgent").length;
 
