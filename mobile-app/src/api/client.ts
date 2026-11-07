@@ -13,11 +13,17 @@ import type {
 } from "../types";
 import { todayKey, tomorrowKey } from "../lib/date";
 import { habitGroup, itemGroup } from "../lib/habits";
-import { DEFAULT_DAY_RULE, normalizeDayRule, type DayRule } from "../lib/dayRule";
+import { DEFAULT_DAY_RULE, changeDayRule, normalizeDayRule, withPastRule, type DayRule } from "../lib/dayRule";
 import { DEFAULT_SKIP_RULE, normalizeSkipRule, type SkipRule } from "../lib/skipRule";
 import { DEFAULT_DAY_OFF, normalizeDayOff, pruneDates, type DayOffRule } from "../lib/dayOff";
 import { normalizeGoals, type PeriodGoal } from "../lib/goals";
 import { DEFAULT_LEVEL_RULE, normalizeLevelRule, type HabitLevel, type LevelRule } from "../lib/level";
+import {
+  changeLevelHistory,
+  normalizeLevelEras,
+  withPastLevelRule,
+  type LevelRuleWithHistory,
+} from "../lib/levelHistory";
 import { DEFAULT_GAME_STATS, mergeGameStats, normalizeGameStats, type GameStats } from "../lib/games/stats";
 import { mergeVillage, normalizeVillage, type VillageState } from "../lib/village/game";
 import { normalizeSettings, type VillageSettings } from "../lib/village/settings";
@@ -58,6 +64,7 @@ const KEYS = {
   dayRule: "day-rule-v1",
   skipRule: "skip-rule-v1",
   levelRule: "level-rule-v1",
+  levelHistory: "level-rule-history-v1",
   gameStats: "game-stats-v1",
   village: "village-v1",
   villageUi: "village-ui-v1",
@@ -665,8 +672,24 @@ export const api = {
   async getDayRule(): Promise<DayRule> {
     return normalizeDayRule(await read<unknown>(KEYS.dayRule, DEFAULT_DAY_RULE));
   },
+  /**
+   * Меняет правило с сегодняшнего дня. Прошлые дни остаются под тем правилом, которое
+   * стояло в них, — историю хранит само правило, см. changeDayRule. Читает и пишет под одним
+   * замком: два быстрых нажатия «−» иначе прочли бы одно и то же и потеряли бы друг друга.
+   */
   async setDayRule(rule: DayRule): Promise<{ ok: true }> {
-    await write(KEYS.dayRule, normalizeDayRule(rule));
+    await withKeyLock(KEYS.dayRule, async () => {
+      const current = normalizeDayRule(await read<unknown>(KEYS.dayRule, DEFAULT_DAY_RULE));
+      await write(KEYS.dayRule, changeDayRule(current, rule, todayKey()));
+    });
+    return { ok: true as const };
+  },
+  /** «До такого-то дня действовало вот это правило» — для смен, сделанных до появления истории. */
+  async setPastDayRule(until: string, old: DayRule): Promise<{ ok: true }> {
+    await withKeyLock(KEYS.dayRule, async () => {
+      const current = normalizeDayRule(await read<unknown>(KEYS.dayRule, DEFAULT_DAY_RULE));
+      await write(KEYS.dayRule, withPastRule(current, until, old, todayKey()));
+    });
     return { ok: true as const };
   },
 
@@ -752,13 +775,45 @@ export const api = {
    * нельзя. По умолчанию везде нули — то есть пока сам не поставишь числа, уровни только
    * показываются и ничего не требуют.
    */
-  async getLevelRule(): Promise<LevelRule> {
-    return normalizeLevelRule(await read<unknown>(KEYS.levelRule, DEFAULT_LEVEL_RULE));
+  async getLevelRule(): Promise<LevelRuleWithHistory> {
+    const rule = normalizeLevelRule(await read<unknown>(KEYS.levelRule, DEFAULT_LEVEL_RULE));
+    // История лежит под своим ключом и приклеивается здесь: так и сама норма, и всё, что её
+    // читает, остаётся как было, а день судится по норме, которая стояла в нём.
+    const history = normalizeLevelEras(await read<unknown>(KEYS.levelHistory, []));
+    return history.length > 0 ? { ...rule, history } : rule;
   },
+  /**
+   * Меняет норму с сегодняшнего дня: прошлые дни остаются под той, что стояла в них.
+   * История пишется раньше нормы — оборвись запись между ними, лучше лишняя строка истории,
+   * чем новая норма, которая уже судит всё прошлое.
+   */
   async setLevelRule(rule: LevelRule): Promise<LevelRule> {
-    const clean = normalizeLevelRule(rule);
-    await write(KEYS.levelRule, clean);
-    return clean;
+    return withKeyLock(KEYS.levelRule, async () => {
+      const before = normalizeLevelRule(await read<unknown>(KEYS.levelRule, DEFAULT_LEVEL_RULE));
+      const clean = normalizeLevelRule(rule);
+      const history = changeLevelHistory(
+        normalizeLevelEras(await read<unknown>(KEYS.levelHistory, [])),
+        before,
+        clean,
+        todayKey(),
+      );
+      await write(KEYS.levelHistory, history);
+      await write(KEYS.levelRule, clean);
+      return clean;
+    });
+  },
+  /** «До такого-то дня норма была вот такой» — для смен, сделанных до появления истории. */
+  async setPastLevelRule(until: string, old: LevelRule): Promise<{ ok: true }> {
+    await withKeyLock(KEYS.levelRule, async () => {
+      const history = withPastLevelRule(
+        normalizeLevelEras(await read<unknown>(KEYS.levelHistory, [])),
+        until,
+        normalizeLevelRule(old),
+        todayKey(),
+      );
+      await write(KEYS.levelHistory, history);
+    });
+    return { ok: true as const };
   },
 
   /**
@@ -1671,6 +1726,8 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       write(KEYS.dayRule, normalizeDayRule(data.dayRule)),
       write(KEYS.skipRule, normalizeSkipRule(data.skipRule)),
       write(KEYS.levelRule, normalizeLevelRule(data.levelRule)),
+      // Копия делалась через getLevelRule, и история лежит внутри самой нормы.
+      write(KEYS.levelHistory, normalizeLevelEras((data.levelRule as { history?: unknown } | undefined)?.history)),
       write(KEYS.daysOff, normalizeDayOff(data.daysOff)),
       write(KEYS.habitFreezes, data.habitFreezes),
       write(KEYS.tipPrefs, normalizeTipPrefs(data.tipPrefs)),
