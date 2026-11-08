@@ -219,6 +219,34 @@ export async function syncUsage(nowMs = Date.now()): Promise<UsageSyncResult> {
 }
 
 /**
+ * Синхронизация не чаще, чем нужно, и не дважды одновременно.
+ *
+ * Главная и «Крекер» запускали syncUsage каждая при своём открытии, а переключиться между
+ * ними — дело нескольких секунд. Каждый запуск — это разбор событий системы за четыре дня и
+ * перезапись трёх таблиц, то есть работа JS-потока, и именно она роняла плавность. Теперь
+ * параллельные вызовы делят один запуск, а результат моложе `maxAgeMs` не пересчитывается.
+ *
+ * `null` — пересчёт не понадобился, и обновлять экран незачем. Явное «обновить» зовёт
+ * syncUsage напрямую и это правило обходит.
+ */
+let syncInFlight: Promise<UsageSyncResult> | null = null;
+let lastSyncAt = 0;
+
+export function syncUsageIfStale(maxAgeMs = 30_000): Promise<UsageSyncResult | null> {
+  if (syncInFlight) return syncInFlight;
+  if (Date.now() - lastSyncAt < maxAgeMs) return Promise.resolve(null);
+  syncInFlight = syncUsage()
+    .then((r) => {
+      lastSyncAt = Date.now();
+      return r;
+    })
+    .finally(() => {
+      syncInFlight = null;
+    });
+  return syncInFlight;
+}
+
+/**
  * Чьё время показывать.
  *
  * «Общий» — всё, что было на включённом экране. «Приложения» — то, что человек выбирал
