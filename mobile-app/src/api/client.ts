@@ -166,6 +166,41 @@ async function write<T>(key: string, value: T): Promise<void> {
  */
 let habitLogParsed: { raw: string; rows: HabitLog[] } | null = null;
 
+/**
+ * Чтение с запомненным разбором — для таблиц экранного времени, которые только читаются.
+ *
+ * Разбор JSON — работа JS-потока, а эти таблицы большие (особенно справочник приложений с
+ * иконками) и читаются при каждом открытии «Крекера» и при каждой синхронизации. Строка
+ * из хранилища сравнивается с уже разобранной: совпала — берётся готовый результат,
+ * не совпала (кто-то записал, в том числе в обход, как бэкап) — разбор делается заново.
+ * Возвращаемое нельзя менять на месте: оно общее для всех читателей.
+ */
+const parsedCache = new Map<string, { raw: string; value: unknown }>();
+
+/** Самый ранний день экранного времени и те строки хранилища, из которых он получен. */
+let earliestScreen: { days: string | null; apps: string | null; value: string | null } | null = null;
+
+async function readShared<T>(key: string, fallback: T): Promise<T> {
+  const raw = await AsyncStorage.getItem(key);
+  if (!raw) return fallback;
+  const hit = parsedCache.get(key);
+  if (hit && hit.raw === raw) return hit.value as T;
+  try {
+    const value = JSON.parse(raw) as T;
+    parsedCache.set(key, { raw, value });
+    return value;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Дешёвая проверка даты строки до разбора: нормализовать надо нужные дни, а не всю историю. */
+const rawInRange = (item: unknown, from: string, to: string): boolean =>
+  typeof item === "object" &&
+  item !== null &&
+  typeof (item as { date?: unknown }).date === "string" &&
+  inRange((item as { date: string }).date, from, to);
+
 async function readHabitLogRows(): Promise<HabitLog[]> {
   const raw = await AsyncStorage.getItem(KEYS.habitLog);
   if (!raw) return [];
@@ -1206,15 +1241,42 @@ export const api = {
    * и живёт здесь, а creker до сборки со своим измерением — временный источник.
    */
   async getScreenDays(from: string, to: string): Promise<ScreenDay[]> {
-    const raw = await read<unknown[]>(KEYS.screenDays, []);
+    const raw = await readShared<unknown[]>(KEYS.screenDays, []);
     return (Array.isArray(raw) ? raw : [])
+      .filter((item) => rawInRange(item, from, to))
       .map(normalizeScreenDay)
       .filter((d): d is ScreenDay => d !== null && inRange(d.date, from, to))
       .sort((a, b) => a.date.localeCompare(b.date));
   },
+  /**
+   * Самый ранний сохранённый день — одна дата, а не вся история.
+   *
+   * Экрану нужно знать только это, чтобы сказать «до такого-то числа данных нет». Раньше он
+   * для этого поднимал обе таблицы целиком. Теперь считается один раз на состояние данных:
+   * пока строки в хранилище не изменились, берётся запомненное.
+   */
+  async getEarliestScreenDay(): Promise<string | null> {
+    const [rawDays, rawApps] = await Promise.all([
+      AsyncStorage.getItem(KEYS.screenDays),
+      AsyncStorage.getItem(KEYS.screenApps),
+    ]);
+    if (earliestScreen && earliestScreen.days === rawDays && earliestScreen.apps === rawApps) {
+      return earliestScreen.value;
+    }
+    const [days, apps] = await Promise.all([
+      this.getScreenDays("0000-01-01", "9999-12-31"),
+      this.getScreenApps("0000-01-01", "9999-12-31"),
+    ]);
+    let value: string | null = null;
+    for (const d of days) if (!value || d.date < value) value = d.date;
+    for (const a of apps) if (!value || a.date < value) value = a.date;
+    earliestScreen = { days: rawDays, apps: rawApps, value };
+    return value;
+  },
   async getScreenApps(from: string, to: string): Promise<AppDay[]> {
-    const raw = await read<unknown[]>(KEYS.screenApps, []);
+    const raw = await readShared<unknown[]>(KEYS.screenApps, []);
     return (Array.isArray(raw) ? raw : [])
+      .filter((item) => rawInRange(item, from, to))
       .map(normalizeAppDay)
       .filter((r): r is AppDay => r !== null && inRange(r.date, from, to));
   },
@@ -1258,8 +1320,9 @@ export const api = {
    * а место занимают. День, про который записи нет, честно значит «по часам неизвестно».
    */
   async getHourlyDays(from: string, to: string): Promise<HourlyDay[]> {
-    const raw = await read<unknown[]>(KEYS.screenHours, []);
+    const raw = await readShared<unknown[]>(KEYS.screenHours, []);
     return (Array.isArray(raw) ? raw : [])
+      .filter((item) => rawInRange(item, from, to))
       .map(normalizeHourlyDay)
       .filter((d): d is HourlyDay => d !== null && inRange(d.date, from, to))
       .sort((a, b) => a.date.localeCompare(b.date));
@@ -1295,7 +1358,7 @@ export const api = {
    * день старше, чем система хранила события, или посчитан версией до неё.
    */
   async getHourAppsDay(date: string): Promise<HourAppsDay | null> {
-    const raw = await read<unknown[]>(KEYS.screenHourApps, []);
+    const raw = await readShared<unknown[]>(KEYS.screenHourApps, []);
     for (const item of Array.isArray(raw) ? raw : []) {
       // Сначала дешёвая проверка даты: разбирать надо один день, а не весь полугодовой список.
       if (typeof item !== "object" || item === null || (item as { date?: unknown }).date !== date) continue;
@@ -1353,8 +1416,9 @@ export const api = {
    * здесь — история не должна терять лицо оттого, что приложение снесли.
    */
   async getAppInfoCache(): Promise<Record<string, AppInfoEntry>> {
-    const raw = await read<Record<string, AppInfoEntry>>(KEYS.screenAppInfo, {});
-    return raw && typeof raw === "object" ? raw : {};
+    const raw = await readShared<Record<string, AppInfoEntry>>(KEYS.screenAppInfo, {});
+    // Копия: resolveAppInfo дописывает в полученный справочник, а разобранный общий менять нельзя.
+    return raw && typeof raw === "object" ? { ...raw } : {};
   },
   async saveAppInfo(entries: ({ packageName: string } & AppInfoEntry)[]): Promise<void> {
     if (entries.length === 0) return;
