@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, Image, View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppState, Image, InteractionManager, View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import * as Application from "expo-application";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -10,7 +10,7 @@ import { useTodayKey } from "../../lib/useTodayKey";
 import { datesBetween, weekdayLabel } from "../../lib/date";
 import { syncFromCreker } from "../../integrations/screenTime";
 import {
-  syncUsage,
+  syncUsageIfStale,
   resolveAppInfo,
   hourlyFor,
   hourDetailFor,
@@ -28,7 +28,6 @@ import { dayCount, resolveSelection, shiftRange, type Selection } from "../../li
 import { describeChange, usageChange } from "../../lib/screen/compare";
 import {
   daysWithoutUnlocks,
-  earliestStoredDay,
   totalScreenMillis,
   totalUnlocks,
   relabel,
@@ -83,6 +82,8 @@ export default function UsageScreen({
   const [chart, setChart] = useState<ChartKind>("bars");
   /** Час, открытый на весь экран. `null` — окно закрыто. */
   const [openHour, setOpenHour] = useState<number | null>(null);
+  /** Список приложений показывается не весь: сотня строк с иконками — это сотня картинок сразу. */
+  const [showAll, setShowAll] = useState(false);
 
   const [access, setAccess] = useState<boolean>(() => hasUsageAccess());
   const refresh = useCallback(() => {
@@ -112,13 +113,11 @@ export default function UsageScreen({
     queryKey: ["screenApps", prev.from, prev.to],
     queryFn: () => api.getScreenApps(prev.from, prev.to),
   });
-  const { data: everDays = [] } = useQuery<ScreenDay[]>({
-    queryKey: ["screenDays", "all"],
-    queryFn: () => api.getScreenDays("0000-01-01", "9999-12-31"),
-  });
-  const { data: everApps = [] } = useQuery<AppDay[]>({
-    queryKey: ["screenApps", "all"],
-    queryFn: () => api.getScreenApps("0000-01-01", "9999-12-31"),
+  // Нужна одна дата — самый ранний сохранённый день, — а не вся история целиком. Две
+  // выборки «за всё время» на каждое открытие были самым тяжёлым, что здесь читалось.
+  const { data: earliest = null } = useQuery<string | null>({
+    queryKey: ["screenEarliest"],
+    queryFn: () => api.getEarliestScreenDay(),
   });
   const { data: icons = {} } = useQuery<Record<string, AppInfoEntry>>({
     queryKey: ["appInfo"],
@@ -132,10 +131,14 @@ export default function UsageScreen({
   /** Пакеты, про которые систему уже спрашивали: спрашивать второй раз нечего. */
   const asked = useRef(new Set<string>());
 
-  const homeList = Object.entries(icons)
-    .filter(([, info]) => info.isHome)
-    .map(([packageName]) => packageName);
-  const home = new Set(homeList);
+  const homeList = useMemo(
+    () =>
+      Object.entries(icons)
+        .filter(([, info]) => info.isHome)
+        .map(([packageName]) => packageName),
+    [icons],
+  );
+  const home = useMemo(() => new Set(homeList), [homeList]);
   /**
    * Имена берутся из справочника, а не из строк дня.
    *
@@ -143,7 +146,10 @@ export default function UsageScreen({
    * иконка и имя пакета рядом с ней. Справочник знает про приложение больше, чем строка,
    * записанная когда-то давно или пришедшая из файла, где имён не было вовсе.
    */
-  const names = Object.fromEntries(Object.entries(icons).map(([pkg, info]) => [pkg, info.label]));
+  const names = useMemo(
+    () => Object.fromEntries(Object.entries(icons).map(([pkg, info]) => [pkg, info.label])),
+    [icons],
+  );
 
   const { data: hourly } = useQuery({
     queryKey: ["hourly", range.from, scope, access],
@@ -161,11 +167,11 @@ export default function UsageScreen({
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["screenDays"] });
     qc.invalidateQueries({ queryKey: ["screenApps"] });
+    qc.invalidateQueries({ queryKey: ["screenEarliest"] });
     qc.invalidateQueries({ queryKey: ["appInfo"] });
     qc.invalidateQueries({ queryKey: ["hourly"] });
     qc.invalidateQueries({ queryKey: ["hourDetail"] });
   };
-  const measure = useMutation({ mutationFn: () => syncUsage(), onSuccess: invalidate });
   const importCreker = useMutation({
     mutationFn: () => syncFromCreker(),
     onSuccess: () => {
@@ -224,12 +230,26 @@ export default function UsageScreen({
   });
 
   useEffect(() => {
-    if (refresh()) measure.mutate();
+    // Пересчёт событий системы — тяжёлая работа JS-потока, поэтому он идёт после того, как
+    // экран нарисован, и не чаще раза в полминуты (Главная и этот экран делят один запуск).
+    // Раньше он стартовал в первом кадре и ещё и обновлял все запросы по его окончании.
+    const autoSync = () => {
+      if (!refresh()) return;
+      void syncUsageIfStale()
+        .then((r) => {
+          if (r !== null) invalidate();
+        })
+        .catch(() => {});
+    };
+    const task = InteractionManager.runAfterInteractions(autoSync);
     const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active" && refresh()) measure.mutate();
+      if (state === "active") autoSync();
     });
-    return () => sub.remove();
-    // measure пересоздаётся на каждый рендер: подписка должна встать один раз.
+    return () => {
+      task.cancel();
+      sub.remove();
+    };
+    // Подписка должна встать один раз: invalidate пересоздаётся на каждый рендер.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh]);
 
@@ -288,8 +308,12 @@ export default function UsageScreen({
    */
   const blindDays = daysWithoutUnlocks(days);
 
-  const now = measureOf(days, allApps);
-  const before = measureOf(prevDays, allPrevApps);
+  // Каждый из запросов выше приходит отдельно, и экран перерисовывается на каждый. Тяжёлые
+  // свёртки ниже зависят только от данных, поэтому считаются при их смене, а не на каждый кадр.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const now = useMemo(() => measureOf(days, allApps), [days, allApps, home]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const before = useMemo(() => measureOf(prevDays, allPrevApps), [prevDays, allPrevApps, home]);
   const value = now[scope];
   const change = usageChange(value.time, before[scope].time, spanDays);
 
@@ -300,16 +324,22 @@ export default function UsageScreen({
    * крупному числу над ними, и ничего не надо досчитывать в уме. В «телефоне» списка нет:
    * список из одной строки — это не список.
    */
-  const appTotals = totalsByApp(relabel(allApps.filter((r) => !home.has(r.packageName)), names));
-  const phoneRow: AppTotal = {
-    packageName: PHONE,
-    label: "Телефон",
-    usageMillis: now.phone.time,
-    launchCount: now.phone.launches,
-    daysUsed: spanDays,
-    shareOfTop: 0,
-    shareOfTotal: 0,
-  };
+  const appTotals = useMemo(
+    () => totalsByApp(relabel(allApps.filter((r) => !home.has(r.packageName)), names)),
+    [allApps, home, names],
+  );
+  const phoneRow: AppTotal = useMemo(
+    () => ({
+      packageName: PHONE,
+      label: "Телефон",
+      usageMillis: now.phone.time,
+      launchCount: now.phone.launches,
+      daysUsed: spanDays,
+      shareOfTop: 0,
+      shareOfTotal: 0,
+    }),
+    [now, spanDays],
+  );
   /**
    * Чем меряется строка списка — тем же, чем он отсортирован.
    *
@@ -317,42 +347,55 @@ export default function UsageScreen({
    * времени, и первая строка оказывалась бы «20 %», а третья «40 %».
    */
   const weigh = (row: AppTotal) => (sort === "launches" ? row.launchCount : row.usageMillis);
-  const rows =
-    scope === "phone" ? [] : [...appTotals, ...(scope === "apps" ? [] : [phoneRow])].sort((a, b) => weigh(b) - weigh(a));
+  const rows = useMemo(
+    () =>
+      scope === "phone"
+        ? []
+        : [...appTotals, ...(scope === "apps" ? [] : [phoneRow])].sort((a, b) => weigh(b) - weigh(a)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scope, sort, appTotals, phoneRow],
+  );
   const rowsSum = rows.reduce((sum, r) => sum + weigh(r), 0);
   const topRow = rows.reduce((m, r) => Math.max(m, weigh(r)), 0);
 
-  const prevByPackage = new Map(
-    totalsByApp(relabel(allPrevApps.filter((r) => !home.has(r.packageName)), names)).map(
-      (t) => [t.packageName, t] as const,
-    ),
+  const prevByPackage = useMemo(
+    () =>
+      new Map(
+        totalsByApp(relabel(allPrevApps.filter((r) => !home.has(r.packageName)), names)).map(
+          (t) => [t.packageName, t] as const,
+        ),
+      ),
+    [allPrevApps, home, names],
   );
 
-  const byDate = new Map<string, { screen: number; apps: number; launches: number; unlocks: number }>();
-  for (const date of datesBetween(range.from, range.to)) {
-    byDate.set(date, { screen: 0, apps: 0, launches: 0, unlocks: 0 });
-  }
-  for (const d of days) {
-    const slot = byDate.get(d.date);
-    if (slot) {
-      slot.screen = d.screenMillis;
-      slot.unlocks = d.unlocks ?? 0;
+  const dayPoints = useMemo(() => {
+    const byDate = new Map<string, { screen: number; apps: number; launches: number; unlocks: number }>();
+    for (const date of datesBetween(range.from, range.to)) {
+      byDate.set(date, { screen: 0, apps: 0, launches: 0, unlocks: 0 });
     }
-  }
-  for (const row of allApps) {
-    const slot = byDate.get(row.date);
-    if (!slot) continue;
-    if (!home.has(row.packageName)) slot.apps += row.usageMillis;
-    slot.launches += row.launchCount;
-  }
-  const dayPoints = datesBetween(range.from, range.to).map((date) => {
-    const slot = byDate.get(date) ?? { screen: 0, apps: 0, launches: 0, unlocks: 0 };
-    const time =
-      scope === "all" ? slot.screen : scope === "apps" ? slot.apps : Math.max(0, slot.screen - slot.apps);
-    const launches =
-      scope === "apps" ? slot.launches : scope === "phone" ? slot.unlocks : slot.launches + slot.unlocks;
-    return { key: date, label: weekdayLabel(date), time, launches };
-  });
+    for (const d of days) {
+      const slot = byDate.get(d.date);
+      if (slot) {
+        slot.screen = d.screenMillis;
+        slot.unlocks = d.unlocks ?? 0;
+      }
+    }
+    for (const row of allApps) {
+      const slot = byDate.get(row.date);
+      if (!slot) continue;
+      if (!home.has(row.packageName)) slot.apps += row.usageMillis;
+      slot.launches += row.launchCount;
+    }
+    return datesBetween(range.from, range.to).map((date) => {
+      const slot = byDate.get(date) ?? { screen: 0, apps: 0, launches: 0, unlocks: 0 };
+      const time =
+        scope === "all" ? slot.screen : scope === "apps" ? slot.apps : Math.max(0, slot.screen - slot.apps);
+      const launches =
+        scope === "apps" ? slot.launches : scope === "phone" ? slot.unlocks : slot.launches + slot.unlocks;
+      return { key: date, label: weekdayLabel(date), time, launches };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range.from, range.to, days, allApps, home, scope]);
   const hourPoints = (hourly?.time ?? []).map((h, i) => ({
     key: `${h.hour}`,
     label: `${h.hour}`,
@@ -362,7 +405,6 @@ export default function UsageScreen({
   /** Как называть заходы на графике: у «телефона» это разблокировки. */
   const chartWord = scope === "phone" ? "разблокировки" : "заходы";
 
-  const earliest = earliestStoredDay(everDays, everApps);
   const incomplete = earliest !== null && earliest > range.from;
   const empty = now.all.time === 0 && appTotals.length === 0;
 
@@ -529,7 +571,7 @@ export default function UsageScreen({
                   ))}
                 </View>
               </View>
-              {rows.map((row, i) => {
+              {(showAll ? rows : rows.slice(0, ROW_LIMIT)).map((row, i) => {
                 const isPhone = row.packageName === PHONE;
                 const beforeRow = prevByPackage.get(row.packageName);
                 const rowChange = isPhone
@@ -598,6 +640,15 @@ export default function UsageScreen({
                   </Pressable>
                 );
               })}
+              {!showAll && rows.length > ROW_LIMIT && (
+                <Pressable
+                  onPress={() => setShowAll(true)}
+                  accessibilityRole="button"
+                  style={{ paddingVertical: 12, alignItems: "center" }}
+                >
+                  <Text style={styles.hint}>{`Показать все приложения (${rows.length})`}</Text>
+                </Pressable>
+              )}
             </>
           )}
 
@@ -709,6 +760,9 @@ export function ChartToggle({ kind, onChange }: { kind: ChartKind; onChange: (ki
     </View>
   );
 }
+
+/** Сколько строк списка рисуется сразу: остальные — по нажатию. */
+const ROW_LIMIT = 20;
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
