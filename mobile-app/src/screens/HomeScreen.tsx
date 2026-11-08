@@ -17,14 +17,10 @@ import { formatWater, waterFor, waterTarget, type WaterDay } from "../lib/balanc
 import { totalScreenMillis, totalUnlocks, type ScreenDay } from "../lib/screen/usage";
 import { formatCompact } from "../lib/screen/duration";
 import { hasUsageAccess } from "../../modules/creker-usage";
-import { syncUsage } from "../integrations/usageSync";
+import { syncUsageIfStale } from "../integrations/usageSync";
 import RotatingTip from "../components/RotatingTip";
 import EventCalendar from "../components/EventCalendar";
 import type { Section } from "../navigation/sections";
-
-/** Не пересчитывать экранное время чаще, чем раз в полминуты: Главную открывают снова и снова. */
-const MEASURE_COOLDOWN_MS = 30_000;
-let lastMeasureAt = 0;
 
 /**
  * Главная — один вопрос: как идёт сегодняшний день.
@@ -110,20 +106,21 @@ export default function HomeScreen({ onOpen }: { onOpen: (section: Section) => v
    * число, снятое в прошлый заход, — то есть врала бы ровно тому, кто открыл её узнать,
    * как идёт день.
    */
+  // Не чаще раза в полминуты и вместе с «Крекером»: оба экрана делят один запуск и общий
+  // срок, так что переключение между ними не пересчитывает события системы каждый раз.
   const measure = useMutation({
-    mutationFn: () => syncUsage(),
-    onSuccess: () => {
+    mutationFn: () => syncUsageIfStale(),
+    onSuccess: (r) => {
+      if (r === null) return;
       qc.invalidateQueries({ queryKey: ["screenDays"] });
       qc.invalidateQueries({ queryKey: ["screenApps"] });
     },
   });
   useEffect(() => {
     if (!access) return undefined;
-    if (Date.now() - lastMeasureAt < MEASURE_COOLDOWN_MS) return undefined;
     // После того как экран нарисован: разбор событий системы — работа для JS-потока, и
     // запускать её в первом кадре значило бы тормозить именно открытие.
     const task = InteractionManager.runAfterInteractions(() => {
-      lastMeasureAt = Date.now();
       measure.mutate();
     });
     return () => task.cancel();
