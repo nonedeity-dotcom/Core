@@ -879,6 +879,7 @@ renderEditor(h.id, false)
               onBumpSubtask={(sub) => handleBump(sub)}
               onEditSubtask={(sub) => startEdit(sub)}
               onResetSubtask={handleResetSubtask}
+              onArchiveSubtask={(sub) => confirmArchive(sub)}
               subtasks={mySubtasks}
               subStandings={subStandings}
               logs={logs}
@@ -1008,6 +1009,7 @@ function HabitRow({
   onReset,
   onEditSubtask,
   onResetSubtask,
+  onArchiveSubtask,
   onAddSubtask,
   logs,
   subtasks,
@@ -1053,6 +1055,7 @@ function HabitRow({
   onArchive: () => void;
   onEditSubtask: (sub: Habit) => void;
   onResetSubtask: (sub: Habit) => void;
+  onArchiveSubtask: (sub: Habit) => void;
   onReset: () => void;
   onAddSubtask: () => void;
   logs: HabitLog[];
@@ -1403,6 +1406,11 @@ function HabitRow({
                 )}
                 <Pressable onPress={() => onEditSubtask(sub)} style={styles.iconBtn} accessibilityLabel={`Изменить: ${sub.label}`}>
                   <Feather name="edit-2" size={14} color={colors.textMuted} />
+                </Pressable>
+                {/* Убрать подзадачу — так же, как привычку: в архив, с подтверждением. Раньше
+                    у подзадачи этой кнопки не было, и убрать её было нельзя. */}
+                <Pressable onPress={() => onArchiveSubtask(sub)} style={styles.iconBtn} accessibilityLabel={`Убрать в архив: ${sub.label}`}>
+                  <Feather name="archive" size={14} color={colors.textMuted} />
                 </Pressable>
               </>
             )}
