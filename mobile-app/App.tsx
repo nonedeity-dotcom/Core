@@ -11,6 +11,7 @@ import { restoreReminder } from "./src/notifications/reminders";
 import { checkAndNotify } from "./src/notifications/watchers";
 import { setBackgroundCheck } from "./src/notifications/background";
 import { lockPortrait } from "./src/lib/orientation";
+import ConfirmHost from "./src/components/ConfirmHost";
 
 /**
  * Разделы грузятся отложенно — и только ради акцентного цвета.
@@ -83,6 +84,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       {Root ? <Root /> : <View style={{ flex: 1, backgroundColor: colors.bg }} />}
+      <ConfirmHost />
     </QueryClientProvider>
   );
 }
