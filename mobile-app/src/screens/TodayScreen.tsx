@@ -25,6 +25,7 @@ import {
   type HabitLevel,
 } from "../lib/level";
 import { useFoldSet } from "../lib/useFold";
+import { useStableLogs } from "../lib/stableLogs";
 import { weekStart, weekDatesThrough } from "../lib/week";
 import { habitStanding, standingRank, type HabitStanding } from "../lib/habitStanding";
 import {
@@ -593,10 +594,13 @@ export default function TodayScreen() {
   // Today's rows come from the day query, which the optimistic tick writes into — the
   // four-month one would still say "not done" for a second after a tap and bounce the row
   // between piles.
-  const allLogs = useMemo(
+  const allLogsFresh = useMemo(
     () => [...streakLogs.filter((l) => l.date !== today), ...logs],
     [streakLogs, logs, today],
   );
+  // После нажатия приходит перезагрузка с теми же отметками, но настоящими id вместо
+  // временных. Положение привычек от id не зависит, так что второй раз его не считаем.
+  const allLogs = useStableLogs(allLogsFresh);
 
   const computeStanding = (h: Habit): HabitStanding =>
     habitStanding(h, allLogs, {
