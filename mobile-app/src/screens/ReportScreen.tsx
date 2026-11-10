@@ -17,6 +17,7 @@ import { weekDatesThrough } from "../lib/week";
 import StreakRing from "../components/StreakRing";
 import PhaseBar from "../components/PhaseBar";
 import HistoryCalendar from "../components/HistoryCalendar";
+import DayNotesCard from "../components/DayNotesCard";
 import { goalSubtitle, summaryDue, type PeriodGoal } from "../lib/goals";
 import type { Habit, HabitLog, ItemGroup } from "../types";
 
@@ -195,6 +196,9 @@ export default function ReportScreen({
         </View>
         <Text style={styles.reviewChevron}>›</Text>
       </Pressable>
+
+      {/* Итоги дня — после цели: она про вперёд, а это про то, как прошёл день. */}
+      <DayNotesCard navigation={navigation} />
 
     </ScrollView>
   );
