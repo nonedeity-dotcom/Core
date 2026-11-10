@@ -19,6 +19,8 @@ import HeaderRefresh from "../components/HeaderRefresh";
 import PhasesScreen from "../screens/PhasesScreen";
 import HabitReportScreen from "../screens/HabitReportScreen";
 import HabitsReportScreen from "../screens/HabitsReportScreen";
+import DayNotesScreen from "../screens/DayNotesScreen";
+import DayNoteScreen from "../screens/DayNoteScreen";
 import GoalsScreen, { goalsScreenTitle } from "../screens/GoalsScreen";
 import GoalScreen, { goalScreenTitle } from "../screens/GoalScreen";
 import BalanceProfileScreen from "../screens/balance/ProfileScreen";
@@ -205,6 +207,14 @@ export default function RootTabs() {
         />
         <Stack.Screen name="Phases" component={PhasesScreen} options={{ title: "Этапы" }} />
         <Stack.Screen name="HabitsReport" component={HabitsReportScreen} options={{ title: "По привычкам" }} />
+        <Stack.Screen name="DayNotes" component={DayNotesScreen} options={{ title: "Итоги дня" }} />
+        {/* Заголовок называет день: экран открывается с любой даты, и «Итог» без числа
+            оставлял бы вопрос, о каком дне речь. */}
+        <Stack.Screen
+          name="DayNote"
+          component={DayNoteScreen}
+          options={({ route }) => ({ title: (route.params as { title?: string })?.title ?? "Итог дня" })}
+        />
         {/* Titled from the habit's own name, so the header says which one you opened. */}
         <Stack.Screen
           name="HabitReport"
