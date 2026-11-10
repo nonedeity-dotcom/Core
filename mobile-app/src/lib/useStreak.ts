@@ -9,7 +9,11 @@ import { DEFAULT_SKIP_RULE, type SkipRule } from "./skipRule";
 import { DEFAULT_DAY_OFF, type DayOffRule } from "./dayOff";
 import { DEFAULT_LEVEL_RULE, type LevelRule } from "./level";
 import { habitFreezeCandidate } from "./habitStats";
+import { useStableLogs } from "./stableLogs";
 import type { Habit, HabitLog } from "../types";
+
+/** Пауза перед начислением шансов: нажатия подряд сдвигают его, а считается оно один раз. */
+const GRANT_DELAY_MS = 400;
 
 /**
  * The streak, and the one place a weekly freeze is granted.
@@ -41,10 +45,13 @@ export function useStreak(today: string): {
     queryKey: ["habits"],
     queryFn: () => api.getHabits() as Promise<Habit[]>,
   });
-  const { data: logs = [], isSuccess: logsLoaded } = useQuery<HabitLog[]>({
+  const { data: fetchedLogs = [], isSuccess: logsLoaded } = useQuery<HabitLog[]>({
     queryKey: ["habitLog", "streak", windowStart, today],
     queryFn: () => api.getHabitLog(windowStart, today) as Promise<HabitLog[]>,
   });
+  // Ссылка меняется только когда меняется содержание: перезагрузка после нажатия приносит те
+  // же отметки с настоящими id вместо временных, и пересчитывать серию из-за этого не нужно.
+  const logs = useStableLogs(fetchedLogs);
   const { data: freezes = [], isSuccess: freezesLoaded } = useQuery<string[]>({
     queryKey: ["freezes"],
     queryFn: () => api.getFreezes(),
@@ -91,10 +98,16 @@ export function useStreak(today: string): {
     daysOffLoaded;
 
   useEffect(() => {
-    if (!ready) return;
-    const candidate = freezeCandidate(habits, logs, freezes, today, rule, levelRule, skipRule, daysOff);
-    if (!candidate) return;
-    api.grantFreeze(candidate).then(() => qc.invalidateQueries({ queryKey: ["freezes"] }));
+    if (!ready) return undefined;
+    // Начисление — после того, как нажатия улеглись: расчёт идёт по всей истории, и делать
+    // его посреди нажатия значило бы тормозить следующее. Серия нажатий подряд сдвигает его
+    // дальше, а на итоговых данных он считается один раз.
+    const timer = setTimeout(() => {
+      const candidate = freezeCandidate(habits, logs, freezes, today, rule, levelRule, skipRule, daysOff);
+      if (!candidate) return;
+      api.grantFreeze(candidate).then(() => qc.invalidateQueries({ queryKey: ["freezes"] }));
+    }, GRANT_DELAY_MS);
+    return () => clearTimeout(timer);
   }, [ready, habits, logs, freezes, today, rule, levelRule, skipRule, daysOff, qc]);
 
   // Вторая половина того же начисления — на каждую привычку. Теперь обе половины работают
@@ -102,22 +115,26 @@ export function useStreak(today: string): {
   // Пишется в тот момент, когда вчера закрылось, а не выводится на каждой отрисовке, — иначе
   // число могло бы измениться под тем, кто его уже прочитал.
   useEffect(() => {
-    if (!ready || skipRule.perHabit.count <= 0) return;
-    for (const habit of habits) {
-      // Two lists on purpose: everything the habit is let off, and separately the chances
-      // it has spent itself. A shared day off already granted must not come out of this
-      // habit's own budget — it was granted by the other rule entirely.
-      const day = habitFreezeCandidate(
-        habit,
-        logs,
-        frozenDaysFor(habit.id, freezes, habitFreezes),
-        habitFreezes[habit.id] ?? [],
-        skipRule,
-        daysOff,
-      );
-      if (!day) continue;
-      api.grantHabitFreeze(habit.id, day).then(() => qc.invalidateQueries({ queryKey: ["habitFreezes"] }));
-    }
+    if (!ready || skipRule.perHabit.count <= 0) return undefined;
+    // То же, что выше: по каждой привычке это обход истории, и он идёт после нажатий.
+    const timer = setTimeout(() => {
+      for (const habit of habits) {
+        // Two lists on purpose: everything the habit is let off, and separately the chances
+        // it has spent itself. A shared day off already granted must not come out of this
+        // habit's own budget — it was granted by the other rule entirely.
+        const day = habitFreezeCandidate(
+          habit,
+          logs,
+          frozenDaysFor(habit.id, freezes, habitFreezes),
+          habitFreezes[habit.id] ?? [],
+          skipRule,
+          daysOff,
+        );
+        if (!day) continue;
+        api.grantHabitFreeze(habit.id, day).then(() => qc.invalidateQueries({ queryKey: ["habitFreezes"] }));
+      }
+    }, GRANT_DELAY_MS);
+    return () => clearTimeout(timer);
   }, [ready, habits, logs, freezes, habitFreezes, skipRule, daysOff, qc]);
 
   // Серия считается обходом 120 дней по всем отметкам. Раньше это шло на каждую перерисовку
