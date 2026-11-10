@@ -47,6 +47,7 @@ import {
 import { TOTAL_APP, type ScreenRule } from "../lib/screenTime";
 import { MAX_DAY_ML, normalizeWaterDay, type WaterDay } from "../lib/balance/water";
 import { normalizeEvent, normalizeEvents, type DateEvent } from "../lib/dateEvents";
+import { isDateKey, mergeNotes, normalizeNote, normalizeNotes, type DayNote } from "../lib/dayNotes";
 
 // Local-only storage: no account, no server. Everything lives in
 // AsyncStorage on this device — same idea as the original demo's
@@ -96,6 +97,8 @@ const KEYS = {
   screenHourApps: "screen-hour-apps-v1",
   // Не calendarPrefs: тот про календарь привычек, а это — даты и события на Главной.
   dateEvents: "date-events-v1",
+  // Итоги дня: по одному на дату. Отдельно от всего остального — это тексты, а не счётчики.
+  dayNotes: "day-notes-v1",
 };
 
 /**
@@ -1515,6 +1518,41 @@ export const api = {
     });
   },
 
+  /**
+   * Итоги дня — запись о том, как прошёл день, по одной на дату.
+   *
+   * Читаются через normalizeNotes: запись, испорченная на диске или пришедшая из чужой копии,
+   * тихо выпадает, а не роняет экран. Свежие дни сверху.
+   */
+  async getDayNotes(): Promise<DayNote[]> {
+    return normalizeNotes(await read<unknown>(KEYS.dayNotes, []));
+  },
+  /**
+   * Записать итог за дату — новый или поверх прежнего. Пустой текст убирает итог: «ничего не
+   * написано» и «итога нет» — одно и то же, пустых записей в списке не бывает.
+   *
+   * Писать можно за сегодня и за любой прошлый день, но не вперёд: итог — это о том, что уже
+   * было.
+   */
+  async saveDayNote(date: string, text: string): Promise<DayNote | null> {
+    if (!isDateKey(date)) throw new Error("Некорректная дата");
+    if (date > todayKey()) throw new Error("Итог можно писать за сегодня и за прошлые дни");
+    return withKeyLock(KEYS.dayNotes, async () => {
+      const stored = normalizeNotes(await read<unknown>(KEYS.dayNotes, []));
+      const rest = stored.filter((n) => n.date !== date);
+      const note = normalizeNote({ date, text, updatedAt: new Date().toISOString() });
+      await write(KEYS.dayNotes, note ? [...rest, note] : rest);
+      return note;
+    });
+  },
+  async removeDayNote(date: string): Promise<{ ok: true }> {
+    return withKeyLock(KEYS.dayNotes, async () => {
+      const stored = normalizeNotes(await read<unknown>(KEYS.dayNotes, []));
+      await write(KEYS.dayNotes, stored.filter((n) => n.date !== date));
+      return { ok: true as const };
+    });
+  },
+
   async getTasks(): Promise<Task[]> {
     return read(KEYS.tasks, []);
   },
@@ -1770,6 +1808,8 @@ export interface BackupData {
   screenHourApps?: HourAppsDay[];
   /** Даты и события. Отсутствуют в файлах, записанных до календаря на Главной. */
   dateEvents?: DateEvent[];
+  /** Итоги дня. Отсутствуют в файлах, записанных до них. */
+  dayNotes?: DayNote[];
   /**
    * Кошелёк: искры, ядра, купленное, надетое, журнал рассчитанных дней.
    *
@@ -1857,11 +1897,12 @@ export async function exportData(): Promise<BackupData> {
       read<HourlyDay[]>(KEYS.screenHours, []),
       read<HourAppsDay[]>(KEYS.screenHourApps, []),
     ]);
-  const [purse, gameStats, village, dateEvents] = await Promise.all([
+  const [purse, gameStats, village, dateEvents, dayNotes] = await Promise.all([
     api.getPurse(),
     api.getGameStats(),
     api.getVillage(),
     api.getDateEvents(),
+    api.getDayNotes(),
   ]);
   return {
     habits: [...habits].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -1897,6 +1938,7 @@ export async function exportData(): Promise<BackupData> {
     gameStats,
     village,
     dateEvents,
+    dayNotes,
   };
 }
 
@@ -1941,6 +1983,8 @@ export async function replaceData(data: BackupData): Promise<ImportStats> {
       ...(data.village ? [write(KEYS.village, data.village)] : []),
       // Нет в файле — значит, копия старше календаря: свои даты она стирать не должна.
       ...(data.dateEvents ? [write(KEYS.dateEvents, normalizeEvents(data.dateEvents))] : []),
+      // Так же: копия старше итогов дня не должна стирать написанные здесь.
+      ...(data.dayNotes ? [write(KEYS.dayNotes, normalizeNotes(data.dayNotes))] : []),
     ]);
     return {
       habits: data.habits.length,
@@ -2312,6 +2356,14 @@ export async function mergeData(data: BackupData): Promise<ImportStats> {
       dateEventsChanged = true;
     }
     if (dateEventsChanged) await write(KEYS.dateEvents, dateEvents);
+
+    // Итоги дня — по дате, и берётся более свежая правка: итог, дописанный здесь, не должен
+    // откатиться к старой версии из копии, а итог, которого здесь нет, добавляется.
+    if (data.dayNotes?.length) {
+      const localNotes = normalizeNotes(await read<unknown>(KEYS.dayNotes, []));
+      const mergedNotes = mergeNotes(localNotes, data.dayNotes);
+      if (JSON.stringify(mergedNotes) !== JSON.stringify(localNotes)) await write(KEYS.dayNotes, mergedNotes);
+    }
 
     // Кошелёк и игры — по своим правилам слияния: деньги не складываются, купленное не
     // теряется, рекорд берётся лучший. Нет в файле — не трогаем.
